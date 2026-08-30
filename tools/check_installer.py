@@ -59,11 +59,16 @@ def main():
     parts = []
     for build in manifest.get("builds", []):
         for p in build.get("parts", []):
-            path = os.path.join(WEB, p["path"])
+            # The manifest cache-busts each part with "?v=<hash>". That is a URL,
+            # not a filename, so it has to come off before touching the disk --
+            # otherwise this guard reports MISSING for a file that is right there
+            # and the build fails for the wrong reason.
+            rel = p["path"].split("?", 1)[0]
+            path = os.path.join(WEB, rel)
             if not os.path.exists(path):
-                print("MISSING: %s (named by the manifest)" % p["path"])
+                print("MISSING: %s (named by the manifest)" % rel)
                 return 1
-            parts.append((p["path"], int(p["offset"]), os.path.getsize(path)))
+            parts.append((rel, int(p["offset"]), os.path.getsize(path)))
 
     if not parts:
         print("the manifest lists no parts at all")

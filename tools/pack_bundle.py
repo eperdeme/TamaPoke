@@ -18,8 +18,10 @@ El instalador (web/index.html) lo descarga, lo parte por el indice y manda cada
 fichero a la placa con el protocolo PUT (igual que tools/send_sd.py).
 """
 import glob
+import json
 import os
 import struct
+import zlib
 
 HERE = os.path.dirname(__file__)
 MONS = os.path.join(HERE, 'sdcard', 'mons')
@@ -36,6 +38,38 @@ from dex_data import REGIONS as _DEX_REGIONS
 REGIONS = [(name.lower(), lo, hi) for name, lo, hi, _starters in _DEX_REGIONS]
 
 GITHUB_LIMIT = 100 * 1024 * 1024
+INDEX = os.path.join(WEB, 'paks.json')
+
+
+def write_index():
+    """Describe every pack that exists, for the installer to verify against.
+
+    Separate from write_pak() and callable on its own, because it must be
+    possible to regenerate the index from packs that are already committed --
+    the sprite workshop is not in the repo, so most checkouts cannot rebuild a
+    .pak but can still re-derive its checksum.
+
+    The sizes here are what the buttons are LABELLED with. They used to be typed
+    into the HTML by hand and had already drifted: Alola read "~24 MB" for a
+    27.5 MB pack. Derive it; never restate it.
+    """
+    regions = {}
+    for name, _lo, _hi in REGIONS:
+        path = os.path.join(WEB, f'sprites-{name}.pak')
+        if not os.path.exists(path):
+            continue
+        blob = open(path, 'rb').read()
+        count = struct.unpack('<H', blob[4:6])[0] if blob[:4] == b'TPAK' else 0
+        regions[name] = {
+            'bytes': len(blob),
+            'crc32': format(zlib.crc32(blob) & 0xFFFFFFFF, '08x'),
+            'sprites': count,
+        }
+    with open(INDEX, 'w') as f:
+        json.dump({'schema': 1, 'regions': regions}, f, indent=2)
+        f.write('\n')
+    print(f'{os.path.normpath(INDEX)}: {len(regions)} regions indexed')
+    return regions
 
 
 def dex_of(path):
@@ -94,6 +128,7 @@ def main():
         raise SystemExit('nothing packed')
     packed = sum(1 for _ in glob.glob(os.path.join(MONS, '*.bin')))
     print(f'{len(shared)} shared file(s) went into EVERY pack, so any single region works alone')
+    write_index()
 
 
 if __name__ == '__main__':
