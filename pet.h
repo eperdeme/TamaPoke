@@ -198,6 +198,22 @@ public:
   bool frozen = false;
   void reviveFrom(const PartyMon &m);
 
+  // The live creature as a storable record. THE single place a pet becomes a
+  // PartyMon: the farewell, a swap and a wild capture all go through it, and
+  // CLAUDE.md § "A rule enforced in one path but not its twin" is a list of what
+  // happens when three callers each keep their own copy of that.
+  PartyMon toPartyMon() const;
+  // Make a stored creature the focused one -- the one that ages, levels,
+  // evolves and is cared for. Unlike reviveFrom() it is NOT frozen: it picks up
+  // its own care state and carries on. A record from before care state existed
+  // (stateVersion 0) starts from its banked level with fresh stats, which is
+  // the only honest reading of a save that never held them.
+  //
+  // It does NOT bank whatever is currently live -- the caller owns that, since
+  // only it knows whether there is a slot free. Calling this without storing
+  // the previous pet first destroys it.
+  void switchTo(const PartyMon &m);
+
   // The player's own name, alongside the badges and the streak: it belongs to
   // whoever is playing, not to the creature, so newEgg() must never clear it.
   char trainerName[12] = "";

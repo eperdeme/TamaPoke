@@ -29,6 +29,9 @@
 #include "party.h"
 #include "save.h"
 #include "pet.h"
+#include "items.h"
+#include "inventory.h"
+#include "wild.h"
 #include "sdmon.h"
 #include "rtcbat.h"
 #include "i18n.h"
@@ -36,7 +39,7 @@
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
-#define FW_VERSION "3.10"
+#define FW_VERSION "3.11"
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
   LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -110,15 +113,17 @@ bool menuOpen = false;
 // Four rows: PARTY and GYMS came out, since a swipe right and a swipe left now
 // reach them directly. Sized to the bezel -- the panel is 320 wide, so 160 from
 // the centre, and sqrt(233^2 - 160^2) = 169 means it can only span y 64..402.
-#define MENU_Y 75
+#define MENU_Y 70
 #define MENU_W 320
-#define MENU_H 316
-#define MENU_ROW_H 52
+#define MENU_H 326
+#define MENU_ROW_H 44
 #define MENU_ROW_GAP 6
-// 5 rows: STATS / POKEDEX / SETTINGS / RETIRE / CLOSE. At MENU_Y 75 the panel
-// spans 75..391 and the round display gives a half-width of 171 there against
-// the 160 a row needs, so the corners stay on glass.
-#define MENU_ROWS 5
+// 6 rows: STATS / BAG / POKEDEX / SETTINGS / RETIRE / CLOSE. The row height came
+// down from 52 to fit the sixth: the panel spans 70..396, and the round display
+// gives a half-width of 166 there against the 160 a row needs, so the corners
+// stay on glass. Anything taller does not -- at 6 rows of 52 it would reach 413
+// and the bottom corners would fall off the bezel.
+#define MENU_ROWS 6
 #define MENU_ROW_Y(i) (MENU_Y + 16 + (i) * (MENU_ROW_H + MENU_ROW_GAP))
 
 // Party screen. partyPick != 0 means the newcomer needs a slot: the player
@@ -211,7 +216,7 @@ enum : uint8_t {
   SCR_STARTER = 0, SCR_REGION, SCR_GALLERY, SCR_DEXPICK, SCR_MOVEPICK, SCR_BOX,
   SCR_PARTY, SCR_KEYBOARD, SCR_CARD, SCR_PLAYER, SCR_CLOCK, SCR_GYM, SCR_GYMPICK,
   SCR_LAN, SCR_PICK, SCR_BATTLE, SCR_WIN, SCR_LEARN, SCR_TRAIN, SCR_MENU,
-  SCR_GAME, SCR_MAIN, SCR_COUNT
+  SCR_BAGSCR, SCR_GAME, SCR_MAIN, SCR_COUNT
 };
 extern const char *const SCREEN_NAME[SCR_COUNT];   // const is internal linkage in C++
 
@@ -228,6 +233,15 @@ uint8_t uiCurrentScreen();
 void uiConfirmRects(int *b1Top, int *b1Bot, int *b2Top, int *b2Bot);
 void renderParty();
 void renderBox();
+// The bag and wild encounters are defined ~3000 lines below render() and the
+// touch handler that reach them. arduino-cli does not always auto-prototype,
+// and the emulator's generated proto.h would hide that -- see the note above.
+void renderBag();
+void bagTap(int16_t x, int16_t y);
+uint8_t bagPages();
+bool startWildBattle(bool hard);
+PartyMon wildToPartyMon();
+void focusSwap(uint8_t slot);
 void drawConfirmPanel(const char *q, const char *sub1, const char *sub2,
                       uint16_t subCol, const char *o1, uint16_t c1, uint16_t t1,
                       const char *o2, uint16_t c2, uint16_t t2);
@@ -235,7 +249,7 @@ const char *const SCREEN_NAME[SCR_COUNT] = {
   "starter", "region", "gallery", "dexpick", "movepick", "box",
   "party", "keyboard", "card", "player", "clock", "gym", "gympick",
   "lan", "pick", "battle", "win", "learn", "train", "menu",
-  "minigame", "main"
+  "bag", "minigame", "main"
 };
 
 // Badge art for a region, or nullptr when that region has none yet.
@@ -446,11 +460,44 @@ uint8_t playerPage = 0;
 uint8_t gymPage = 0;
 #define GYM_ROWS 5
 #define GYM_ROW_Y(i) (110 + (i) * 50)
+// The gym screen's two extra battle buttons: LAN on the left, EXPLORE on the
+// right. At y 380..412 the round panel gives a half-width of 180, so the pair
+// spanning 68..398 sits comfortably on glass.
+#define GYMBTN_Y 380
+#define GYMBTN_W 160
+#define GYMBTN_H 32
+#define GYMBTN_X(i) (68 + (i) * 170)
 int8_t btlTrainer = -1;      // index into TRAINERS, -1 = a one-off fight
 bool btlHard = false;
 Combatant btlSquad[TRAINER_TEAM_MAX + 1];
 uint8_t btlSquadN = 0, btlSquadAt = 0;
 uint8_t btlFoeAt = 0;
+
+// ---------------------------------------------------------------------------
+// The bag, and wild encounters.
+bool bagOpen = false;
+uint8_t bagPage = 0;
+#define BAG_PER_PAGE 5
+#define BAG_ROW_Y(i) (112 + (i) * 58)
+
+// A wild fight is a different fight, not a trainer fight with a flag: a ball
+// works, the foe can run, and RUN is a roll rather than a certainty. Every one
+// of those is asked through btlWild, so there is no second opinion about what
+// kind of battle is on screen.
+bool btlWild = false;
+// The wild creature's durable state, kept BESIDE the Combatant because a
+// Combatant carries no IVs and none of what a stored record needs. Without it a
+// capture would have to re-roll the individual it just caught, and the creature
+// you fought would not be the creature you kept.
+int16_t wildDex = 0;
+uint8_t wildLvl = 1;
+uint8_t wildIv[4] = { 0, 0, 0, 0 };   // atk, def, spe, hp
+bool wildShiny = false;
+bool wildCaught = false;
+// What a win handed over, for the settlement lines on the win screen.
+ItemKey wildDrops[4] = { ITEM_NONE, ITEM_NONE, ITEM_NONE, ITEM_NONE };
+uint8_t wildDropN = 0;
+uint8_t btlBagPage = 0;
 
 // Animation. Deliberately built on the thumbnails the screen already draws
 // rather than on PmdMon: three PmdMon blobs are live already, and the battle
@@ -685,6 +732,7 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(TP_INT), touchIsr, FALLING);
 
   party.begin();
+  bag.begin();
   pet.begin();
   sdBegin();
   thumbs.load();
@@ -950,6 +998,46 @@ void handleSerial() {
     }
     Serial.println();
     Serial.println("DONE");
+  } else if (line == "BAG") {
+    for (uint8_t i = 0; i < bag.distinctCount(); i++) {
+      ItemKey k = bag.keyAt(i);
+      Serial.printf("%u:%s x%u\n", k, itemEntry(k).name, bag.count(k));
+    }
+    Serial.println("DONE");
+  } else if (line.startsWith("GIVE ")) {
+    // GIVE <key> [n]: stock the bag, so catching can be exercised without
+    // grinding wild wins first.
+    int key = 0, n = 1;
+    if (sscanf(line.c_str() + 5, "%d %d", &key, &n) >= 1 &&
+        itemValid((ItemKey)key)) {
+      uint8_t got = bag.add((ItemKey)key, (uint8_t)(n > 0 ? n : 1));
+      Serial.printf("%s x%u (+%u)\n", ITEM_TBL[key].name,
+                    bag.count((ItemKey)key), got);
+    } else {
+      Serial.println("bad item");
+    }
+    Serial.println("DONE");
+  } else if (line == "WILD" || line == "WILD HARD") {
+    bool hard = (line == "WILD HARD");
+    if (startWildBattle(hard))
+      Serial.printf("wild %s Lv.%u%s iv=%u/%u/%u/%u\n", DEX_TBL[wildDex].name,
+                    wildLvl, wildShiny ? " *SHINY*" : "",
+                    wildIv[0], wildIv[1], wildIv[2], wildIv[3]);
+    else
+      Serial.println("no encounter (egg, ceremony, or no sprite pack)");
+    Serial.println("DONE");
+  } else if (line.startsWith("FOCUS ")) {
+    // FOCUS <slot>: swap the creature on the main screen with a party slot,
+    // which is the console half of the RAISE THIS ONE button.
+    int s = -1;
+    if (sscanf(line.c_str() + 6, "%d", &s) == 1 && s >= 0 && s < PARTY_SLOTS &&
+        !party.slots[s].empty()) {
+      focusSwap((uint8_t)s);
+      Serial.printf("raising %s Lv.%u\n", DEX_TBL[pet.speciesId].name, pet.level());
+    } else {
+      Serial.println("empty or out of range");
+    }
+    Serial.println("DONE");
   } else if (line.startsWith("EGG ")) {
     // EGG <dex> [shiny]: hatch a chosen species right now. The legendary and
     // shiny IV guarantees only apply at hatch time, so this is the only way to
@@ -1203,6 +1291,7 @@ void onSwipeV(int dir) {
   }
   if (playerOpen) { playerOpen = false; return; }
   if (trainOpen) { trainOpen = false; return; }
+  if (bagOpen) { bagOpen = false; return; }   // vertical backs out
   if (movePickOpen) { movePickOpen = false; return; }
   if (boxOpen) { boxOpen = false; boxSel = 0; return; }   // vertical backs out
   if (partyOpen) {
@@ -1279,13 +1368,17 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
   gfx->setCursor(CX - (int)strlen(st) * 3, 300);
   gfx->print(st);
 
-  // Bringing one back is only offered while an egg is waiting. Otherwise it
-  // would silently destroy whatever creature is currently alive, and a rule the
-  // player cannot see is worse than a button they cannot press. A box creature
-  // goes to the party instead, which is always allowed if there is room.
+  // Which creature you are RAISING is now a choice you can make at any time.
+  // It is a true exchange -- the one on the main screen takes the slot this one
+  // vacates -- so unlike the old frozen BRING BACK it needs no free slot and no
+  // "only while an egg waits" rule. Both keep their full care state, so nothing
+  // is reset by swapping and swapping back.
+  //
+  // A box creature still goes to the party first: one rule per screen, and the
+  // swap is then offered from the party sheet like any other member.
   bool leftOk = fromBox ? (party.firstFree() >= 0)
-                        : (pet.isEgg() && !pet.awaitingStarter());
-  const char *leftLbl = fromBox ? T(S_BOX_TAKE) : T(S_REVIVE);
+                        : (pet.ceremony == CER_NONE && !pet.awaitingStarter());
+  const char *leftLbl = fromBox ? T(S_BOX_TAKE) : T(S_FOCUS);
   gfx->fillRoundRect(PDET_L_X, PDET_BTN_Y, PDET_L_W, PDET_BTN_H, 10,
                      leftOk ? UI_BAR_OK : UI_TRACK);
   gfx->drawRoundRect(PDET_L_X, PDET_BTN_Y, PDET_L_W, PDET_BTN_H, 10, UI_INK);
@@ -1306,8 +1399,8 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
   if (!leftOk && !fromBox) {
     gfx->setTextColor(UI_TRACK);
     gfx->setTextSize(1);
-    gfx->setCursor(CX - (int)strlen(T(S_REVIVE_EGG)) * 3, PDET_BTN_Y + PDET_BTN_H + 4);
-    gfx->print(T(S_REVIVE_EGG));
+    gfx->setCursor(CX - (int)strlen(T(S_FOCUS_NOW)) * 3, PDET_BTN_Y + PDET_BTN_H + 4);
+    gfx->print(T(S_FOCUS_NOW));
   }
   gfx->setTextColor(UI_TRACK);
   gfx->setTextSize(2);
@@ -1447,10 +1540,9 @@ void partyTap(int16_t x, int16_t y) {
     // The confirm is modal: while it is up nothing else on the sheet responds,
     // or a miss on YES would fall through to the move rows underneath it.
     if (releaseConfirm) { monSheetConfirmTap(x, y, false); return; }
-    if (monSheetBtn(x, y, true)) {           // BRING BACK
-      if (!pet.isEgg() || pet.awaitingStarter()) { sfxPlay(SFX_DENY); return; }
-      pet.reviveFrom(party.slots[partyDetail - 1]);
-      party.releaseAt(partyDetail - 1);      // it is alive now, not banked
+    if (monSheetBtn(x, y, true)) {           // RAISE THIS ONE
+      if (pet.ceremony != CER_NONE || pet.awaitingStarter()) { sfxPlay(SFX_DENY); return; }
+      focusSwap((uint8_t)(partyDetail - 1));
       partyDetail = 0;
       boxSwapFrom = 0;
       partyOpen = false;
@@ -1562,6 +1654,13 @@ void onSwipe(int dir) {
     return;
   }
   if (trainOpen) { trainOpen = false; return; }
+  if (bagOpen) {   // horizontal pages the bag, like every other paged screen --
+    uint8_t pages = bagPages();   // and it is in swipe_test for that same reason
+    int p = (int)bagPage + (dir > 0 ? -1 : 1);
+    if (p < 0 || p >= pages) bagOpen = false;
+    else bagPage = (uint8_t)p;
+    return;
+  }
   if (movePickOpen) {   // the picker is paged; without this its later pages
     uint8_t all[64];    // were simply unreachable
     uint8_t n = learnableList(all, sizeof(all));
@@ -1647,6 +1746,10 @@ void onTap(int16_t x, int16_t y) {
     battleTap(x, y);
     return;
   }
+  if (bagOpen) {
+    bagTap(x, y);
+    return;
+  }
   if (playerOpen) {
     if (playerPage == 0 && y >= 32 && y < 68) {   // the name: rename yourself
       openKeyboardFor(KB_TRAINER);
@@ -1697,12 +1800,23 @@ void onTap(int16_t x, int16_t y) {
       sfxPlay(SFX_TAP);
       return;
     }
-    if (y >= 380 && y <= 412 && x >= 148 && x <= 318) {   // LAN battle
-      gymOpen = false;
-      lan.state = LINK_OFF;
-      lanOpen = true;
-      sfxPlay(SFX_TAP);
-      return;
+    if (y >= GYMBTN_Y && y <= GYMBTN_Y + GYMBTN_H) {
+      if (x >= GYMBTN_X(0) && x <= GYMBTN_X(0) + GYMBTN_W) {   // LAN battle
+        gymOpen = false;
+        lan.state = LINK_OFF;
+        lanOpen = true;
+        sfxPlay(SFX_TAP);
+        return;
+      }
+      if (x >= GYMBTN_X(1) && x <= GYMBTN_X(1) + GYMBTN_W) {   // a wild encounter
+        // startWildBattle() decides: draw and tap must never disagree about
+        // whether a button works, which is what uiButtonDisabled() exists for
+        // on the home row.
+        if (!startWildBattle(gymHard)) { sfxPlay(SFX_DENY); return; }
+        gymOpen = false;
+        sfxPlay(SFX_TAP);
+        return;
+      }
     }
     for (int i = 0; i < GYM_ROWS; i++) {
       uint8_t idx = gymPage * GYM_ROWS + i;
@@ -1768,13 +1882,14 @@ void onTap(int16_t x, int16_t y) {
       sfxPlay(SFX_TAP);
       menuOpen = false;
       if (i == 0) { cardOpen = true; cardPage = 1; }   // straight to the stats page
-      else if (i == 1) { galleryOpen = true; galleryPick = true; galleryPage = 0; rpickPage = 0; galleryDetail = 0; galleryDirty = true; }
-      else if (i == 2) { openClock(); }
-      else if (i == 3) {
+      else if (i == 1) { bagOpen = true; bagPage = 0; }
+      else if (i == 2) { galleryOpen = true; galleryPick = true; galleryPage = 0; rpickPage = 0; galleryDetail = 0; galleryDirty = true; }
+      else if (i == 3) { openClock(); }
+      else if (i == 4) {
         if (!pet.canRetireNow()) { sfxPlay(SFX_DENY); return; }
         choiceKind = 3; choiceUntil = millis() + 12000;
       }
-      return;                                     // i == 4 is CLOSE: just shut
+      return;                                     // i == 5 is CLOSE: just shut
     }
     return;
   }
@@ -2109,6 +2224,7 @@ uint8_t uiCurrentScreen() {
   if (galleryOpen) return galleryPick ? SCR_DEXPICK : SCR_GALLERY;
   if (movePickOpen) return SCR_MOVEPICK;
   if (partyOpen) return boxOpen ? SCR_BOX : SCR_PARTY;
+  if (bagOpen) return SCR_BAGSCR;
   if (kbOpen) return SCR_KEYBOARD;
   if (cardOpen) return SCR_CARD;
   if (playerOpen) return SCR_PLAYER;
@@ -2190,6 +2306,10 @@ void render() {
   }
   if (gameOpen) {
     renderGame();
+    return;
+  }
+  if (bagOpen) {
+    renderBag();
     return;
   }
   if (sackOpen) {
@@ -3334,6 +3454,7 @@ void startLinkBattle() {
   btlYou = btlSquad[0];
   btlLink = true;
   btlLinkHost = lan.isHost;
+  btlWild = false;
   btlTrainer = -1;
   btlHard = false;
   btlFoeAt = 0;
@@ -3371,6 +3492,7 @@ void startTrainerBattle(uint8_t idx, bool hard) {
   if (!btlSquadN) return;
   btlTrainer = (int8_t)idx;
   btlHard = hard;
+  btlWild = false;
   btlFoeAt = 0;
   const Trainer &t = TRAINERS[idx];
   foeFromSpecies(btlFoe, t.team[0].dex, t.team[0].level, hard ? HARD_IV : EASY_IV);
@@ -3406,6 +3528,7 @@ void startBattle(int16_t dex, uint8_t lvl) {
   foe.ageMinutes = (uint32_t)(lvl ? lvl - 1 : 0) * MINUTES_PER_LEVEL;
   foe.relearnFromLevel();
   combatantFromPet(btlFoe, foe);
+  btlWild = false;
   btlMsgCount = 0;
   btlOver = false;
   btlWon = false;
@@ -3526,6 +3649,91 @@ static void btlShipResult(uint8_t yourMove, uint8_t theirMove,
   lan.sendResult((const uint8_t *)&r, (uint8_t)sizeof(r));
 }
 
+// ---------- wild battle actions ----------
+
+// What beating a wild creature is worth. Each draw EXCLUDES every earlier one,
+// so a settlement can never list the same item twice -- which would read as a
+// bug rather than as luck, the same reasoning that stops rewardTraining()
+// picking a stat with no headroom.
+static void wildGrantDrops() {
+  wildDropN = 0;
+  uint8_t n = wildDropCount(btlHard, (uint8_t)random(100));
+  for (uint8_t i = 0; i < n && i < 4; i++) {
+    uint32_t total = bag.weightTotal(wildDrops, wildDropN);
+    if (!total) break;
+    ItemKey k = bag.weightedDrop((uint32_t)random(total), wildDrops, wildDropN);
+    if (!k) break;
+    bag.add(k);
+    wildDrops[wildDropN++] = k;
+    btlSay(T(S_FOUND_ITEM), itemEntry(k).name);
+  }
+}
+
+// Where a caught creature goes. It reuses the SAME slot-finding path a farewell
+// uses -- party, then box, then ask -- rather than growing a second copy of it.
+// CLAUDE.md's most repeated bug is a rule enforced in one path but not its
+// twin, and "which slot does a creature take" is exactly that shape.
+static void wildStoreCaught() {
+  PartyMon m = wildToPartyMon();
+  // NOT registered in the Pokedex here. Registration means "you raised this",
+  // and switchTo() does it when the creature actually becomes the one you are
+  // raising -- so catching one and leaving it in the box does not fill the dex.
+  if (party.add(m) || party.boxAdd(m)) return;
+  // Both full: hand it to the chooser the endings already own. endedKind is
+  // only ever tested against CER_NONE by that flow, so this is the intended
+  // handover and not a borrowed meaning.
+  pet.endedMon = m;
+  pet.endedKind = CER_RELEASE;
+}
+
+// Throwing a ball. Spends the turn either way: a free capture attempt every
+// round would make weakening the target pointless.
+static void btlThrowBall(ItemKey k) {
+  if (!bag.consume(k)) { sfxPlay(SFX_DENY); return; }
+  btlMenu = 0;
+  btlSay(T(S_THREW), itemEntry(k).name);
+  uint8_t chance = wildCaptureChance(DEX_TBL[btlFoe.dex].rarity, btlFoe.hp,
+                                     btlFoe.maxHp, btlFoe.ailment != AIL_NONE,
+                                     itemEntry(k).param);
+  if (random(100) < chance) {
+    wildCaught = true;
+    btlOver = true;
+    btlWon = true;
+    wildStoreCaught();
+    audioMusic(MUS_VICTORY);
+    sfxPlay(SFX_VICTORY);
+    btlSay(T(S_CAUGHT), btlFoe.name);
+    wildGrantDrops();
+    return;
+  }
+  sfxPlay(SFX_DENY);
+  btlSay("%s", T(S_BROKE_FREE));
+  btlResolve(0);   // move 0 = no attack, so only the foe acts
+}
+
+// A potion or a full heal, on whichever creature is out. It works on the
+// Combatant, so like every ailment it is battle-only and is never written back.
+static void btlUseItem(ItemKey k) {
+  const ItemEntry &e = itemEntry(k);
+  bool useful = (e.category == IC_HEAL) ? btlYou.hp < btlYou.maxHp
+              : (e.category == IC_CURE) ? btlYou.ailment != AIL_NONE
+              : false;
+  if (!useful) { sfxPlay(SFX_DENY); btlSay("%s", T(S_ITEM_NOUSE)); btlMenu = 0; return; }
+  if (!bag.consume(k)) { sfxPlay(SFX_DENY); return; }
+  if (e.category == IC_HEAL) {
+    uint32_t hp = (uint32_t)btlYou.hp + (uint16_t)e.param;
+    btlYou.hp = hp > btlYou.maxHp ? btlYou.maxHp : (uint16_t)hp;
+  } else {
+    btlYou.ailment = AIL_NONE;
+    btlYou.ailTurns = 0;
+    btlYou.confuseTurns = 0;
+  }
+  btlMenu = 0;
+  sfxPlay(SFX_TAP);
+  btlSay(T(S_ITEM_USED), e.name);
+  btlResolve(0);   // using an item costs the turn, as it does in the real games
+}
+
 // One exchange: both sides act in speed order, then burn/poison chip.
 static void btlResolve(uint8_t yourMove) {
   TurnLog lg;
@@ -3558,6 +3766,16 @@ static void btlResolve(uint8_t yourMove) {
     lan.pendingAct = 0;
   } else {
     foeMove = aiChooseMove(btlFoe, btlYou, btlHard);
+    // A wild creature can leave. It spends its ACTION doing so rather than
+    // fleeing and attacking in the same turn, so the fight simply ends -- with
+    // no drops, which is what makes weakening it worth doing before it goes.
+    if (btlWild && random(100) < wildFoeEscapeChance(btlFoe.hp, btlFoe.maxHp)) {
+      btlOver = true;
+      btlWon = false;
+      audioMusic(MUS_NONE);
+      btlSay(T(S_WILD_FLED), btlFoe.name);
+      return;
+    }
   }
   (void)foeSwitched;
 
@@ -3631,6 +3849,9 @@ static void btlResolve(uint8_t yourMove) {
     // other device sits on a battle that will never take another turn.
     if (btlLink && btlLinkHost) lan.sendEnd(btlWon);
     if (btlLink) { btlSay("%s", btlWon ? T(S_BTL_WIN) : T(S_BTL_LOSE)); return; }
+    // A wild win reports its drops as narration rather than on the win screen:
+    // that screen is the badge ceremony, and it has no badge to show.
+    if (btlWon && btlWild) { btlSay("%s", T(S_BTL_WIN)); wildGrantDrops(); return; }
     if (btlWon && btlTrainer >= 0) { btlWinUntil = millis() + 60000; return; }
     btlSay("%s", T(S_BTL_LOSE));
   }
@@ -3861,25 +4082,54 @@ void renderBattle() {
     gfx->setCursor(CX - 30, BTL_GRID_Y + 84);
     gfx->print("tap...");
   } else if (btlMenu == 0) {
-    // FIGHT across the top, then POKEMON and RUN side by side. Three full-width
-    // rows do not fit: the panel is round, and at that depth the chord is only
-    // ~250 px. The lower two reuse the move grid's cells, so they inherit its
-    // padded hit areas -- which is what made POKEMON hard to press before.
-    gfx->fillRoundRect(BTL_GRID_X, BTL_GRID_Y, 328, BTL_CELL_H, 10, UI_BG_DAY);
-    gfx->drawRoundRect(BTL_GRID_X, BTL_GRID_Y, 328, BTL_CELL_H, 10, UI_INK);
-    gfx->setTextColor(UI_INK);
-    gfx->setTextSize(2);
-    gfx->setCursor(CX - (int)strlen(T(S_FIGHT)) * 6, BTL_GRID_Y + 14);
-    gfx->print(T(S_FIGHT));
-    const char *low[2] = { T(S_BTL_SWITCH), T(S_BTL_RUN) };
-    for (int i = 0; i < 2; i++) {
-      int x = BTL_CELL_X(i + 2), y = BTL_CELL_Y(i + 2);
-      gfx->fillRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, UI_TRACK);
-      gfx->drawRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, UI_INK);
-      gfx->setTextColor(UI_INK);
+    // Four options on the 2x2 grid: FIGHT and BAG on top, POKEMON and RUN
+    // below. FIGHT used to be a full-width row, which left nowhere for the bag;
+    // all four now reuse the move grid's cells and so inherit its padded hit
+    // areas -- the same padding that fixed POKEMON being hard to press.
+    const char *opt[4] = { T(S_FIGHT), T(S_BAG), T(S_BTL_SWITCH), T(S_BTL_RUN) };
+    for (int i = 0; i < 4; i++) {
+      int x = BTL_CELL_X(i), y = BTL_CELL_Y(i);
+      // The bag is dead in a link fight: an item the peer was never told about
+      // would desync the two devices, and the host is authoritative.
+      bool live = !(i == 1 && btlLink);
+      gfx->fillRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, live ? UI_BG_DAY : UI_TRACK);
+      gfx->drawRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, live ? UI_INK : 0x8410);
+      gfx->setTextColor(live ? UI_INK : 0x8410);
       gfx->setTextSize(2);
-      gfx->setCursor(x + (BTL_CELL_W - (int)strlen(low[i]) * 12) / 2, y + 14);
-      gfx->print(low[i]);
+      gfx->setCursor(x + (BTL_CELL_W - (int)strlen(opt[i]) * 12) / 2, y + 14);
+      gfx->print(opt[i]);
+    }
+  } else if (btlMenu == 3) {
+    drawBtlBack();
+    // The battle bag: balls and medicine, never vitamins -- training is
+    // permanent and belongs to the care sim.
+    uint8_t shown = 0;
+    uint8_t n = bag.distinctCount();
+    for (uint8_t idx = 0; idx < n && shown < 4; idx++) {
+      ItemKey k = bag.keyAt(idx);
+      if (!itemUsableInBattle(k)) continue;
+      if (shown < btlBagPage * 4) { shown++; continue; }
+      int cell = shown - btlBagPage * 4;
+      if (cell >= 4) break;
+      int x = BTL_CELL_X(cell), y = BTL_CELL_Y(cell);
+      bool live = !itemIsBall(k) || btlWild;   // a ball needs a wild target
+      gfx->fillRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, live ? UI_BG_DAY : UI_TRACK);
+      gfx->drawRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, live ? UI_INK : 0x8410);
+      gfx->setTextColor(live ? UI_INK : 0x8410);
+      gfx->setTextSize(1);
+      gfx->setCursor(x + 10, y + 12);
+      gfx->print(itemEntry(k).name);
+      char cnt[8];
+      snprintf(cnt, sizeof(cnt), "x%u", bag.count(k));
+      gfx->setCursor(x + 10, y + 28);
+      gfx->print(cnt);
+      shown++;
+    }
+    if (!shown) {
+      gfx->setTextColor(UI_TRACK);
+      gfx->setTextSize(1);
+      gfx->setCursor(CX - (int)strlen(T(S_BAG_EMPTY)) * 3, BTL_GRID_Y + 40);
+      gfx->print(T(S_BAG_EMPTY));
     }
   } else if (btlMenu == 2) {
     drawBtlBack();
@@ -4009,12 +4259,35 @@ static bool btlBackTap(int16_t x, int16_t y) {
 // Running. A gym leader keeps their badge and the fight simply ends; against
 // another device the peer is told, so it does not sit waiting for a move that
 // will never come.
+//
+// A WILD fight is the exception: getting away is a roll, and failing it costs
+// the turn. That is what stops a ball being risk-free -- you cannot throw one,
+// see it fail and simply leave.
 static void btlRun() {
+  if (btlWild && !btlOver) {
+    btlMenu = 0;
+    if (random(100) >= wildEscapeChance(btlYou.level, btlFoe.level)) {
+      sfxPlay(SFX_DENY);
+      btlSay("%s", T(S_NO_ESCAPE));
+      btlResolve(0);   // move 0 = no attack, so only the foe acts
+      return;
+    }
+    // Narrated and left OVER rather than closed here, so the message is
+    // actually seen: battleTap() dismisses a finished fight, and closing on the
+    // same beat would flash the line for one frame.
+    sfxPlay(SFX_TAP);
+    btlOver = true;
+    btlWon = false;
+    audioMusic(MUS_NONE);
+    btlSay("%s", T(S_GOT_AWAY));
+    return;
+  }
   sfxPlay(SFX_DENY);
   btlFreeSprites();
   audioMusic(MUS_NONE);
   if (btlLink) { lanLeave(); btlLink = false; lanOpen = true; }
   battleOpen = false;
+  btlWild = false;
   btlMenu = 0;
 }
 
@@ -4024,6 +4297,7 @@ void battleTap(int16_t x, int16_t y) {
     btlFreeSprites();
     audioMusic(MUS_NONE);
     battleOpen = false;
+    btlWild = false;
     if (btlLink) { btlLink = false; lanOpen = true; }
     return;
   }
@@ -4032,6 +4306,7 @@ void battleTap(int16_t x, int16_t y) {
     if (btlOver) {
       btlFreeSprites();
       battleOpen = false;
+      btlWild = false;
       // Back to the LAN screen rather than all the way out: that is where a
       // rematch is offered, and re-pairing for every fight would be tedious.
       if (btlLink) { btlLink = false; lanOpen = true; }
@@ -4041,14 +4316,39 @@ void battleTap(int16_t x, int16_t y) {
     return;
   }
   if (btlMenu == 0) {
-    if (x >= BTL_GRID_X - BTL_HIT_PAD && x <= BTL_GRID_X + 328 + BTL_HIT_PAD &&
-        y >= BTL_HIT_Y0(0) && y <= BTL_HIT_Y1(0)) {
-      sfxPlay(SFX_TAP);
-      btlMenu = 1;                       // FIGHT
-      return;
+    if (btlCellHit(0, x, y)) { sfxPlay(SFX_TAP); btlMenu = 1; return; }   // FIGHT
+    if (btlCellHit(1, x, y)) {
+      if (btlLink) { sfxPlay(SFX_DENY); return; }   // see renderBattle
+      sfxPlay(SFX_TAP); btlMenu = 3; btlBagPage = 0; return;
     }
     if (btlCellHit(2, x, y)) { sfxPlay(SFX_TAP); btlMenu = 2; return; }
     if (btlCellHit(3, x, y)) { btlRun(); return; }
+    return;
+  }
+  if (btlMenu == 3) {
+    if (btlBackTap(x, y)) return;
+    uint8_t shown = 0;
+    uint8_t n = bag.distinctCount();
+    for (uint8_t idx = 0; idx < n; idx++) {
+      ItemKey k = bag.keyAt(idx);
+      if (!itemUsableInBattle(k)) continue;
+      if (shown < btlBagPage * 4) { shown++; continue; }
+      int cell = shown - btlBagPage * 4;
+      if (cell >= 4) break;
+      shown++;
+      if (!btlCellHit(cell, x, y)) continue;
+      // ONE predicate decides whether a ball may be thrown, and the draw above
+      // asks the same one -- a greyed cell that still worked is the exact fault
+      // uiButtonDisabled() exists to prevent on the home row.
+      if (itemIsBall(k)) {
+        if (!btlWild) { sfxPlay(SFX_DENY); return; }
+        btlThrowBall(k);
+      } else {
+        btlUseItem(k);
+      }
+      return;
+    }
+    btlMenu = 0;      // anywhere else backs out
     return;
   }
   if (btlMenu == 2) {
@@ -4753,13 +5053,23 @@ void renderGyms() {
     if (i == gymPage) gfx->fillCircle(dx, 366, 5, UI_INK);
     else gfx->drawCircle(dx, 366, 4, UI_INK);
   }
-  // the other kind of battle lives here too
-  gfx->fillRoundRect(148, 380, 170, 32, 9, UI_BG_DAY);
-  gfx->drawRoundRect(148, 380, 170, 32, 9, UI_INK);
-  gfx->setTextColor(UI_INK);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - strlen(T(S_LAN)) * 6, 388);
-  gfx->print(T(S_LAN));
+  // The two other kinds of battle live here too. This screen is the battle hub
+  // -- swipe left reaches it -- and wild encounters had nowhere else to go:
+  // every gesture from the main screen is already spoken for.
+  const char *other[2] = { T(S_LAN), T(S_EXPLORE) };
+  for (int i = 0; i < 2; i++) {
+    int bx = GYMBTN_X(i);
+    // EXPLORE is dead while there is nothing to send out. Stated as what is
+    // ALLOWED rather than as a list of exclusions -- a guard written the other
+    // way rots every time a state is added.
+    bool live = (i == 0) || (!pet.isEgg() && pet.ceremony == CER_NONE);
+    gfx->fillRoundRect(bx, GYMBTN_Y, GYMBTN_W, GYMBTN_H, 9, live ? UI_BG_DAY : UI_TRACK);
+    gfx->drawRoundRect(bx, GYMBTN_Y, GYMBTN_W, GYMBTN_H, 9, live ? UI_INK : 0x8410);
+    gfx->setTextColor(live ? UI_INK : 0x8410);
+    gfx->setTextSize(2);
+    gfx->setCursor(bx + (GYMBTN_W - (int)strlen(other[i]) * 12) / 2, GYMBTN_Y + 8);
+    gfx->print(other[i]);
+  }
   gfx->flush();
 }
 
@@ -5151,12 +5461,23 @@ void renderCard() {
 static void menuRowLabel(int i, char *out, size_t n) {
   switch (i) {
     case 0: snprintf(out, n, "%s", T(S_STATS)); break;
-    case 1: snprintf(out, n, T(S_POKEDEX_FMT), pet.registeredCount(), DEX_COUNT); break;
-    case 2: snprintf(out, n, "%s", T(S_SETTINGS)); break;
-    case 3: snprintf(out, n, "%s", T(S_RETIRE)); break;
+    case 1: snprintf(out, n, "%s", T(S_BAG)); break;
+    case 2: snprintf(out, n, T(S_POKEDEX_FMT), pet.registeredCount(), DEX_COUNT); break;
+    case 3: snprintf(out, n, "%s", T(S_SETTINGS)); break;
+    case 4: snprintf(out, n, "%s", T(S_RETIRE)); break;
     default: snprintf(out, n, "%s", T(S_CLOSE)); break;
   }
 }
+
+// Where a menu row is, asked of the firmware rather than restated.
+//
+// touch_test held the literal `104 + 16 + 22` next to a comment claiming it was
+// MENU_ROW_Y(0) + 22 -- which it never was. It landed one pixel inside row 0
+// and passed for that reason alone, until the panel gained a sixth row and the
+// same tap started opening the BAG. A test that keeps its own copy of a layout
+// proves the transcription; see CLAUDE.md on rpickPageCount() and
+// uiButtonHeights(), which exist for exactly this.
+int uiMenuRowCenterY(int i) { return MENU_ROW_Y(i) + MENU_ROW_H / 2; }
 
 void drawMenu() {
   // dim the game behind the panel so the overlay reads as modal, and so it is
@@ -5170,7 +5491,7 @@ void drawMenu() {
   for (int i = 0; i < MENU_ROWS; i++) {
     int y = MENU_ROW_Y(i);
     bool close = (i == MENU_ROWS - 1);
-    bool dead = (i == 3 && !pet.canRetireNow());   // an egg or a companion
+    bool dead = (i == 4 && !pet.canRetireNow());   // an egg or a companion
     gfx->fillRoundRect(MENU_X + 18, y, MENU_W - 36, MENU_ROW_H, 12,
                        close || dead ? UI_TRACK : UI_BG_DAY);
     gfx->drawRoundRect(MENU_X + 18, y, MENU_W - 36, MENU_ROW_H, 12, UI_INK);
@@ -5181,6 +5502,239 @@ void drawMenu() {
     gfx->setCursor(CX - (int)strlen(lbl) * 6, y + MENU_ROW_H / 2 - 8);
     gfx->print(lbl);
   }
+}
+
+// ---------- who you are raising ----------
+
+// Exchange the creature on the main screen with a stored one.
+//
+// A TRUE exchange: the live pet takes the slot the newcomer vacates, so this
+// needs no free slot and nothing can be lost. Both records carry their full
+// care state, so swapping away and back returns the creature exactly as it was
+// rather than handing back a blanked copy -- which is the whole reason
+// PartyMon grew a care block.
+//
+// An EGG is the one asymmetric case: it has nothing to bank, so the slot simply
+// empties. That is what the old frozen BRING BACK did, and it is the only way
+// this can cost you anything.
+void focusSwap(uint8_t slot) {
+  if (slot >= PARTY_SLOTS) return;
+  PartyMon incoming = party.slots[slot];   // by value: the slot is about to change
+  if (incoming.empty()) return;
+  if (pet.isEgg()) party.releaseAt(slot);
+  else party.replaceAt(slot, pet.toPartyMon());
+  pet.switchTo(incoming);
+}
+
+// ---------- the bag ----------
+
+// How many pages the field bag needs. One even when empty, so the screen can
+// say so instead of drawing nothing and reading as a crash.
+uint8_t bagPages() {
+  uint8_t n = bag.distinctCount();
+  return n ? (uint8_t)((n + BAG_PER_PAGE - 1) / BAG_PER_PAGE) : 1;
+}
+
+// A toast over the bag: what the last item did. Not a dialog -- using a vitamin
+// is not a decision, and a confirmation for every tap would make training worse
+// than the punching bag it competes with.
+static char bagMsg[40] = "";
+static uint32_t bagMsgUntil = 0;
+
+static void bagSay(const char *fmt, const char *arg) {
+  snprintf(bagMsg, sizeof(bagMsg), fmt, arg);
+  bagMsgUntil = millis() + 2200;
+}
+
+// Applies a field item to the live pet. Returns false when the item was valid
+// but had nothing to do -- a fully trained stat, say -- which the caller reports
+// rather than silently consuming the item.
+static bool bagUseOnPet(ItemKey k) {
+  const ItemEntry &e = itemEntry(k);
+  if (e.category != IC_TRAIN) return false;
+  // The IV-bound ceiling applies here exactly as it does to the punching bag and
+  // to a gym reward. An item that could push past trMaxFor() would make the IV
+  // roll decorative, which is the one thing it must not be.
+  uint8_t *cur;
+  uint8_t cap;
+  switch ((uint8_t)e.param) {
+    case TRAIN_ATK: cur = &pet.trAtk; cap = pet.trMaxAtk(); break;
+    case TRAIN_DEF: cur = &pet.trDef; cap = pet.trMaxDef(); break;
+    default:        cur = &pet.trSpe; cap = pet.trMaxSpe(); break;
+  }
+  if (*cur >= cap) return false;
+  uint16_t next = (uint16_t)*cur + e.amount;
+  *cur = next > cap ? cap : (uint8_t)next;
+  pet.flushSave();
+  return true;
+}
+
+void renderBag() {
+  gfx->fillScreen(RGB565_BLACK);
+  gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - (int)strlen(T(S_BAG)) * 6, 40);
+  gfx->print(T(S_BAG));
+
+  uint8_t n = bag.distinctCount();
+  uint8_t pages = bagPages();
+  if (bagPage >= pages) bagPage = 0;
+  if (!n) {
+    gfx->setTextColor(UI_TRACK);
+    gfx->setCursor(CX - (int)strlen(T(S_BAG_EMPTY)) * 6, CY - 8);
+    gfx->print(T(S_BAG_EMPTY));
+  }
+  for (uint8_t i = 0; i < BAG_PER_PAGE; i++) {
+    uint8_t idx = (uint8_t)(bagPage * BAG_PER_PAGE + i);
+    if (idx >= n) break;
+    ItemKey k = bag.keyAt(idx);
+    int y = BAG_ROW_Y(i);
+    bool usable = itemUsableInField(k);
+    gfx->fillRoundRect(76, y, 314, 50, 10, usable ? UI_WHITE : UI_TRACK);
+    gfx->drawRoundRect(76, y, 314, 50, 10, UI_INK);
+    gfx->setTextColor(usable ? UI_INK : 0x8410);
+    gfx->setTextSize(2);
+    gfx->setCursor(92, y + 17);
+    gfx->print(itemEntry(k).name);
+    char cnt[8];
+    snprintf(cnt, sizeof(cnt), "x%u", bag.count(k));
+    gfx->setCursor(374 - (int)strlen(cnt) * 12, y + 17);
+    gfx->print(cnt);
+  }
+  // A page NUMBER, not a dot row: the catalogue is append-only and a dot per
+  // page stopped fitting the round panel once the Pokedex reached 25 of them.
+  if (pages > 1) {
+    char pg[12];
+    snprintf(pg, sizeof(pg), "%u/%u", bagPage + 1, pages);
+    gfx->setTextColor(UI_INK);
+    gfx->setTextSize(2);
+    gfx->setCursor(CX - (int)strlen(pg) * 6, 386);
+    gfx->print(pg);
+  }
+  if (bagMsgUntil && millis() < bagMsgUntil) {
+    gfx->fillRoundRect(66, CY - 26, 334, 52, 12, UI_WHITE);
+    gfx->drawRoundRect(66, CY - 26, 334, 52, 12, UI_INK);
+    gfx->setTextColor(UI_INK);
+    gfx->setTextSize(2);
+    gfx->setCursor(CX - (int)strlen(bagMsg) * 6, CY - 8);
+    gfx->print(bagMsg);
+  }
+  gfx->setTextColor(UI_TRACK);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - (int)strlen(T(S_BACK)) * 6, 414);
+  gfx->print(T(S_BACK));
+  gfx->flush();
+}
+
+void bagTap(int16_t x, int16_t y) {
+  uint8_t n = bag.distinctCount();
+  for (uint8_t i = 0; i < BAG_PER_PAGE; i++) {
+    uint8_t idx = (uint8_t)(bagPage * BAG_PER_PAGE + i);
+    if (idx >= n) break;
+    int ry = BAG_ROW_Y(i);
+    if (x < 76 || x > 390 || y < ry || y > ry + 50) continue;
+    ItemKey k = bag.keyAt(idx);
+    if (!itemUsableInField(k) || pet.isEgg()) { sfxPlay(SFX_DENY); return; }
+    if (!bagUseOnPet(k)) { sfxPlay(SFX_DENY); bagSay("%s", T(S_ITEM_NOUSE)); return; }
+    bag.consume(k);
+    sfxPlay(SFX_TAP);
+    bagSay(T(S_ITEM_USED), itemEntry(k).name);
+    return;
+  }
+  bagOpen = false;   // anywhere else closes, like every other list screen
+}
+
+// ---------- wild encounters ----------
+
+// Rolls a whole wild individual and opens the fight.
+//
+// The species, the level band, the tier and the shiny roll are all decided
+// HERE and remembered, because a capture has to hand back the creature that was
+// actually fought. Re-rolling any of it at capture time would mean the thing
+// you caught was not the thing on screen.
+bool startWildBattle(bool hard) {
+  if (pet.isEgg() || pet.ceremony != CER_NONE) return false;
+  uint8_t tier = wildTierForRoll((uint8_t)random(100));
+  int16_t dex = wildPickSpecies(pet.region, tier, (uint32_t)random(65536) * 31u + random(31));
+  // A tier can be empty when only some packs are installed -- Kanto has no
+  // R_LEGENDARIO gap, but a future region might. Fall back rather than refusing
+  // the encounter, since "nothing happened" reads as a broken button.
+  if (!dex) dex = wildPickSpecies(pet.region, R_COMUN, random(65536));
+  if (!dex) return false;
+
+  uint8_t lo = wildLevelMin(pet.level(), hard);
+  uint8_t hi = wildLevelMax(pet.level(), hard);
+  wildDex = dex;
+  wildLvl = (uint8_t)(lo + random(hi - lo + 1));
+  for (int i = 0; i < 4; i++) wildIv[i] = (uint8_t)(8 + random(24));
+  // Bonus 0: nothing in this build earns one yet, so every wild shiny is the
+  // flat 1/4096. The parameter stays because it is where a farewell reward
+  // would land, and wild_test already pins the curve it would follow.
+  wildShiny = wildShinyForRoll((uint32_t)random(WILD_SHINY_SCALE), 0);
+  wildApplyShiny(wildShiny, wildIv[0], wildIv[1], wildIv[2], wildIv[3]);
+  wildCaught = false;
+  wildDropN = 0;
+
+  buildSquad(0, TRAINER_TEAM_MAX, squadMask);
+  if (!btlSquadN) return false;
+
+  // Built through Pet like every other opponent, so it uses the same stat
+  // formula and the same learnset-driven moveset the player's creature does.
+  Pet foe;
+  foe.dbgHatchAs(dex, wildShiny);
+  foe.ivAtk = wildIv[0]; foe.ivDef = wildIv[1];
+  foe.ivSpe = wildIv[2]; foe.ivHp = wildIv[3];
+  foe.ageMinutes = (uint32_t)(wildLvl ? wildLvl - 1 : 0) * MINUTES_PER_LEVEL;
+  foe.relearnFromLevel();
+  combatantFromPet(btlFoe, foe);
+  btlFoe.shiny = wildShiny;
+
+  btlWild = true;
+  btlLink = false;
+  btlTrainer = -1;
+  btlHard = hard;
+  btlFoeAt = 0;
+  btlFoeSquadN = 0;
+  btlMsgCount = 0;
+  btlOver = false;
+  btlWon = false;
+  btlMenu = 0;
+  btlBagPage = 0;
+  btlWinUntil = 0;
+  btlSwapWho = -1;
+  btlFaintUntil[0] = btlFaintUntil[1] = 0;
+  btlEnterUntil[0] = btlEnterUntil[1] = 0;
+  btlHpShown[0] = btlYou.maxHp;
+  btlHpShown[1] = btlFoe.maxHp;
+  btlSyncSprite(0, btlYou);
+  btlSyncSprite(1, btlFoe);
+  audioMusic(MUS_BATTLE);
+  btlLungeUntil[0] = btlLungeUntil[1] = 0;
+  btlHitUntil[0] = btlHitUntil[1] = 0;
+  battleOpen = true;
+  btlSay(T(S_WILD_MET), DEX_TBL[dex].name);
+  return true;
+}
+
+// The wild creature as a storable record. It goes through the same PartyMon the
+// party and box already hold, so a caught creature is a first-class member the
+// moment it lands: it can be swapped in, raised, evolved and battled with.
+PartyMon wildToPartyMon() {
+  PartyMon m;
+  m.dex = wildDex;
+  m.level = wildLvl;
+  m.ivAtk = wildIv[0]; m.ivDef = wildIv[1];
+  m.ivSpe = wildIv[2]; m.ivHp = wildIv[3];
+  m.shiny = wildShiny ? 1 : 0;
+  for (int i = 0; i < MOVE_SLOTS; i++) m.moves[i] = btlFoe.moves[i];
+  // A caught creature has real care state from the start rather than being a
+  // v0 record, so switching to it does not reset a creature that was never
+  // banked in the first place. Its age IS its level: nothing raised it.
+  m.stateVersion = 1;
+  m.ageMinutes = (uint32_t)(wildLvl ? wildLvl - 1 : 0) * MINUTES_PER_LEVEL;
+  m.lastLearnLevel = wildLvl;   // do not replay gates it already passed
+  return m;
 }
 
 // ---------- training submenu (5th icon) ----------

@@ -69,6 +69,17 @@ void Party::begin() {
         memcpy(box, tmp, sizeof(box));
       free(tmp);
     }
+  } else if (boxStored && boxStored % BOX_SLOTS == 0 && boxStored < sizeof(box)) {
+    // A SHORTER stride, i.e. a blob written before PartyMon grew. The party
+    // above has always had this path; the box did not, so the first time the
+    // record gained a field every stored box would have read as empty and been
+    // overwritten by the next boxSave(). Same migration, same reasoning.
+    size_t oldStride = boxStored / BOX_SLOTS;
+    uint8_t old[sizeof(box)];
+    prefs.getBytes("box", old, boxStored);
+    for (int i = 0; i < BOX_SLOTS; i++)
+      memcpy(&box[i], old + i * oldStride, oldStride);
+    boxSave();   // rewrite in the current layout so this only happens once
   }
   for (auto &s : box) {
     if (s.dex < 1 || s.dex > DEX_COUNT) s.dex = 0;

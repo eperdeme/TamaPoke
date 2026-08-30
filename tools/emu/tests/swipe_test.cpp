@@ -8,6 +8,8 @@
 #include "pet.h"
 #include "moves.h"
 #include "party.h"
+#include "items.h"
+#include "inventory.h"
 #include <cstdio>
 uint32_t g_seed=2; FakeSerial Serial; FakeESP ESP; FakeWire Wire;
 volatile int g_touchX=0,g_touchY=0; volatile bool g_touchDown=false;
@@ -26,6 +28,7 @@ extern bool gymPick, galleryPick;
 extern uint8_t movePickSlot, movePickParty, boxSel, boxSwapFrom;
 extern uint16_t squadMask;
 extern uint8_t pickTrainer; extern bool pickHard;
+extern bool bagOpen; extern uint8_t bagPage;
 void pickDefault(uint8_t);
 uint8_t squadCap(uint8_t, bool);
 // Asked of the firmware, not recomputed here: a test that keeps its own copy of
@@ -44,6 +47,7 @@ static void clearAll(){
   gymPick=galleryPick=false;
   cardOpen=galleryOpen=clockOpen=kbOpen=menuOpen=partyOpen=partyPick=false;
   trainOpen=movePickOpen=battleOpen=gymOpen=playerOpen=boxOpen=pickOpen=false;
+  bagOpen=false;
   partyDetail=0; boxSel=boxSwapFrom=0;
 }
 // swipe left; the page must advance and the screen must stay open
@@ -76,6 +80,12 @@ int main(){
                                                   check("movepick", &movePickOpen, &movePickPage);
   clearAll(); pickTrainer=7; pickHard=false; pickDefault(squadCap(7,false)); pickOpen=true;
                                                   check("teampick", &pickOpen,     &pickPage);
+  // The bag is paged too. It needs enough DISTINCT items to reach a second page
+  // -- with one page it would close on the swipe and the check would fail for
+  // the right reason, which is not the same as passing.
+  clearAll();
+  for (ItemKey k=1;k<ITEM_COUNT;k++) bag.add(k, 1);
+  bagOpen=true;                                   check("bag",      &bagOpen,      &bagPage);
   // The Pokedex pages within ONE region and changes region on a vertical swipe.
   // Every species must be reachable: it was capped at 10 flat pages when the dex
   // was 151 long, which silently hid everything past 160 once it grew to 386.

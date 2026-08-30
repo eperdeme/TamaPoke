@@ -130,6 +130,22 @@ enum StrId : uint8_t {
   S_RELEASE_GONE,   // ...and the warning under it: this one does not come back
   S_BOX_TAKE,       // box detail sheet: move this creature into the party
   S_RETIRE_GONE,    // retire confirm: an early retire is not banked either
+  // Wild encounters, the bag, and choosing which creature you raise.
+  S_BAG,            // menu row, and the battle menu's fourth option
+  S_BAG_EMPTY,      // ...with nothing in it
+  S_EXPLORE,        // gym screen: go looking for a wild creature
+  S_WILD_MET,       // "A wild %s appeared!"
+  S_WILD_FLED,      // "%s fled!"
+  S_GOT_AWAY,       // running from a wild fight succeeded
+  S_NO_ESCAPE,      // ...and failed, which costs the turn
+  S_THREW,          // "You threw a %s"
+  S_CAUGHT,         // "%s was caught!"
+  S_BROKE_FREE,     // the ball failed
+  S_ITEM_USED,      // "Used %s"
+  S_ITEM_NOUSE,     // the item was valid but had nothing to do
+  S_FOUND_ITEM,     // a wild win's drop
+  S_FOCUS,          // party/box sheet: raise this one instead of the live pet
+  S_FOCUS_NOW,      // ...and the label once it already is the one being raised
   STR_COUNT
 };
 

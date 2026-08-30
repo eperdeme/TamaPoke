@@ -34,6 +34,8 @@ void setup();
 void loop();
 extern Pet pet;   // defined in the sketch
 extern bool trainOpen, sackOpen, gameOpen, menuOpen, cardOpen, movePickOpen, spdOpen;
+extern bool bagOpen;
+int uiMenuRowCenterY(int i);
 extern uint8_t movePickSlot, movePickPage;
 extern bool battleOpen, btlOver, btlWon;
 extern Combatant btlYou, btlFoe;
@@ -169,13 +171,30 @@ int main(int argc, char **argv) {
 
   click(233, 60);                        // name/status band opens the menu
   if (!menuOpen) { printf("FAIL: name band did not open the menu\n"); return 1; }
-  click(233, 104 + 16 + 22);             // menu row 0 == STATS == MENU_ROW_Y(0)+22
+  click(233, uiMenuRowCenterY(0));       // asked, not hardcoded: see the note there
   if (!cardOpen || cardPage != 1) {
     printf("FAIL: STATS row -> cardOpen=%d cardPage=%d (want 1,1)\n",
            (int)cardOpen, (int)cardPage);
     return 1;
   }
   printf("PASS: menu STATS row opens the stats card page\n");
+
+  // The row BELOW it is the bag, and it must be its own row rather than more of
+  // row 0's hit area -- which is how the tap above used to land.
+  cardOpen = false;
+  click(233, 60);
+  click(233, uiMenuRowCenterY(1));
+  if (!bagOpen || cardOpen) {
+    printf("FAIL: BAG row -> bagOpen=%d cardOpen=%d (want 1,0)\n",
+           (int)bagOpen, (int)cardOpen);
+    return 1;
+  }
+  printf("PASS: menu BAG row opens the bag\n");
+  bagOpen = false;
+  // Put the card back: everything below this line continues from it, and a
+  // check that quietly changes the state its neighbours depend on is how a
+  // suite starts failing somewhere other than where it broke.
+  cardOpen = true;
 
   // ---- moves card page -> picker -> slot actually changes, with no duplicates
   cardPage = 2;
