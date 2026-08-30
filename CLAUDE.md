@@ -198,6 +198,50 @@ caught a bad test roughly as often as it has confirmed a good one. If an
 assertion cannot fail, it is not a test. A guard phrased as "X never happens"
 needs a companion proving the mechanism actually engaged.
 
+**A test that keeps its own copy of a LAYOUT is the same disease.** `touch_test`
+aimed at the menu's STATS row with the literal `104 + 16 + 22`, beside a comment
+claiming it was `MENU_ROW_Y(0) + 22`. It never was: it landed ONE PIXEL inside
+row 0 and passed for that reason alone. Adding a sixth row moved the boundary
+and the same tap started opening the BAG. It asks `uiMenuRowCenterY(i)` now --
+the same reason `rpickPageCount()`, `uiButtonHeights()` and `btlCellHit()` are
+functions rather than numbers a test may re-type.
+
+**And a state a test leaves behind is the next test's input.** The bag check
+added next to it closed the stats card, and the move-picker check three lines
+below had always continued from that card being open -- so the suite failed
+somewhere other than where it broke. Restore what you borrow, or start fresh.
+
+### 5. sizeof(PartyMon) is load-bearing in four places
+
+Growing the stored record is supported, but only THREE of the four paths that
+depend on its size knew that. Appending the care block to `PartyMon` (so a
+creature can be swapped in and out without being reset) broke the other one:
+
+| what | how it depends on the size | state before |
+|---|---|---|
+| `Party::begin()`, the party | migrates a shorter blob by length | correct |
+| `Party::begin()`, the box | **no length migration at all** | would have silently emptied every box |
+| `save.cpp` `MAX_VAL` | **hardcoded 768**, "the box is the largest, at 18 records" | box dropped from every EXPORT while every other field still restored |
+| `SAVE_FIELDS` | must list every NVS key | fine, but the new `bag` key had to be added |
+
+The box one is the dangerous shape: `getBytes` refuses an oversized blob and
+leaves the destination alone, so the box reads back EMPTY and the next
+`boxSave()` writes that emptiness over the real one. It has the party's
+migration now.
+
+`MAX_VAL` is the more instructive one. It was a literal with a comment
+explaining the arithmetic, which is a number and a promise that drift
+independently -- a backup that is quietly PARTIAL is worse than no backup, and
+nothing about the failure was visible except `save_test`. It is
+`sizeof(PartyMon) * BOX_SLOTS` now. **Derive it; never restate it** -- the same
+rule as § "The same trap wearing a table instead of a width".
+
+`stateVersion` on the record defaults to **0, not 1**, and that is deliberate.
+The migration `memcpy`s `oldStride` bytes over a default-constructed record and
+leaves the tail alone, so any field defaulting to "I have real data" is a lie
+the moment the struct grows again. 0 means "this predates care state", and
+`switchTo()` reads the banked level instead.
+
 ### 4. What the emulator structurally cannot see
 
 Timing, DMA tearing, PSRAM pressure, audio, battery, the radio -- and two more

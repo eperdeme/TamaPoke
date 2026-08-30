@@ -3,7 +3,7 @@
 [![Flash in browser](https://img.shields.io/badge/flash-in%20browser-FF6B00?logo=googlechrome&logoColor=white)](https://dylanpdao.github.io/TamaPoke/web/)
 [![MakerWorld](https://img.shields.io/badge/MakerWorld-3D%20case-00AE42?logo=bambulab&logoColor=white)](https://makerworld.com/es/models/2937822-tamapoke-a-pokemon-pokeball-tamagotchi)
 ![Board](https://img.shields.io/badge/board-ESP32--S3%20round%20AMOLED-E7352C?logo=espressif&logoColor=white)
-![Firmware](https://img.shields.io/badge/firmware-v3.10-8A2BE2)
+![Firmware](https://img.shields.io/badge/firmware-v3.11-8A2BE2)
 ![Code](https://img.shields.io/badge/code-MIT-blue)
 ![Languages](https://img.shields.io/badge/languages-6-FFCB05)
 [![Stars](https://img.shields.io/github/stars/DylanPDao/TamaPoke?style=flat&logo=github&color=yellow)](https://github.com/DylanPDao/TamaPoke/stargazers)
@@ -100,17 +100,17 @@ way. Same reasoning that makes Hoenn Emerald throughout.
 
 ## Status
 
-Running on hardware. Implemented: 386 species + shinies animated from microSD, full
+Running on hardware. Implemented: 809 species + shinies animated from microSD, full
 life cycle (egg by rarity → evolution → farewell/release/runaway, each gated
-behind a decision dialog), bred-Pokédex with gallery, battle stats (IVs +
+behind a decision dialog), bred-Pokédex with gallery, turn-based trainer, wild
+and LAN battles, **wild capture and a shared bag**, battle stats (IVs +
 training), retention hooks (streak / bond / medals / name), biome + real-time
 backgrounds, ball minigame, training bag, animated bath, RTC with offline
 progression, battery (AXP2101) and PWR button, anti-burn-in dimming,
 **sound (ES8311)**, **6 UI languages (English default)**, **starter choice on
 first run**, and a one-click **web installer**.
 
-Pending: wild encounters / battle (designed, not implemented), 3D case, soak
-test. See **Roadmap**.
+Pending: 3D case, soak test. See **Roadmap**.
 
 ## Game manual (the actual numbers)
 
@@ -213,7 +213,14 @@ brings ELECTIVIRE, MAGMORTAR and RHYPERIOR waiting on exactly the same thing.
 ### Your party
 - A **farewell** or a **release** doesn't end the relationship any more — the creature
   **joins your party** (6 slots), keeping its species, nickname, shiny status, IVs,
-  training and the level it reached. Frozen there: it no longer ages or trains.
+  training, moves, the level it reached **and its whole care state**. It is frozen
+  *while stored*: it does not age or train until you raise it again.
+- **Choosing who you raise.** Tap a party slot and press **RAISE THIS ONE**. It is a
+  true *exchange* — the creature on the main screen takes the slot the newcomer
+  vacates — so it needs no free slot and nothing is ever lost. Both keep their
+  full care state, so swapping away and back returns the creature exactly as it
+  was rather than a blanked copy. The one asymmetric case is an **egg**: it has
+  nothing to bank, so its slot simply empties.
 - A **runaway does not join.** It's the one ending with a cost, and letting a
   neglected pet come back on the team would remove it. **Neither does an early
   retire** — see "Retiring a creature early" below.
@@ -224,7 +231,86 @@ brings ELECTIVIRE, MAGMORTAR and RHYPERIOR waiting on exactly the same thing.
   rather than jumping straight into the party, and **TO PARTY** does that.
 - With a full party you're taken straight to the party screen to pick who the
   newcomer replaces — or to let it go. Nothing is ever overwritten silently.
-- *(Gym battles, which is what the party is for: on the roadmap.)*
+
+### Wild encounters, catching and the bag
+
+**EXPLORE**, on the gym screen next to LAN BATTLE. That screen is the battle hub
+(swipe left), and it is where wild encounters had to live: every gesture from the
+main screen is already spoken for.
+
+The encounter rolls a rarity tier, then a species of that tier that is **in an
+installed region pack and has art** — a caught creature is kept forever, so one
+that could only ever draw as a dex number would be a permanent defect.
+
+| Tier | Chance |
+|---|---|
+| ✨ Legendary | 1 % |
+| 🔵 Rare | 7 % |
+| ⚪ Evolved | 22 % |
+| ⚪ Common | the rest |
+
+- **Level**: within 5 either side of yours on normal; the whole 1–100 ladder on hard.
+- **Shiny**: exactly **1/4096** per encounter, flooring every IV at 20 without
+  capping one that already rolled higher.
+- Ordinary IVs roll **8–31**, independently.
+
+**Catching.** Pick a ball from the battle **BAG**. It spends your turn either way,
+so throwing is never free.
+
+`chance = base × hpFactor × statusFactor × ball / 10000`, capped at **95 %** — a
+ball is always a gamble. The Master Ball is the one exception and never rolls.
+
+| | |
+|---|---|
+| base | Common 30 · Evolved 24 · Rare 18 · Legendary 5 |
+| hpFactor | 100 at full health rising to **180** just before fainting |
+| statusFactor | **130** with any ailment, 100 without |
+| ball | Poké **100** · Great **150** · Ultra **200** · Master *guaranteed* |
+
+**Getting away.** Running from a wild fight is a roll, not a certainty: **90 %**
+against something at or below your level, scaled down by the level ratio above it
+with a **10 % floor**. Failing costs the turn.
+
+**The wild creature can leave too**, and its curve is a tent rather than a slope —
+it stops running once it is nearly beaten, which is what makes weakening it the
+right way to catch it instead of a race:
+
+| Its HP | Chance to flee |
+|---|---|
+| above 40 % | 0 % |
+| 40 % | 10 % |
+| 20 % | 20 % (the peak) |
+| 10 % and below | 10 % |
+
+It spends its **action** fleeing rather than fleeing *and* attacking, and a fight
+it leaves pays nothing.
+
+**Rewards.** A win grants **1** weighted item on normal and **2** on hard, plus one
+independent **30 %** roll for a bonus. Each draw excludes every earlier one, so a
+settlement can never list the same item twice.
+
+| Item | Weight | What it does |
+|---|---|---|
+| Poké Ball | 30 | catch ×100 |
+| Potion | 20 | +20 HP |
+| Great Ball | 15 | catch ×150 |
+| Super Potion / Full Heal | 10 each | +50 HP · clears an ailment |
+| Protein / Iron / Carbos | 8 each | +5 STRENGTH / DEFENCE / SPEED |
+| Ultra Ball | 6 | catch ×200 |
+| Hyper Potion | 4 | +120 HP |
+| **Master Ball** | **1** | catches without fail |
+
+A new save starts with **5 Poké Balls and 3 Potions**. Stacks cap at 99.
+
+The **BAG** menu row is the field bag, and it only offers the vitamins: the pet has
+no persistent HP or ailment outside a fight, so a potion in the field would have
+nothing to act on. Vitamins respect the same **IV-bound training ceiling**
+(`trMaxFor`) as the punching bag and a gym reward — an item that could push past it
+would make the IV roll decorative.
+
+A caught creature takes a party slot, then a box slot, then asks — the same path a
+farewell already uses. It is **not** added to the Pokédex on capture: registration
+means "you raised this", so it happens when you actually make it the one you raise.
 
 ### The three endings (you choose & witness each — none auto-fire)
 - 💛 **Farewell** — when it's a **final form** that has lived **3 days**. A button
@@ -668,6 +754,9 @@ legendary/shiny IV guarantees, which apply at hatch) ·
 runaway-ready state) · `WIPE` (factory reset → new game) · `BEEP` (audio test) ·
 `REG` (Pokédex) · `EGGS` (simulate 20 eggs) · `GAL` (gallery) · `CAREDAY` ·
 `PARTY` / `PARTY <dex>` / `PARTY CLEAR` (inspect and fill the party) ·
+`FOCUS <slot>` (swap the creature you are raising with a party slot) ·
+`BAG` (list it) · `GIVE <key> [n]` (stock it) · `WILD` / `WILD HARD` (force an
+encounter) ·
 `TIME <epoch>` / `RTCSET <epoch>` · `HEALTH` (uptime + heap for the soak test) ·
 `LS` / `PUT` (SD files).
 
@@ -675,12 +764,11 @@ To test fast: lower `PET_TICK_MS`, `MINUTES_PER_LEVEL` and `FAREWELL_AGE_MIN` in
 
 ## Roadmap
 
-- **Wild encounters / battle** — designed (see project memory): resolution by
-  ATK/DEF/SPD with PMD Attack/Hurt animations, trainer rank as endgame. Style
-  still to pick (auto / timing / turn-based).
 - **Soak test** 24–48 h (instrumentation ready: `HEALTH` command/heartbeat).
+- **Galar / Paldea** — the pipeline already handles them; needs a
+  `gen_dex_data.py` run and a fresh `check_sprites.py --emit`.
 
-*(Done: 3D-printed case [published on MakerWorld](https://makerworld.com/es/models/2937822-tamapoke-a-pokemon-pokeball-tamagotchi); repo public with the browser installer + one-click sprite bundle.)*
+*(Done: wild encounters, catching and the bag; 3D-printed case [published on MakerWorld](https://makerworld.com/es/models/2937822-tamapoke-a-pokemon-pokeball-tamagotchi); repo public with the browser installer + one-click sprite bundle.)*
 
 ## Community forks
 

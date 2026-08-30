@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include <string.h>
+#include "party.h"   // MAX_VAL is derived from the box, see below
 
 // Every key the firmware persists. Adding one here is the whole job of adding
 // it to the backup; save_test fails if a key exists in NVS and not in this list.
@@ -30,14 +31,19 @@ const SaveField SAVE_FIELDS[] = {
   { "strk", SK_U16 },   { "bstrk", SK_U16 },  { "cday", SK_U32 },
   { "medal", SK_U16 },  { "tmedal", SK_U16 }, { "mstone", SK_U16 },
   { "ghi", SK_U16 },    { "shi", SK_U16 },    { "qhi", SK_U16 },
-  // the banked creatures
-  { "party", SK_BYTES }, { "box", SK_BYTES },
+  // the banked creatures, and what you are carrying
+  { "party", SK_BYTES }, { "box", SK_BYTES }, { "bag", SK_BYTES },
   // settings, so a restored device plays the way it did
   { "lang", SK_U8 },    { "snd", SK_BOOL },   { "vol", SK_U8 },
 };
 const uint16_t SAVE_FIELD_COUNT = sizeof(SAVE_FIELDS) / sizeof(SAVE_FIELDS[0]);
 
-#define MAX_VAL 768        // the box is the largest, at 18 records
+// The largest single value in the backup, which is the box: BOX_SLOTS whole
+// records. DERIVED, never a literal. It was written as 768 when a PartyMon was
+// 42 bytes, and the moment the record grew the box silently stopped being
+// restored while every other field still was -- a backup that is quietly
+// partial is worse than none. save_test caught exactly that.
+#define MAX_VAL (sizeof(PartyMon) * BOX_SLOTS)
 
 static uint16_t crc16(const uint8_t *p, size_t n) {
   uint16_t c = 0xFFFF;

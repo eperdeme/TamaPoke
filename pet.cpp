@@ -281,6 +281,99 @@ void Pet::reviveFrom(const PartyMon &m) {
   save();
 }
 
+// THE single place a live pet becomes a stored record. The farewell, a focus
+// swap and a wild capture all end up here; three callers each keeping their own
+// copy of this is the exact shape of CLAUDE.md § "A rule enforced in one path
+// but not its twin", and a field forgotten in one of them would silently blank
+// that field for whichever creature took that route.
+PartyMon Pet::toPartyMon() const {
+  PartyMon m;
+  m.dex = speciesId;
+  m.level = level();
+  m.medals = medals;
+  m.ivAtk = ivAtk;
+  m.ivDef = ivDef;
+  m.ivSpe = ivSpe;
+  m.ivHp = ivHp;
+  m.trAtk = trAtk;
+  m.trDef = trDef;
+  m.trSpe = trSpe;
+  m.shiny = shiny ? 1 : 0;
+  for (int i = 0; i < MOVE_SLOTS; i++) m.moves[i] = moves[i];
+  strncpy(m.nick, nick, sizeof(m.nick) - 1);
+  m.nick[sizeof(m.nick) - 1] = 0;
+  m.stateVersion = 1;
+  m.fullness = fullness;
+  m.joy = joy;
+  m.energy = energy;
+  m.hygiene = hygiene;
+  m.poops = poops;
+  m.weight = weight;
+  m.bond = bond;
+  m.berryKnown = berryKnown ? 1 : 0;
+  m.careMistakes = careMistakes;
+  m.evoDeclinedLv = evoDeclinedLv;
+  m.lastLearnLevel = lastLearnLevel;
+  m.ageMinutes = ageMinutes;
+  return m;
+}
+
+// Make a stored creature the focused one. reviveFrom()'s twin, and the two are
+// deliberately different: that one hands back a frozen companion, this one
+// hands back a creature that carries on living.
+void Pet::switchTo(const PartyMon &m) {
+  if (m.empty()) return;
+  ceremony = CER_NONE;
+  neglectTicks = 0;
+  speciesId = m.dex;
+  prevSpeciesId = -1;
+  eggTaps = 0;
+  starterPick = false;
+  shiny = m.shiny != 0;
+  ivAtk = m.ivAtk; ivDef = m.ivDef; ivSpe = m.ivSpe; ivHp = m.ivHp;
+  trAtk = m.trAtk; trDef = m.trDef; trSpe = m.trSpe;
+  for (int i = 0; i < MOVE_SLOTS; i++) moves[i] = m.moves[i];
+  medals = m.medals;
+  mistakeCooldown = 0;
+  sleeping = false;
+  sleepAuto = SLEEP_NONE;
+  bondToday = 0;
+  learnQCount = 0;
+  frozen = false;          // the whole point: it ages and levels again
+  if (m.hasCareState()) {
+    ageMinutes = m.ageMinutes;
+    fullness = m.fullness;
+    joy = m.joy;
+    energy = m.energy;
+    hygiene = m.hygiene;
+    poops = m.poops;
+    weight = m.weight;
+    bond = m.bond;
+    berryKnown = m.berryKnown != 0;
+    careMistakes = m.careMistakes;
+    evoDeclinedLv = m.evoDeclinedLv;
+    lastLearnLevel = m.lastLearnLevel;
+  } else {
+    // Banked before care state was stored, so its banked level is all there is.
+    // Starting it fresh is the only honest reading -- inventing a care history
+    // would be worse than admitting the save never had one.
+    ageMinutes = (uint32_t)(m.level ? m.level - 1 : 0) * MINUTES_PER_LEVEL;
+    fullness = joy = energy = 80;
+    hygiene = 100;
+    poops = 0;
+    weight = 0;
+    bond = 0;
+    berryKnown = false;
+    careMistakes = 0;
+    evoDeclinedLv = 0;
+    lastLearnLevel = level();   // do not replay every gate it already passed
+  }
+  strncpy(nick, m.nick, sizeof(nick) - 1);
+  nick[sizeof(nick) - 1] = 0;
+  registerSpecies(speciesId);
+  save();
+}
+
 void Pet::snapshotForParty() {
   endedKind = CER_NONE;
   if (isEgg()) return;
@@ -292,21 +385,7 @@ void Pet::snapshotForParty() {
   // what this depends on, so retire_test drives the real update() rather than
   // calling the two halves by hand.
   if (retireIsEarly()) return;
-  endedMon = PartyMon();
-  endedMon.dex = speciesId;
-  endedMon.level = level();
-  endedMon.medals = medals;
-  endedMon.ivAtk = ivAtk;
-  endedMon.ivDef = ivDef;
-  endedMon.ivSpe = ivSpe;
-  endedMon.ivHp = ivHp;
-  endedMon.trAtk = trAtk;
-  endedMon.trDef = trDef;
-  endedMon.trSpe = trSpe;
-  endedMon.shiny = shiny ? 1 : 0;
-  for (int i = 0; i < MOVE_SLOTS; i++) endedMon.moves[i] = moves[i];  // frozen too
-  strncpy(endedMon.nick, nick, sizeof(endedMon.nick) - 1);
-  endedMon.nick[sizeof(endedMon.nick) - 1] = 0;
+  endedMon = toPartyMon();
   endedKind = ceremony;
 }
 
