@@ -24,6 +24,10 @@
   esp-web-install-button[install-unsupported] { display:none; }
   .unsupported { display:none; color:var(--bad); font-weight:500; }
   .row { display:flex; gap:.75rem; align-items:center; flex-wrap:wrap; }
+  .pick { display:inline-flex; align-items:center; gap:.4rem; cursor:pointer;
+          border:1px solid #ccc; border-radius:8px; padding:.4rem .7rem; user-select:none; }
+  .pick:has(input:checked) { border-color:#e8503a; background:#fff1ee; }
+  .pick input { cursor:pointer; }
   #log { font-family: ui-monospace, monospace; font-size:.85rem; background:#1b1b25; color:#d8dcf0;
          border-radius:10px; padding:.75rem 1rem; margin-top:1rem; max-height:220px; overflow:auto; white-space:pre-wrap; display:none; }
   .bar { height:10px; background:var(--track); border-radius:5px; overflow:hidden; margin-top:.75rem; display:none; }
@@ -36,7 +40,7 @@
 <body>
 <div class="wrap">
   <h1>🐢 TamaPoke</h1>
-  <p class="sub">A 386-Pokémon tamagotchi for the Waveshare ESP32-S3-Touch-AMOLED-1.75.
+  <p class="sub">A 809-Pokémon tamagotchi for the Waveshare ESP32-S3-Touch-AMOLED-1.75.
      Install it from your browser — no Arduino, no drivers.</p>
 
   <p class="unsupported" id="unsupported">
@@ -87,24 +91,32 @@
   <h2><span class="num">2</span>Load the sprites onto the microSD</h2>
   <div class="step">
     <p>Put a microSD into the board (it formats itself). Press <b>Connect board</b>,
-       then a region. Any one of them works on its own — pick Johto or Hoenn if
-       that is the game you want — and the others can be added later without
-       redoing this one. Kanto is simply the usual place to start.</p>
+       tick the regions you want, then <b>Install selected</b>. Any one region works
+       on its own &mdash; pick Johto or Hoenn if that is the game you want &mdash; and
+       more can be added later without redoing the ones already on the card.
+       Kanto is simply the usual place to start.</p>
     <p class="note">⏱️ <b>This part is slow, and that is normal.</b> The sprites go over
        the USB serial link, so Kanto's 40 MB takes roughly <b>10–15 minutes</b>. Leave the
-       tab open and the card in. The progress bar moves the whole time.</p>
+       tab open and the card in. The progress bar moves the whole time. Every pack is
+       checksummed before a byte is sent, and a region that does not finish says so
+       loudly rather than reporting a smaller success.</p>
     <p class="note">Close the step-1 install tab first (only one program can use
        the port at a time).</p>
     <div class="row">
       <button id="connect">🔌 Connect board</button>
-      <button id="auto" data-region="kanto" disabled>⬇️ Kanto sprites (~40 MB)</button>
-      <button id="autoj" data-region="johto" disabled>⬇️ Johto (~27 MB)</button>
-      <button id="autoh" data-region="hoenn" disabled>⬇️ Hoenn (~38 MB)</button>
-      <button id="autos" data-region="sinnoh" disabled>⬇️ Sinnoh (~33 MB)</button>
-      <button id="autou" data-region="unova" disabled>⬇️ Unova (~40 MB)</button>
-      <button id="autok" data-region="kalos" disabled>⬇️ Kalos (~21 MB)</button>
-      <button id="autoa" data-region="alola" disabled>⬇️ Alola (~24 MB)</button>
+      <button id="install" disabled>⬇️ Install selected</button>
+      <label class="pick"><input type="checkbox" id="all"> <b>Select all</b></label>
     </div>
+    <div class="row" id="regions">
+      <label class="pick"><input type="checkbox" data-region="kanto" disabled> Kanto</label>
+      <label class="pick"><input type="checkbox" data-region="johto" disabled> Johto</label>
+      <label class="pick"><input type="checkbox" data-region="hoenn" disabled> Hoenn</label>
+      <label class="pick"><input type="checkbox" data-region="sinnoh" disabled> Sinnoh</label>
+      <label class="pick"><input type="checkbox" data-region="unova" disabled> Unova</label>
+      <label class="pick"><input type="checkbox" data-region="kalos" disabled> Kalos</label>
+      <label class="pick"><input type="checkbox" data-region="alola" disabled> Alola</label>
+    </div>
+    <p class="note" id="total">Pick one or more regions.</p>
     <p class="note">Have your own <code>.bin</code> files? <label style="cursor:pointer;text-decoration:underline">pick them manually<input id="files" type="file" accept=".bin" multiple disabled hidden></label></p>
     <p class="note">🎨 Want to make your own sprites? See <a href="https://github.com/DylanPDao/TamaPoke#generate-and-load-the-sprites-yourself" target="_blank">how to generate &amp; load them</a> in the repo.</p>
     <div class="bar" id="bar"><div></div></div>
@@ -171,6 +183,21 @@ async function sendOne(name, data) {
   return await waitFor('DONE', 30000);
 }
 
+// A dropped ack used to cost that species its sprite for good -- it draws as a
+// bare dex number, and the run still printed "Done". Retry before giving up.
+const SEND_TRIES = 3;
+async function sendOneRetrying(name, data) {
+  for (let attempt = 1; attempt <= SEND_TRIES; attempt++) {
+    if (await sendOne(name, data)) return true;
+    if (attempt < SEND_TRIES) {
+      log(`   retrying ${name} (${attempt}/${SEND_TRIES - 1})`);
+      lineBuf = '';                 // drop whatever the failed transfer left behind
+      await new Promise(r => setTimeout(r, 250));
+    }
+  }
+  return false;
+}
+
 // splits the sprites.pak bundle (TPAK) into its individual files
 function parsePak(buf) {
   const dv = new DataView(buf), td = new TextDecoder();
@@ -185,6 +212,11 @@ function parsePak(buf) {
   }
   let pos = off;
   for (const it of items) { it.data = new Uint8Array(buf, pos, it.size); pos += it.size; }
+  // The index and the payload must account for the file exactly. A truncated
+  // download otherwise surfaces as a Uint8Array constructor throwing halfway
+  // through, or worse as a short last sprite that uploads "successfully".
+  if (pos !== buf.byteLength)
+    throw new Error(`bundle is ${buf.byteLength} B but its index describes ${pos} B`);
   return items;
 }
 
@@ -193,11 +225,11 @@ async function sendAll(items) {
   const fill = bar.firstElementChild;
   let done = 0, fail = 0;
   for (const it of items) {
-    if (!await sendOne(it.name, it.data)) { log('   failed ' + it.name); fail++; }
+    if (!await sendOneRetrying(it.name, it.data)) { log('   FAILED ' + it.name); fail++; }
     done++;
     fill.style.width = (done / items.length * 100) + '%';
   }
-  log(`Done (${done - fail}/${items.length}). Restart the board (PWR button).`);
+  return fail;
 }
 
 document.getElementById('connect').onclick = async () => {
@@ -207,10 +239,11 @@ document.getElementById('connect').onclick = async () => {
     reader = port.readable.getReader();
     writer = port.writable.getWriter();
     lineBuf = '';
-    log('Connected. Press "Load sprites".');
+    log('Connected. Pick your regions, then press "Install selected".');
     for (const b of document.querySelectorAll('[data-region]')) b.disabled = false;
     document.getElementById('files').disabled = false;
-    probeRegions();      // grey out any region that has no bundle to download
+    await probeRegions();   // grey out any region that has no bundle to download
+    refreshTotal();
     document.getElementById('connect').disabled = true;
   } catch (e) { log('Could not connect: ' + e.message); }
 };
@@ -261,43 +294,134 @@ async function probeRegions() {
         if (r.ok) { found = true; break; }
       } catch (e) { /* try the next */ }
     }
+    const label = b.parentElement;
     if (!found) {
       b.disabled = true;
-      b.textContent = b.textContent.replace(/^⬇️ /, '') .replace(/ \(.*\)$/, '') + ' — not published yet';
-      b.title = 'No sprite bundle exists for this region yet. See web/README.md.';
+      b.checked = false;
+      label.style.opacity = '.45';
+      label.title = 'No sprite bundle exists for this region yet. See web/README.md.';
+      label.append(' \u2014 not published yet');
+    } else if (PAKS && PAKS[region]) {
+      // The size comes from the index, never from the markup. Typed by hand it
+      // had already drifted: Alola read "~24 MB" against a 27.5 MB pack.
+      label.append(` (${MB(PAKS[region].bytes)})`);
     }
   }
 }
 
-async function loadRegion(btn) {
-  const region = btn.dataset.region;
-  if (!writer) { log('Connect the board first.'); return; }
-  btn.disabled = true;
-  log(`Downloading the ${region} sprite bundle (this is the slow part)...`);
+// CRC32, the same polynomial zlib uses, so tools/pack_bundle.py's checksum and
+// this one are the same number. A 40 MB download over a flaky link that only
+// half-arrives is otherwise indistinguishable from a good one until sprites
+// start missing on the board.
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let b = 0; b < 8; b++) c = (c >>> 1) ^ (0xEDB88320 & -(c & 1));
+    t[i] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return ((c ^ 0xFFFFFFFF) >>> 0).toString(16).padStart(8, '0');
+}
+
+// What each pack should weigh and hash. Written by pack_bundle.py beside the
+// packs themselves, so it can never describe a pack that was not built.
+let PAKS = null;
+async function loadIndex() {
+  try {
+    const r = await fetch('paks.json');
+    if (r.ok) PAKS = (await r.json()).regions || null;
+  } catch (e) { /* fall back to no verification, see verifyPak */ }
+}
+
+function verifyPak(region, buf) {
+  const meta = PAKS && PAKS[region];
+  if (!meta) return;            // no index published: structure checks still apply
+  if (buf.byteLength !== meta.bytes)
+    throw new Error(`expected ${meta.bytes} B, got ${buf.byteLength} B (download incomplete?)`);
+  const got = crc32(new Uint8Array(buf));
+  if (got !== meta.crc32)
+    throw new Error(`checksum ${got} does not match ${meta.crc32} (corrupt download)`);
+}
+
+const MB = (n) => (n / 1048576).toFixed(1) + ' MB';
+function picked() {
+  return [...document.querySelectorAll('#regions input:checked')].map(c => c.dataset.region);
+}
+function refreshTotal() {
+  const sel = picked();
+  const btn = document.getElementById('install');
+  const bytes = PAKS ? sel.reduce((n, r) => n + ((PAKS[r] && PAKS[r].bytes) || 0), 0) : 0;
+  btn.disabled = !writer || !sel.length;
+  document.getElementById('total').textContent = !sel.length
+    ? 'Pick one or more regions.'
+    : `${sel.length} region${sel.length > 1 ? 's' : ''}` +
+      (bytes ? ` -- ${MB(bytes)}, roughly ${Math.round(bytes / 1048576 / 3)} min over USB.` : '.');
+}
+
+async function loadRegion(region) {
+  log(`Downloading ${region} (this is the slow part)...`);
   let items;
   try {
-    items = parsePak(await fetchPak(region));
+    const buf = await fetchPak(region);
+    verifyPak(region, buf);
+    items = parsePak(buf);
   } catch (e) {
-    log(`Could not download the ${region} bundle: ` + e.message);
-    log(`If this repo has no release yet, that is why -- see web/README.md.`);
-    btn.disabled = false;
-    return;
+    log(`${region}: ${e.message}`);
+    return false;
   }
-  log(`${items.length} ${region} sprites. Sending over USB...`);
-  await sendAll(items);
-  log(`${region} done. You can load another region, or stop here.`);
+  log(`${items.length} ${region} sprites verified. Sending over USB...`);
+  const fail = await sendAll(items);
+  if (fail) {
+    // Loud, and it stops the queue. A partial sprite install is not a smaller
+    // success: every missing file is a species that draws as a dex number, and
+    // the old code printed "Done (302/303)" and moved on.
+    log(`*** ${region} INCOMPLETE: ${fail} of ${items.length} file(s) failed after retries.`);
+    log(`*** Re-run ${region} before using it. Do not trust the gallery until you do.`);
+    return false;
+  }
+  log(`${region} complete (${items.length}/${items.length}).`);
+  return true;
 }
-// Driven off the markup, so adding a region is ONE new button and nothing
-// else. This was three separate hardcoded id lists.
-for (const b of document.querySelectorAll('[data-region]')) b.onclick = () => loadRegion(b);
+
+document.getElementById('install').onclick = async () => {
+  const sel = picked();
+  if (!writer) { log('Connect the board first.'); return; }
+  if (!sel.length) return;
+  const btn = document.getElementById('install');
+  btn.disabled = true;
+  let ok = 0;
+  for (const region of sel) {
+    if (await loadRegion(region)) ok++;
+    else { log('Stopping here so the failure is not buried by the next region.'); break; }
+  }
+  log(ok === sel.length
+    ? `All ${ok} region(s) done. Restart the board (PWR button).`
+    : `Finished ${ok} of ${sel.length} region(s) -- see above.`);
+  btn.disabled = false;
+};
+
+document.getElementById('all').onchange = (ev) => {
+  for (const c of document.querySelectorAll('#regions input:not(:disabled)')) c.checked = ev.target.checked;
+  refreshTotal();
+};
+for (const c of document.querySelectorAll('#regions input')) c.onchange = refreshTotal;
 
 document.getElementById('files').onchange = async (ev) => {
   const files = [...ev.target.files];
   const items = [];
   for (const f of files) items.push({ name: 'mons/' + f.name, data: new Uint8Array(await f.arrayBuffer()) });
   log(`${items.length} files. Sending...`);
-  await sendAll(items);
+  const fail = await sendAll(items);
+  log(fail ? `*** ${fail} of ${items.length} file(s) FAILED after retries.`
+           : `All ${items.length} file(s) sent. Restart the board (PWR button).`);
 };
+
+loadIndex().then(refreshTotal);
 </script>
 </body>
 </html>

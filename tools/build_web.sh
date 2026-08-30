@@ -42,19 +42,33 @@ echo "OK -> web/firmware/ (4 parts + tamapoke.bin for a blank board)"
 # with FW_VERSION by hand is exactly the sort of thing that silently rots.
 FW="$(grep -o '"[0-9.]*"' TamaPoke.ino | head -1 | tr -d '"')"
 python3 - "$FW" <<'PYEOF'
-import json, sys
+import hashlib, json, sys
 m = json.load(open('web/manifest.json'))
 m['version'] = sys.argv[1]
+
+
+# Each part carries a hash of its own bytes as a query string.
+#
+# Pages sits behind a CDN, and manifest.json is small and revalidates while a
+# 1.7 MB app.bin does not. Without this a returning browser can pair a NEW
+# manifest with a CACHED app.bin -- and bootloader/partitions/app must agree or
+# the board boot-loops. The query string is ignored by the server and changes
+# whenever the bytes do, so the cache can never silently win.
+def part(path, offset):
+    digest = hashlib.sha256(open('web/' + path, 'rb').read()).hexdigest()[:16]
+    return {'path': f'{path}?v={digest}', 'offset': offset}
+
+
 # Four parts at their own offsets, never one image at 0 -- see the comment above
 # the copies. The gap between 0x8000+partitions and 0xe000 is where NVS lives
 # and nothing may be written there.
 m['builds'] = [{
     'chipFamily': 'ESP32-S3',
     'parts': [
-        {'path': 'firmware/bootloader.bin', 'offset': 0},
-        {'path': 'firmware/partitions.bin', 'offset': 0x8000},
-        {'path': 'firmware/boot_app0.bin',  'offset': 0xe000},
-        {'path': 'firmware/app.bin',        'offset': 0x10000},
+        part('firmware/bootloader.bin', 0),
+        part('firmware/partitions.bin', 0x8000),
+        part('firmware/boot_app0.bin',  0xe000),
+        part('firmware/app.bin',        0x10000),
     ],
 }]
 # ALWAYS true, and the name is the exact opposite of what it does. In
