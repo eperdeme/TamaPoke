@@ -205,6 +205,44 @@ int main(){
     ck(NO_ART_COUNT > 0, "and there really are art-less species to exclude");
   }
 
+  // ---- evolution obeys the same rule the egg pool does --------------------
+  //
+  // Evolution is ONE-WAY, so a target with no pack on the card is a creature
+  // that draws as a dex number forever. eeveeOptions() has filtered this for
+  // the branch for years; the linear path had no such guard, and cross-region
+  // targets are routine -- STEELIX and BLISSEY always were, and Gen 8/9 added
+  // nine more (GIRAFARIG -> FARIGIRAF and the rest) that land in regions a
+  // player very likely has no pack for.
+  {
+    uint16_t saved = gRegionArt;
+    // find a species whose evolution target lives in a DIFFERENT region
+    int16_t crossDex = 0;
+    for (int16_t d = 1; d <= DEX_COUNT && !crossDex; d++) {
+      int16_t to = DEX_TBL[d].evolvesTo;
+      if (to && speciesHasArt(d) && speciesHasArt(to) &&
+          regionOfDex(to) != regionOfDex(d)) crossDex = d;
+    }
+    ck(crossDex != 0, "the dex really does contain a cross-region evolution");
+
+    Pet p; seed(p);
+    p.dbgHatchAs(crossDex, false);
+    p.ageMinutes = 99UL * 60;            // far past any evolution level
+    p.fullness = p.joy = p.energy = p.hygiene = 100;
+
+    gRegionArt = 0xFFFF;                 // every pack installed
+    ck(p.evoTargetShowable(), "with every pack installed the target is showable");
+    bool onAll = p.canEvolveNow();
+
+    // now remove ONLY the target's region
+    gRegionArt = (uint16_t)(0xFFFF & ~(1u << regionOfDex(DEX_TBL[crossDex].evolvesTo)));
+    ck(!p.evoTargetShowable(), "without the target's pack it is not showable");
+    ck(onAll && !p.canEvolveNow(),
+       "and the creature is NOT offered an evolution it could never draw");
+
+    gRegionArt = saved;
+    ck(p.canEvolveNow(), "putting the pack back offers it again");
+  }
+
   printf("%s\n", bad?"FAILURES":"all good");
   return bad?1:0;
 }

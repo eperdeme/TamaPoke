@@ -3,7 +3,7 @@
 
 // GENERADO por tools/gen_dex.py desde tools/dex_data.py - no editar
 
-#define DEX_COUNT 809
+#define DEX_COUNT 1025
 #define DEX_EEVEE 133
 // EEVEE's branches. DexEntry holds ONE evolvesTo (134), so the other
 // seven cannot live in the table. Generated from EEVEE_BRANCHES in
@@ -117,7 +117,7 @@ static const DexEntry DEX_TBL[DEX_COUNT + 1] = {
   { "PSYDUCK", 55, 33, R_COMUN, 0x4C98, 50, 52, 48, 55, 65, 50, 1, T_WATER, T_NONE },  // 54 water
   { "GOLDUCK", 0, 0, R_EVO, 0x4C98, 80, 82, 78, 85, 95, 80, 1, T_WATER, T_NONE },  // 55 water
   { "MANKEY", 57, 28, R_COMUN, 0xA2A5, 40, 80, 35, 70, 35, 45, 0, T_FIGHTING, T_NONE },  // 56 fighting
-  { "PRIMEAPE", 0, 0, R_EVO, 0xA2A5, 65, 105, 60, 95, 60, 70, 0, T_FIGHTING, T_NONE },  // 57 fighting
+  { "PRIMEAPE", 979, 30, R_EVO, 0xA2A5, 65, 105, 60, 95, 60, 70, 0, T_FIGHTING, T_NONE },  // 57 fighting
   { "GROWLITHE", 59, 30, R_RARO, 0xEA87, 55, 70, 45, 60, 70, 50, 3, T_FIRE, T_NONE },  // 58 fire
   { "ARCANINE", 0, 0, R_EVO, 0xEA87, 90, 110, 80, 95, 100, 80, 3, T_FIRE, T_NONE },  // 59 fire
   { "POLIWAG", 61, 25, R_COMUN, 0x4C98, 40, 50, 40, 90, 40, 40, 1, T_WATER, T_NONE },  // 60 water
@@ -143,7 +143,7 @@ static const DexEntry DEX_TBL[DEX_COUNT + 1] = {
   { "SLOWBRO", 0, 0, R_EVO, 0x4C98, 95, 75, 110, 30, 100, 80, 1, T_WATER, T_PSYCHIC },  // 80 water/psychic
   { "MAGNEMITE", 82, 30, R_COMUN, 0xBCA1, 25, 35, 70, 45, 95, 55, 0, T_ELECTRIC, T_STEEL },  // 81 electric/steel
   { "MAGNETON", 462, 30, R_EVO, 0xBCA1, 50, 60, 95, 70, 120, 70, 0, T_ELECTRIC, T_STEEL },  // 82 electric/steel
-  { "FARFETCHD", 0, 0, R_RARO, 0x8C4D, 52, 90, 55, 60, 58, 62, 0, T_NORMAL, T_FLYING },  // 83 normal/flying
+  { "FARFETCHD", 865, 30, R_RARO, 0x8C4D, 52, 90, 55, 60, 58, 62, 0, T_NORMAL, T_FLYING },  // 83 normal/flying
   { "DODUO", 85, 31, R_COMUN, 0x8C4D, 35, 85, 45, 75, 35, 35, 0, T_NORMAL, T_FLYING },  // 84 normal/flying
   { "DODRIO", 0, 0, R_EVO, 0x8C4D, 60, 110, 70, 110, 60, 60, 0, T_NORMAL, T_FLYING },  // 85 normal/flying
   { "SEEL", 87, 34, R_COMUN, 0x4C98, 65, 45, 55, 45, 45, 70, 1, T_WATER, T_NONE },  // 86 water
@@ -182,7 +182,7 @@ static const DexEntry DEX_TBL[DEX_COUNT + 1] = {
   { "SEAKING", 0, 0, R_EVO, 0x4C98, 80, 92, 65, 68, 65, 80, 1, T_WATER, T_NONE },  // 119 water
   { "STARYU", 121, 30, R_COMUN, 0x4C98, 30, 45, 55, 85, 70, 55, 1, T_WATER, T_NONE },  // 120 water
   { "STARMIE", 0, 0, R_EVO, 0x4C98, 60, 75, 85, 115, 100, 85, 1, T_WATER, T_PSYCHIC },  // 121 water/psychic
-  { "MR. MIME", 0, 0, R_EVO, 0xD28F, 40, 45, 65, 90, 100, 120, 0, T_PSYCHIC, T_FAIRY },  // 122 psychic/fairy
+  { "MR. MIME", 866, 42, R_EVO, 0xD28F, 40, 45, 65, 90, 100, 120, 0, T_PSYCHIC, T_FAIRY },  // 122 psychic/fairy
   { "SCYTHER", 212, 40, R_RARO, 0x7CC4, 70, 110, 80, 105, 55, 80, 2, T_BUG, T_FLYING },  // 123 bug/flying
   { "JYNX", 0, 0, R_EVO, 0x4DB8, 65, 50, 35, 95, 115, 95, 5, T_ICE, T_PSYCHIC },  // 124 ice/psychic
   { "ELECTABUZZ", 466, 40, R_EVO, 0xBCA1, 65, 83, 57, 105, 95, 85, 0, T_ELECTRIC, T_NONE },  // 125 electric
@@ -263,26 +263,26 @@ static const DexEntry DEX_TBL[DEX_COUNT + 1] = {
   { "MISDREAVUS", 429, 30, R_RARO, 0x6AD3, 60, 60, 60, 85, 85, 85, 0, T_GHOST, T_NONE },  // 200 ghost
   { "UNOWN", 0, 0, R_COMUN, 0xD28F, 48, 72, 48, 48, 72, 48, 0, T_PSYCHIC, T_NONE },  // 201 psychic
   { "WOBBUFFET", 0, 0, R_EVO, 0xD28F, 190, 33, 58, 33, 33, 58, 0, T_PSYCHIC, T_NONE },  // 202 psychic
-  { "GIRAFARIG", 0, 0, R_COMUN, 0x8C4D, 70, 80, 65, 85, 90, 65, 0, T_NORMAL, T_PSYCHIC },  // 203 normal/psychic
+  { "GIRAFARIG", 981, 30, R_COMUN, 0x8C4D, 70, 80, 65, 85, 90, 65, 0, T_NORMAL, T_PSYCHIC },  // 203 normal/psychic
   { "PINECO", 205, 31, R_COMUN, 0x7CC4, 50, 65, 90, 15, 35, 35, 2, T_BUG, T_NONE },  // 204 bug
   { "FORRETRESS", 0, 0, R_EVO, 0x7CC4, 75, 90, 140, 40, 60, 60, 2, T_BUG, T_STEEL },  // 205 bug/steel
-  { "DUNSPARCE", 0, 0, R_COMUN, 0x8C4D, 100, 70, 70, 45, 65, 65, 0, T_NORMAL, T_NONE },  // 206 normal
+  { "DUNSPARCE", 982, 30, R_COMUN, 0x8C4D, 100, 70, 70, 45, 65, 65, 0, T_NORMAL, T_NONE },  // 206 normal
   { "GLIGAR", 472, 30, R_COMUN, 0xB447, 65, 75, 105, 85, 35, 65, 4, T_GROUND, T_FLYING },  // 207 ground/flying
   { "STEELIX", 0, 0, R_EVO, 0x6BF1, 75, 85, 200, 30, 55, 65, 4, T_STEEL, T_GROUND },  // 208 steel/ground
   { "SNUBBULL", 210, 23, R_COMUN, 0xC333, 60, 80, 50, 30, 40, 40, 0, T_FAIRY, T_NONE },  // 209 fairy
   { "GRANBULL", 0, 0, R_EVO, 0xC333, 90, 120, 75, 45, 60, 60, 0, T_FAIRY, T_NONE },  // 210 fairy
-  { "QWILFISH", 0, 0, R_RARO, 0x4C98, 65, 95, 85, 85, 55, 55, 1, T_WATER, T_POISON },  // 211 water/poison
+  { "QWILFISH", 904, 30, R_RARO, 0x4C98, 65, 95, 85, 85, 55, 55, 1, T_WATER, T_POISON },  // 211 water/poison
   { "SCIZOR", 0, 0, R_EVO, 0x7CC4, 70, 130, 100, 65, 55, 80, 2, T_BUG, T_STEEL },  // 212 bug/steel
   { "SHUCKLE", 0, 0, R_COMUN, 0x7CC4, 20, 10, 230, 5, 10, 230, 2, T_BUG, T_ROCK },  // 213 bug/rock
   { "HERACROSS", 0, 0, R_RARO, 0x7CC4, 80, 125, 75, 85, 40, 95, 2, T_BUG, T_FIGHTING },  // 214 bug/fighting
   { "SNEASEL", 461, 30, R_COMUN, 0x5A47, 55, 95, 55, 115, 35, 75, 2, T_DARK, T_ICE },  // 215 dark/ice
   { "TEDDIURSA", 217, 30, R_COMUN, 0x8C4D, 60, 80, 50, 40, 50, 50, 0, T_NORMAL, T_NONE },  // 216 normal
-  { "URSARING", 0, 0, R_EVO, 0x8C4D, 90, 130, 75, 55, 75, 75, 0, T_NORMAL, T_NONE },  // 217 normal
+  { "URSARING", 901, 30, R_EVO, 0x8C4D, 90, 130, 75, 55, 75, 75, 0, T_NORMAL, T_NONE },  // 217 normal
   { "SLUGMA", 219, 38, R_COMUN, 0xEA87, 40, 40, 40, 20, 70, 40, 3, T_FIRE, T_NONE },  // 218 fire
   { "MAGCARGO", 0, 0, R_EVO, 0xEA87, 60, 50, 120, 30, 90, 80, 3, T_FIRE, T_ROCK },  // 219 fire/rock
   { "SWINUB", 221, 33, R_COMUN, 0x4DB8, 50, 50, 40, 50, 30, 30, 5, T_ICE, T_GROUND },  // 220 ice/ground
   { "PILOSWINE", 473, 30, R_EVO, 0x4DB8, 100, 100, 80, 50, 60, 60, 5, T_ICE, T_GROUND },  // 221 ice/ground
-  { "CORSOLA", 0, 0, R_COMUN, 0x4C98, 65, 55, 95, 35, 65, 95, 1, T_WATER, T_ROCK },  // 222 water/rock
+  { "CORSOLA", 864, 38, R_COMUN, 0x4C98, 65, 55, 95, 35, 65, 95, 1, T_WATER, T_ROCK },  // 222 water/rock
   { "REMORAID", 224, 25, R_COMUN, 0x4C98, 35, 65, 35, 65, 65, 35, 1, T_WATER, T_NONE },  // 223 water
   { "OCTILLERY", 0, 0, R_EVO, 0x4C98, 75, 105, 75, 45, 105, 75, 1, T_WATER, T_NONE },  // 224 water
   { "DELIBIRD", 0, 0, R_RARO, 0x4DB8, 45, 55, 45, 75, 65, 45, 5, T_ICE, T_FLYING },  // 225 ice/flying
@@ -294,7 +294,7 @@ static const DexEntry DEX_TBL[DEX_COUNT + 1] = {
   { "PHANPY", 232, 25, R_COMUN, 0xB447, 90, 60, 60, 40, 40, 40, 4, T_GROUND, T_NONE },  // 231 ground
   { "DONPHAN", 0, 0, R_EVO, 0xB447, 90, 120, 120, 50, 60, 60, 4, T_GROUND, T_NONE },  // 232 ground
   { "PORYGON2", 474, 40, R_EVO, 0x8C4D, 85, 80, 90, 60, 105, 95, 0, T_NORMAL, T_NONE },  // 233 normal
-  { "STANTLER", 0, 0, R_RARO, 0x8C4D, 73, 95, 62, 85, 85, 65, 0, T_NORMAL, T_NONE },  // 234 normal
+  { "STANTLER", 899, 30, R_RARO, 0x8C4D, 73, 95, 62, 85, 85, 65, 0, T_NORMAL, T_NONE },  // 234 normal
   { "SMEARGLE", 0, 0, R_RARO, 0x8C4D, 55, 20, 35, 75, 20, 45, 0, T_NORMAL, T_NONE },  // 235 normal
   { "TYROGUE", 106, 20, R_COMUN, 0xA2A5, 35, 35, 35, 35, 35, 35, 0, T_FIGHTING, T_NONE },  // 236 fighting
   { "HITMONTOP", 0, 0, R_RARO, 0xA2A5, 50, 95, 95, 70, 35, 110, 0, T_FIGHTING, T_NONE },  // 237 fighting
@@ -324,7 +324,7 @@ static const DexEntry DEX_TBL[DEX_COUNT + 1] = {
   { "POOCHYENA", 262, 18, R_COMUN, 0x5A47, 35, 55, 35, 35, 30, 30, 2, T_DARK, T_NONE },  // 261 dark
   { "MIGHTYENA", 0, 0, R_EVO, 0x5A47, 70, 90, 70, 70, 60, 60, 2, T_DARK, T_NONE },  // 262 dark
   { "ZIGZAGOON", 264, 20, R_COMUN, 0x8C4D, 38, 30, 41, 60, 30, 41, 0, T_NORMAL, T_NONE },  // 263 normal
-  { "LINOONE", 0, 0, R_EVO, 0x8C4D, 78, 70, 61, 100, 50, 61, 0, T_NORMAL, T_NONE },  // 264 normal
+  { "LINOONE", 862, 35, R_EVO, 0x8C4D, 78, 70, 61, 100, 50, 61, 0, T_NORMAL, T_NONE },  // 264 normal
   { "WURMPLE", 266, 7, R_COMUN, 0x7CC4, 45, 45, 35, 20, 20, 30, 2, T_BUG, T_NONE },  // 265 bug
   { "SILCOON", 267, 10, R_EVO, 0x7CC4, 50, 35, 55, 15, 25, 25, 2, T_BUG, T_NONE },  // 266 bug
   { "BEAUTIFLY", 0, 0, R_EVO, 0x7CC4, 60, 70, 50, 65, 100, 50, 2, T_BUG, T_FLYING },  // 267 bug/flying
@@ -610,7 +610,7 @@ static const DexEntry DEX_TBL[DEX_COUNT + 1] = {
   { "WHIMSICOTT", 0, 0, R_EVO, 0x3C49, 60, 67, 85, 116, 77, 75, 2, T_GRASS, T_FAIRY },  // 547 grass/fairy
   { "PETILIL", 549, 30, R_COMUN, 0x3C49, 45, 35, 50, 30, 70, 50, 2, T_GRASS, T_NONE },  // 548 grass
   { "LILLIGANT", 0, 0, R_EVO, 0x3C49, 70, 60, 75, 90, 110, 75, 2, T_GRASS, T_NONE },  // 549 grass
-  { "BASCULIN", 0, 0, R_RARO, 0x4C98, 70, 92, 65, 98, 80, 55, 1, T_WATER, T_NONE },  // 550 water
+  { "BASCULIN", 902, 30, R_RARO, 0x4C98, 70, 92, 65, 98, 80, 55, 1, T_WATER, T_NONE },  // 550 water
   { "SANDILE", 552, 29, R_COMUN, 0xB447, 50, 72, 35, 65, 35, 35, 4, T_GROUND, T_DARK },  // 551 ground/dark
   { "KROKOROK", 553, 40, R_EVO, 0xB447, 60, 82, 45, 74, 45, 45, 4, T_GROUND, T_DARK },  // 552 ground/dark
   { "KROOKODILE", 0, 0, R_EVO, 0xB447, 95, 117, 80, 92, 65, 70, 4, T_GROUND, T_DARK },  // 553 ground/dark
@@ -685,7 +685,7 @@ static const DexEntry DEX_TBL[DEX_COUNT + 1] = {
   { "GOLETT", 623, 43, R_COMUN, 0xB447, 59, 74, 50, 35, 35, 50, 4, T_GROUND, T_GHOST },  // 622 ground/ghost
   { "GOLURK", 0, 0, R_EVO, 0xB447, 89, 124, 80, 55, 55, 80, 4, T_GROUND, T_GHOST },  // 623 ground/ghost
   { "PAWNIARD", 625, 52, R_COMUN, 0x5A47, 45, 85, 70, 60, 40, 40, 2, T_DARK, T_STEEL },  // 624 dark/steel
-  { "BISHARP", 0, 0, R_EVO, 0x5A47, 65, 125, 100, 70, 60, 70, 2, T_DARK, T_STEEL },  // 625 dark/steel
+  { "BISHARP", 983, 30, R_EVO, 0x5A47, 65, 125, 100, 70, 60, 70, 2, T_DARK, T_STEEL },  // 625 dark/steel
   { "BOUFFALANT", 0, 0, R_RARO, 0x8C4D, 95, 110, 95, 55, 40, 95, 0, T_NORMAL, T_NONE },  // 626 normal
   { "RUFFLET", 628, 54, R_COMUN, 0x8C4D, 70, 83, 50, 60, 37, 50, 0, T_NORMAL, T_FLYING },  // 627 normal/flying
   { "BRAVIARY", 0, 0, R_EVO, 0x8C4D, 100, 123, 75, 80, 57, 75, 0, T_NORMAL, T_FLYING },  // 628 normal/flying
@@ -870,6 +870,222 @@ static const DexEntry DEX_TBL[DEX_COUNT + 1] = {
   { "ZERAORA", 0, 0, R_LEGENDARIO, 0xBCA1, 88, 112, 75, 143, 102, 80, 0, T_ELECTRIC, T_NONE },  // 807 electric
   { "MELTAN", 0, 0, R_LEGENDARIO, 0x6BF1, 46, 65, 65, 34, 55, 35, 4, T_STEEL, T_NONE },  // 808 steel
   { "MELMETAL", 0, 0, R_LEGENDARIO, 0x6BF1, 135, 143, 143, 34, 80, 65, 4, T_STEEL, T_NONE },  // 809 steel
+  { "GROOKEY", 811, 16, R_RARO, 0x3C49, 50, 65, 50, 65, 40, 40, 2, T_GRASS, T_NONE },  // 810 grass
+  { "THWACKEY", 812, 35, R_EVO, 0x3C49, 70, 85, 70, 80, 55, 60, 2, T_GRASS, T_NONE },  // 811 grass
+  { "RILLABOOM", 0, 0, R_EVO, 0x3C49, 100, 125, 90, 85, 60, 70, 2, T_GRASS, T_NONE },  // 812 grass
+  { "SCORBUNNY", 814, 16, R_RARO, 0xEA87, 50, 71, 40, 69, 40, 40, 3, T_FIRE, T_NONE },  // 813 fire
+  { "RABOOT", 815, 35, R_EVO, 0xEA87, 65, 86, 60, 94, 55, 60, 3, T_FIRE, T_NONE },  // 814 fire
+  { "CINDERACE", 0, 0, R_EVO, 0xEA87, 80, 116, 75, 119, 65, 75, 3, T_FIRE, T_NONE },  // 815 fire
+  { "SOBBLE", 817, 16, R_RARO, 0x4C98, 50, 40, 40, 70, 70, 40, 1, T_WATER, T_NONE },  // 816 water
+  { "DRIZZILE", 818, 35, R_EVO, 0x4C98, 65, 60, 55, 90, 95, 55, 1, T_WATER, T_NONE },  // 817 water
+  { "INTELEON", 0, 0, R_EVO, 0x4C98, 70, 85, 65, 120, 125, 65, 1, T_WATER, T_NONE },  // 818 water
+  { "SKWOVET", 820, 24, R_COMUN, 0x8C4D, 70, 55, 55, 25, 35, 35, 0, T_NORMAL, T_NONE },  // 819 normal
+  { "GREEDENT", 0, 0, R_EVO, 0x8C4D, 120, 95, 95, 20, 55, 75, 0, T_NORMAL, T_NONE },  // 820 normal
+  { "ROOKIDEE", 822, 18, R_COMUN, 0x7C7A, 38, 47, 35, 57, 33, 35, 0, T_FLYING, T_NONE },  // 821 flying
+  { "CORVISQUIRE", 823, 38, R_EVO, 0x7C7A, 68, 67, 55, 77, 43, 55, 0, T_FLYING, T_NONE },  // 822 flying
+  { "CORVIKNIGHT", 0, 0, R_EVO, 0x7C7A, 98, 87, 105, 67, 53, 85, 0, T_FLYING, T_STEEL },  // 823 flying/steel
+  { "BLIPBUG", 825, 10, R_COMUN, 0x7CC4, 25, 20, 20, 45, 25, 45, 2, T_BUG, T_NONE },  // 824 bug
+  { "DOTTLER", 826, 30, R_EVO, 0x7CC4, 50, 35, 80, 30, 50, 90, 2, T_BUG, T_PSYCHIC },  // 825 bug/psychic
+  { "ORBEETLE", 0, 0, R_EVO, 0x7CC4, 60, 45, 110, 90, 80, 120, 2, T_BUG, T_PSYCHIC },  // 826 bug/psychic
+  { "NICKIT", 828, 18, R_COMUN, 0x5A47, 40, 28, 28, 50, 47, 52, 2, T_DARK, T_NONE },  // 827 dark
+  { "THIEVUL", 0, 0, R_EVO, 0x5A47, 70, 58, 58, 90, 87, 92, 2, T_DARK, T_NONE },  // 828 dark
+  { "GOSSIFLEUR", 830, 20, R_COMUN, 0x3C49, 40, 40, 60, 10, 40, 60, 2, T_GRASS, T_NONE },  // 829 grass
+  { "ELDEGOSS", 0, 0, R_EVO, 0x3C49, 60, 50, 90, 60, 80, 120, 2, T_GRASS, T_NONE },  // 830 grass
+  { "WOOLOO", 832, 24, R_COMUN, 0x8C4D, 42, 40, 55, 48, 40, 45, 0, T_NORMAL, T_NONE },  // 831 normal
+  { "DUBWOOL", 0, 0, R_EVO, 0x8C4D, 72, 80, 100, 88, 60, 90, 0, T_NORMAL, T_NONE },  // 832 normal
+  { "CHEWTLE", 834, 22, R_COMUN, 0x4C98, 50, 64, 50, 44, 38, 38, 1, T_WATER, T_NONE },  // 833 water
+  { "DREDNAW", 0, 0, R_EVO, 0x4C98, 90, 115, 90, 74, 48, 68, 1, T_WATER, T_ROCK },  // 834 water/rock
+  { "YAMPER", 836, 25, R_COMUN, 0xBCA1, 59, 45, 50, 26, 40, 50, 0, T_ELECTRIC, T_NONE },  // 835 electric
+  { "BOLTUND", 0, 0, R_EVO, 0xBCA1, 69, 90, 60, 121, 90, 60, 0, T_ELECTRIC, T_NONE },  // 836 electric
+  { "ROLYCOLY", 838, 18, R_COMUN, 0x9407, 30, 40, 50, 30, 40, 50, 4, T_ROCK, T_NONE },  // 837 rock
+  { "CARKOL", 839, 34, R_EVO, 0x9407, 80, 60, 90, 50, 60, 70, 4, T_ROCK, T_FIRE },  // 838 rock/fire
+  { "COALOSSAL", 0, 0, R_EVO, 0x9407, 110, 80, 120, 30, 80, 90, 4, T_ROCK, T_FIRE },  // 839 rock/fire
+  { "APPLIN", 841, 30, R_COMUN, 0x3C49, 40, 40, 80, 20, 40, 40, 2, T_GRASS, T_DRAGON },  // 840 grass/dragon
+  { "FLAPPLE", 0, 0, R_EVO, 0x3C49, 70, 110, 80, 70, 95, 60, 2, T_GRASS, T_DRAGON },  // 841 grass/dragon
+  { "APPLETUN", 0, 0, R_RARO, 0x3C49, 110, 85, 80, 30, 100, 80, 2, T_GRASS, T_DRAGON },  // 842 grass/dragon
+  { "SILICOBRA", 844, 36, R_COMUN, 0xB447, 52, 57, 75, 46, 35, 50, 4, T_GROUND, T_NONE },  // 843 ground
+  { "SANDACONDA", 0, 0, R_EVO, 0xB447, 72, 107, 125, 71, 65, 70, 4, T_GROUND, T_NONE },  // 844 ground
+  { "CRAMORANT", 0, 0, R_RARO, 0x7C7A, 70, 85, 55, 85, 85, 95, 0, T_FLYING, T_WATER },  // 845 flying/water
+  { "ARROKUDA", 847, 26, R_COMUN, 0x4C98, 41, 63, 40, 66, 40, 30, 1, T_WATER, T_NONE },  // 846 water
+  { "BARRASKEWDA", 0, 0, R_EVO, 0x4C98, 61, 123, 60, 136, 60, 50, 1, T_WATER, T_NONE },  // 847 water
+  { "TOXEL", 849, 30, R_COMUN, 0xBCA1, 40, 38, 35, 40, 54, 35, 0, T_ELECTRIC, T_POISON },  // 848 electric/poison
+  { "TOXTRICITY", 0, 0, R_EVO, 0xBCA1, 75, 98, 70, 75, 114, 70, 0, T_ELECTRIC, T_POISON },  // 849 electric/poison
+  { "SIZZLIPEDE", 851, 28, R_COMUN, 0xEA87, 50, 65, 45, 45, 50, 50, 3, T_FIRE, T_BUG },  // 850 fire/bug
+  { "CENTISKORCH", 0, 0, R_EVO, 0xEA87, 100, 115, 65, 65, 90, 90, 3, T_FIRE, T_BUG },  // 851 fire/bug
+  { "CLOBBOPUS", 853, 30, R_COMUN, 0xA2A5, 50, 68, 60, 32, 50, 50, 0, T_FIGHTING, T_NONE },  // 852 fighting
+  { "GRAPPLOCT", 0, 0, R_EVO, 0xA2A5, 80, 118, 90, 42, 70, 80, 0, T_FIGHTING, T_NONE },  // 853 fighting
+  { "SINISTEA", 855, 30, R_COMUN, 0x6AD3, 40, 45, 45, 50, 74, 54, 0, T_GHOST, T_NONE },  // 854 ghost
+  { "POLTEAGEIST", 0, 0, R_EVO, 0x6AD3, 60, 65, 65, 70, 134, 114, 0, T_GHOST, T_NONE },  // 855 ghost
+  { "HATENNA", 857, 32, R_COMUN, 0xD28F, 42, 30, 45, 39, 56, 53, 0, T_PSYCHIC, T_NONE },  // 856 psychic
+  { "HATTREM", 858, 42, R_EVO, 0xD28F, 57, 40, 65, 49, 86, 73, 0, T_PSYCHIC, T_NONE },  // 857 psychic
+  { "HATTERENE", 0, 0, R_EVO, 0xD28F, 57, 90, 95, 29, 136, 103, 0, T_PSYCHIC, T_FAIRY },  // 858 psychic/fairy
+  { "IMPIDIMP", 860, 32, R_COMUN, 0x5A47, 45, 45, 30, 50, 55, 40, 2, T_DARK, T_FAIRY },  // 859 dark/fairy
+  { "MORGREM", 861, 42, R_EVO, 0x5A47, 65, 60, 45, 70, 75, 55, 2, T_DARK, T_FAIRY },  // 860 dark/fairy
+  { "GRIMMSNARL", 0, 0, R_EVO, 0x5A47, 95, 120, 65, 60, 95, 75, 2, T_DARK, T_FAIRY },  // 861 dark/fairy
+  { "OBSTAGOON", 0, 0, R_EVO, 0x5A47, 93, 90, 101, 95, 60, 81, 2, T_DARK, T_NORMAL },  // 862 dark/normal
+  { "PERRSERKER", 0, 0, R_COMUN, 0x6BF1, 70, 110, 100, 50, 50, 60, 4, T_STEEL, T_NONE },  // 863 steel
+  { "CURSOLA", 0, 0, R_EVO, 0x6AD3, 60, 95, 50, 30, 145, 130, 0, T_GHOST, T_NONE },  // 864 ghost
+  { "SIRFETCHD", 0, 0, R_EVO, 0xA2A5, 62, 135, 95, 65, 68, 82, 0, T_FIGHTING, T_NONE },  // 865 fighting
+  { "MR RIME", 0, 0, R_EVO, 0x4DB8, 80, 85, 75, 70, 110, 100, 5, T_ICE, T_PSYCHIC },  // 866 ice/psychic
+  { "RUNERIGUS", 0, 0, R_COMUN, 0xB447, 58, 95, 145, 30, 50, 105, 4, T_GROUND, T_GHOST },  // 867 ground/ghost
+  { "MILCERY", 869, 30, R_COMUN, 0xC333, 45, 40, 40, 34, 50, 61, 0, T_FAIRY, T_NONE },  // 868 fairy
+  { "ALCREMIE", 0, 0, R_EVO, 0xC333, 65, 60, 75, 64, 110, 121, 0, T_FAIRY, T_NONE },  // 869 fairy
+  { "FALINKS", 0, 0, R_RARO, 0xA2A5, 65, 100, 100, 75, 70, 60, 0, T_FIGHTING, T_NONE },  // 870 fighting
+  { "PINCURCHIN", 0, 0, R_COMUN, 0xBCA1, 48, 101, 95, 15, 91, 85, 0, T_ELECTRIC, T_NONE },  // 871 electric
+  { "SNOM", 873, 25, R_COMUN, 0x4DB8, 30, 25, 35, 20, 45, 30, 5, T_ICE, T_BUG },  // 872 ice/bug
+  { "FROSMOTH", 0, 0, R_EVO, 0x4DB8, 70, 65, 60, 65, 125, 90, 5, T_ICE, T_BUG },  // 873 ice/bug
+  { "STONJOURNER", 0, 0, R_COMUN, 0x9407, 100, 125, 135, 70, 20, 20, 4, T_ROCK, T_NONE },  // 874 rock
+  { "EISCUE", 0, 0, R_COMUN, 0x4DB8, 75, 80, 110, 50, 65, 90, 5, T_ICE, T_NONE },  // 875 ice
+  { "INDEEDEE", 0, 0, R_RARO, 0xD28F, 60, 65, 55, 95, 105, 95, 0, T_PSYCHIC, T_NORMAL },  // 876 psychic/normal
+  { "MORPEKO", 0, 0, R_COMUN, 0xBCA1, 58, 95, 58, 97, 70, 58, 0, T_ELECTRIC, T_DARK },  // 877 electric/dark
+  { "CUFANT", 879, 34, R_COMUN, 0x6BF1, 72, 80, 49, 40, 40, 49, 4, T_STEEL, T_NONE },  // 878 steel
+  { "COPPERAJAH", 0, 0, R_EVO, 0x6BF1, 122, 130, 69, 30, 80, 69, 4, T_STEEL, T_NONE },  // 879 steel
+  { "DRACOZOLT", 0, 0, R_RARO, 0xBCA1, 90, 100, 90, 75, 80, 70, 0, T_ELECTRIC, T_DRAGON },  // 880 electric/dragon
+  { "ARCTOZOLT", 0, 0, R_RARO, 0xBCA1, 90, 100, 90, 55, 90, 80, 0, T_ELECTRIC, T_ICE },  // 881 electric/ice
+  { "DRACOVISH", 0, 0, R_RARO, 0x4C98, 90, 90, 100, 75, 70, 80, 1, T_WATER, T_DRAGON },  // 882 water/dragon
+  { "ARCTOVISH", 0, 0, R_RARO, 0x4C98, 90, 90, 100, 55, 80, 90, 1, T_WATER, T_ICE },  // 883 water/ice
+  { "DURALUDON", 1018, 30, R_RARO, 0x6BF1, 70, 95, 115, 85, 120, 50, 4, T_STEEL, T_DRAGON },  // 884 steel/dragon
+  { "DREEPY", 886, 50, R_RARO, 0x5A98, 28, 60, 30, 82, 40, 30, 1, T_DRAGON, T_GHOST },  // 885 dragon/ghost
+  { "DRAKLOAK", 887, 60, R_EVO, 0x5A98, 68, 80, 50, 102, 60, 50, 1, T_DRAGON, T_GHOST },  // 886 dragon/ghost
+  { "DRAGAPULT", 0, 0, R_EVO, 0x5A98, 88, 120, 75, 142, 100, 75, 1, T_DRAGON, T_GHOST },  // 887 dragon/ghost
+  { "ZACIAN", 0, 0, R_LEGENDARIO, 0xC333, 92, 120, 115, 138, 80, 115, 0, T_FAIRY, T_NONE },  // 888 fairy
+  { "ZAMAZENTA", 0, 0, R_LEGENDARIO, 0xA2A5, 92, 120, 115, 138, 80, 115, 0, T_FIGHTING, T_NONE },  // 889 fighting
+  { "ETERNATUS", 0, 0, R_LEGENDARIO, 0x8A73, 140, 85, 95, 130, 145, 95, 0, T_POISON, T_DRAGON },  // 890 poison/dragon
+  { "KUBFU", 892, 30, R_LEGENDARIO, 0xA2A5, 60, 90, 60, 72, 53, 50, 0, T_FIGHTING, T_NONE },  // 891 fighting
+  { "URSHIFU", 0, 0, R_EVO, 0xA2A5, 100, 130, 100, 97, 63, 60, 0, T_FIGHTING, T_DARK },  // 892 fighting/dark
+  { "ZARUDE", 0, 0, R_LEGENDARIO, 0x5A47, 105, 120, 105, 105, 70, 95, 2, T_DARK, T_GRASS },  // 893 dark/grass
+  { "REGIELEKI", 0, 0, R_LEGENDARIO, 0xBCA1, 80, 100, 50, 200, 100, 50, 0, T_ELECTRIC, T_NONE },  // 894 electric
+  { "REGIDRAGO", 0, 0, R_LEGENDARIO, 0x5A98, 200, 100, 50, 80, 100, 50, 1, T_DRAGON, T_NONE },  // 895 dragon
+  { "GLASTRIER", 0, 0, R_LEGENDARIO, 0x4DB8, 100, 145, 130, 30, 65, 110, 5, T_ICE, T_NONE },  // 896 ice
+  { "SPECTRIER", 0, 0, R_LEGENDARIO, 0x6AD3, 100, 65, 60, 130, 145, 80, 0, T_GHOST, T_NONE },  // 897 ghost
+  { "CALYREX", 0, 0, R_LEGENDARIO, 0xD28F, 100, 80, 80, 80, 80, 80, 0, T_PSYCHIC, T_GRASS },  // 898 psychic/grass
+  { "WYRDEER", 0, 0, R_EVO, 0x8C4D, 103, 105, 72, 65, 105, 75, 0, T_NORMAL, T_PSYCHIC },  // 899 normal/psychic
+  { "KLEAVOR", 0, 0, R_COMUN, 0x7CC4, 70, 135, 95, 85, 45, 70, 2, T_BUG, T_ROCK },  // 900 bug/rock
+  { "URSALUNA", 0, 0, R_EVO, 0xB447, 130, 140, 105, 50, 45, 80, 4, T_GROUND, T_NORMAL },  // 901 ground/normal
+  { "BASCULEGION", 0, 0, R_EVO, 0x4C98, 120, 112, 65, 78, 80, 75, 1, T_WATER, T_GHOST },  // 902 water/ghost
+  { "SNEASLER", 0, 0, R_COMUN, 0xA2A5, 80, 130, 60, 120, 40, 80, 0, T_FIGHTING, T_POISON },  // 903 fighting/poison
+  { "OVERQWIL", 0, 0, R_EVO, 0x5A47, 85, 115, 95, 85, 65, 65, 2, T_DARK, T_POISON },  // 904 dark/poison
+  { "ENAMORUS", 0, 0, R_LEGENDARIO, 0xC333, 74, 115, 70, 106, 135, 80, 0, T_FAIRY, T_FLYING },  // 905 fairy/flying
+  { "SPRIGATITO", 907, 16, R_RARO, 0x3C49, 40, 61, 54, 65, 45, 45, 2, T_GRASS, T_NONE },  // 906 grass
+  { "FLORAGATO", 908, 36, R_EVO, 0x3C49, 61, 80, 63, 83, 60, 63, 2, T_GRASS, T_NONE },  // 907 grass
+  { "MEOWSCARADA", 0, 0, R_EVO, 0x3C49, 76, 110, 70, 123, 81, 70, 2, T_GRASS, T_DARK },  // 908 grass/dark
+  { "FUECOCO", 910, 16, R_RARO, 0xEA87, 67, 45, 59, 36, 63, 40, 3, T_FIRE, T_NONE },  // 909 fire
+  { "CROCALOR", 911, 36, R_EVO, 0xEA87, 81, 55, 78, 49, 90, 58, 3, T_FIRE, T_NONE },  // 910 fire
+  { "SKELEDIRGE", 0, 0, R_EVO, 0xEA87, 104, 75, 100, 66, 110, 75, 3, T_FIRE, T_GHOST },  // 911 fire/ghost
+  { "QUAXLY", 913, 16, R_RARO, 0x4C98, 55, 65, 45, 50, 50, 45, 1, T_WATER, T_NONE },  // 912 water
+  { "QUAXWELL", 914, 36, R_EVO, 0x4C98, 70, 85, 65, 65, 65, 60, 1, T_WATER, T_NONE },  // 913 water
+  { "QUAQUAVAL", 0, 0, R_EVO, 0x4C98, 85, 120, 80, 85, 85, 75, 1, T_WATER, T_FIGHTING },  // 914 water/fighting
+  { "LECHONK", 916, 18, R_COMUN, 0x8C4D, 54, 45, 40, 35, 35, 45, 0, T_NORMAL, T_NONE },  // 915 normal
+  { "OINKOLOGNE", 0, 0, R_EVO, 0x8C4D, 110, 100, 75, 65, 59, 80, 0, T_NORMAL, T_NONE },  // 916 normal
+  { "TAROUNTULA", 918, 15, R_COMUN, 0x7CC4, 35, 41, 45, 20, 29, 40, 2, T_BUG, T_NONE },  // 917 bug
+  { "SPIDOPS", 0, 0, R_EVO, 0x7CC4, 60, 79, 92, 35, 52, 86, 2, T_BUG, T_NONE },  // 918 bug
+  { "NYMBLE", 920, 24, R_COMUN, 0x7CC4, 33, 46, 40, 45, 21, 25, 2, T_BUG, T_NONE },  // 919 bug
+  { "LOKIX", 0, 0, R_EVO, 0x7CC4, 71, 102, 78, 92, 52, 55, 2, T_BUG, T_DARK },  // 920 bug/dark
+  { "PAWMI", 922, 18, R_COMUN, 0xBCA1, 45, 50, 20, 60, 40, 25, 0, T_ELECTRIC, T_NONE },  // 921 electric
+  { "PAWMO", 923, 30, R_EVO, 0xBCA1, 60, 75, 40, 85, 50, 40, 0, T_ELECTRIC, T_FIGHTING },  // 922 electric/fighting
+  { "PAWMOT", 0, 0, R_EVO, 0xBCA1, 70, 115, 70, 105, 70, 60, 0, T_ELECTRIC, T_FIGHTING },  // 923 electric/fighting
+  { "TANDEMAUS", 925, 25, R_COMUN, 0x8C4D, 50, 50, 45, 75, 40, 45, 0, T_NORMAL, T_NONE },  // 924 normal
+  { "MAUSHOLD", 0, 0, R_EVO, 0x8C4D, 74, 75, 70, 111, 65, 75, 0, T_NORMAL, T_NONE },  // 925 normal
+  { "FIDOUGH", 927, 26, R_COMUN, 0xC333, 37, 55, 70, 65, 30, 55, 0, T_FAIRY, T_NONE },  // 926 fairy
+  { "DACHSBUN", 0, 0, R_EVO, 0xC333, 57, 80, 115, 95, 50, 80, 0, T_FAIRY, T_NONE },  // 927 fairy
+  { "SMOLIV", 929, 25, R_COMUN, 0x3C49, 41, 35, 45, 30, 58, 51, 2, T_GRASS, T_NORMAL },  // 928 grass/normal
+  { "DOLLIV", 930, 35, R_EVO, 0x3C49, 52, 53, 60, 33, 78, 78, 2, T_GRASS, T_NORMAL },  // 929 grass/normal
+  { "ARBOLIVA", 0, 0, R_EVO, 0x3C49, 78, 69, 90, 39, 125, 109, 2, T_GRASS, T_NORMAL },  // 930 grass/normal
+  { "SQUAWKABILLY", 0, 0, R_COMUN, 0x8C4D, 82, 96, 51, 92, 45, 51, 0, T_NORMAL, T_FLYING },  // 931 normal/flying
+  { "NACLI", 933, 24, R_COMUN, 0x9407, 55, 55, 75, 25, 35, 35, 4, T_ROCK, T_NONE },  // 932 rock
+  { "NACLSTACK", 934, 38, R_EVO, 0x9407, 60, 60, 100, 35, 35, 65, 4, T_ROCK, T_NONE },  // 933 rock
+  { "GARGANACL", 0, 0, R_EVO, 0x9407, 100, 100, 130, 35, 45, 90, 4, T_ROCK, T_NONE },  // 934 rock
+  { "CHARCADET", 936, 30, R_COMUN, 0xEA87, 40, 50, 40, 35, 50, 40, 3, T_FIRE, T_NONE },  // 935 fire
+  { "ARMAROUGE", 0, 0, R_EVO, 0xEA87, 85, 60, 100, 75, 125, 80, 3, T_FIRE, T_PSYCHIC },  // 936 fire/psychic
+  { "CERULEDGE", 0, 0, R_RARO, 0xEA87, 75, 125, 80, 85, 60, 100, 3, T_FIRE, T_GHOST },  // 937 fire/ghost
+  { "TADBULB", 939, 30, R_COMUN, 0xBCA1, 61, 31, 41, 45, 59, 35, 0, T_ELECTRIC, T_NONE },  // 938 electric
+  { "BELLIBOLT", 0, 0, R_EVO, 0xBCA1, 109, 64, 91, 45, 103, 83, 0, T_ELECTRIC, T_NONE },  // 939 electric
+  { "WATTREL", 941, 25, R_COMUN, 0xBCA1, 40, 40, 35, 70, 55, 40, 0, T_ELECTRIC, T_FLYING },  // 940 electric/flying
+  { "KILOWATTREL", 0, 0, R_EVO, 0xBCA1, 70, 70, 60, 125, 105, 60, 0, T_ELECTRIC, T_FLYING },  // 941 electric/flying
+  { "MASCHIFF", 943, 30, R_COMUN, 0x5A47, 60, 78, 60, 51, 40, 51, 2, T_DARK, T_NONE },  // 942 dark
+  { "MABOSSTIFF", 0, 0, R_EVO, 0x5A47, 80, 120, 90, 85, 60, 70, 2, T_DARK, T_NONE },  // 943 dark
+  { "SHROODLE", 945, 28, R_COMUN, 0x8A73, 40, 65, 35, 75, 40, 35, 0, T_POISON, T_NORMAL },  // 944 poison/normal
+  { "GRAFAIAI", 0, 0, R_EVO, 0x8A73, 63, 95, 65, 110, 80, 72, 0, T_POISON, T_NORMAL },  // 945 poison/normal
+  { "BRAMBLIN", 947, 30, R_COMUN, 0x3C49, 40, 65, 30, 60, 45, 35, 2, T_GRASS, T_GHOST },  // 946 grass/ghost
+  { "BRAMBLEGHAST", 0, 0, R_EVO, 0x3C49, 55, 115, 70, 90, 80, 70, 2, T_GRASS, T_GHOST },  // 947 grass/ghost
+  { "TOEDSCOOL", 949, 30, R_COMUN, 0xB447, 40, 40, 35, 70, 50, 100, 4, T_GROUND, T_GRASS },  // 948 ground/grass
+  { "TOEDSCRUEL", 0, 0, R_EVO, 0xB447, 80, 70, 65, 100, 80, 120, 4, T_GROUND, T_GRASS },  // 949 ground/grass
+  { "KLAWF", 0, 0, R_COMUN, 0x9407, 70, 100, 115, 75, 35, 55, 4, T_ROCK, T_NONE },  // 950 rock
+  { "CAPSAKID", 952, 30, R_COMUN, 0x3C49, 50, 62, 40, 50, 62, 40, 2, T_GRASS, T_NONE },  // 951 grass
+  { "SCOVILLAIN", 0, 0, R_EVO, 0x3C49, 65, 108, 65, 75, 108, 65, 2, T_GRASS, T_FIRE },  // 952 grass/fire
+  { "RELLOR", 954, 30, R_COMUN, 0x7CC4, 41, 50, 60, 30, 31, 58, 2, T_BUG, T_NONE },  // 953 bug
+  { "RABSCA", 0, 0, R_EVO, 0x7CC4, 75, 50, 85, 45, 115, 100, 2, T_BUG, T_PSYCHIC },  // 954 bug/psychic
+  { "FLITTLE", 956, 35, R_COMUN, 0xD28F, 30, 35, 30, 75, 55, 30, 0, T_PSYCHIC, T_NONE },  // 955 psychic
+  { "ESPATHRA", 0, 0, R_EVO, 0xD28F, 95, 60, 60, 105, 101, 60, 0, T_PSYCHIC, T_NONE },  // 956 psychic
+  { "TINKATINK", 958, 24, R_COMUN, 0xC333, 50, 45, 45, 58, 35, 64, 0, T_FAIRY, T_STEEL },  // 957 fairy/steel
+  { "TINKATUFF", 959, 38, R_EVO, 0xC333, 65, 55, 55, 78, 45, 82, 0, T_FAIRY, T_STEEL },  // 958 fairy/steel
+  { "TINKATON", 0, 0, R_EVO, 0xC333, 85, 75, 77, 94, 70, 105, 0, T_FAIRY, T_STEEL },  // 959 fairy/steel
+  { "WIGLETT", 961, 26, R_COMUN, 0x4C98, 10, 55, 25, 95, 35, 25, 1, T_WATER, T_NONE },  // 960 water
+  { "WUGTRIO", 0, 0, R_EVO, 0x4C98, 35, 100, 50, 120, 50, 70, 1, T_WATER, T_NONE },  // 961 water
+  { "BOMBIRDIER", 0, 0, R_RARO, 0x7C7A, 70, 103, 85, 82, 60, 85, 0, T_FLYING, T_DARK },  // 962 flying/dark
+  { "FINIZEN", 964, 38, R_COMUN, 0x4C98, 70, 45, 40, 75, 45, 40, 1, T_WATER, T_NONE },  // 963 water
+  { "PALAFIN", 0, 0, R_EVO, 0x4C98, 100, 70, 72, 100, 53, 62, 1, T_WATER, T_NONE },  // 964 water
+  { "VAROOM", 966, 40, R_COMUN, 0x6BF1, 45, 70, 63, 47, 30, 45, 4, T_STEEL, T_POISON },  // 965 steel/poison
+  { "REVAVROOM", 0, 0, R_EVO, 0x6BF1, 80, 119, 90, 90, 54, 67, 4, T_STEEL, T_POISON },  // 966 steel/poison
+  { "CYCLIZAR", 0, 0, R_COMUN, 0x5A98, 70, 95, 65, 121, 85, 65, 1, T_DRAGON, T_NORMAL },  // 967 dragon/normal
+  { "ORTHWORM", 0, 0, R_RARO, 0x6BF1, 70, 85, 145, 65, 60, 55, 4, T_STEEL, T_NONE },  // 968 steel
+  { "GLIMMET", 970, 35, R_COMUN, 0x9407, 48, 35, 42, 60, 105, 60, 4, T_ROCK, T_POISON },  // 969 rock/poison
+  { "GLIMMORA", 0, 0, R_EVO, 0x9407, 83, 55, 90, 86, 130, 81, 4, T_ROCK, T_POISON },  // 970 rock/poison
+  { "GREAVARD", 972, 30, R_COMUN, 0x6AD3, 50, 61, 60, 34, 30, 55, 0, T_GHOST, T_NONE },  // 971 ghost
+  { "HOUNDSTONE", 0, 0, R_EVO, 0x6AD3, 72, 101, 100, 68, 50, 97, 0, T_GHOST, T_NONE },  // 972 ghost
+  { "FLAMIGO", 0, 0, R_COMUN, 0x7C7A, 82, 115, 74, 90, 75, 64, 0, T_FLYING, T_FIGHTING },  // 973 flying/fighting
+  { "CETODDLE", 975, 30, R_COMUN, 0x4DB8, 108, 68, 45, 43, 30, 40, 5, T_ICE, T_NONE },  // 974 ice
+  { "CETITAN", 0, 0, R_EVO, 0x4DB8, 170, 113, 65, 73, 45, 55, 5, T_ICE, T_NONE },  // 975 ice
+  { "VELUZA", 0, 0, R_COMUN, 0x4C98, 90, 102, 73, 70, 78, 65, 1, T_WATER, T_PSYCHIC },  // 976 water/psychic
+  { "DONDOZO", 0, 0, R_RARO, 0x4C98, 150, 100, 115, 35, 65, 65, 1, T_WATER, T_NONE },  // 977 water
+  { "TATSUGIRI", 0, 0, R_COMUN, 0x5A98, 68, 50, 60, 82, 120, 95, 1, T_DRAGON, T_WATER },  // 978 dragon/water
+  { "ANNIHILAPE", 0, 0, R_EVO, 0xA2A5, 110, 115, 80, 90, 50, 90, 0, T_FIGHTING, T_GHOST },  // 979 fighting/ghost
+  { "CLODSIRE", 0, 0, R_COMUN, 0x8A73, 130, 75, 60, 20, 45, 100, 0, T_POISON, T_GROUND },  // 980 poison/ground
+  { "FARIGIRAF", 0, 0, R_EVO, 0x8C4D, 120, 90, 70, 60, 110, 70, 0, T_NORMAL, T_PSYCHIC },  // 981 normal/psychic
+  { "DUDUNSPARCE", 0, 0, R_EVO, 0x8C4D, 125, 100, 80, 55, 85, 75, 0, T_NORMAL, T_NONE },  // 982 normal
+  { "KINGAMBIT", 0, 0, R_EVO, 0x5A47, 100, 135, 120, 50, 60, 85, 2, T_DARK, T_STEEL },  // 983 dark/steel
+  { "GREAT TUSK", 0, 0, R_RARO, 0xB447, 115, 131, 131, 87, 53, 53, 4, T_GROUND, T_FIGHTING },  // 984 ground/fighting
+  { "SCREAM TAIL", 0, 0, R_COMUN, 0xC333, 115, 65, 99, 111, 65, 115, 0, T_FAIRY, T_PSYCHIC },  // 985 fairy/psychic
+  { "BRUTE BONNET", 0, 0, R_COMUN, 0x3C49, 111, 127, 99, 55, 79, 99, 2, T_GRASS, T_DARK },  // 986 grass/dark
+  { "FLUTTER MANE", 0, 0, R_RARO, 0x6AD3, 55, 55, 55, 135, 135, 135, 0, T_GHOST, T_FAIRY },  // 987 ghost/fairy
+  { "SLITHER WING", 0, 0, R_RARO, 0x7CC4, 85, 135, 79, 81, 85, 105, 2, T_BUG, T_FIGHTING },  // 988 bug/fighting
+  { "SANDY SHOCKS", 0, 0, R_RARO, 0xBCA1, 85, 81, 97, 101, 121, 85, 0, T_ELECTRIC, T_GROUND },  // 989 electric/ground
+  { "IRON TREADS", 0, 0, R_RARO, 0xB447, 90, 112, 120, 106, 72, 70, 4, T_GROUND, T_STEEL },  // 990 ground/steel
+  { "IRON BUNDLE", 0, 0, R_COMUN, 0x4DB8, 56, 80, 114, 136, 124, 60, 5, T_ICE, T_WATER },  // 991 ice/water
+  { "IRON HANDS", 0, 0, R_COMUN, 0xA2A5, 154, 140, 108, 50, 50, 68, 0, T_FIGHTING, T_ELECTRIC },  // 992 fighting/electric
+  { "IRON JUGULIS", 0, 0, R_RARO, 0x5A47, 94, 80, 86, 108, 122, 80, 2, T_DARK, T_FLYING },  // 993 dark/flying
+  { "IRON MOTH", 0, 0, R_RARO, 0xEA87, 80, 70, 60, 110, 140, 110, 3, T_FIRE, T_POISON },  // 994 fire/poison
+  { "IRON THORNS", 0, 0, R_RARO, 0x9407, 100, 134, 110, 72, 70, 84, 4, T_ROCK, T_ELECTRIC },  // 995 rock/electric
+  { "FRIGIBAX", 997, 35, R_RARO, 0x5A98, 65, 75, 45, 55, 35, 45, 1, T_DRAGON, T_ICE },  // 996 dragon/ice
+  { "ARCTIBAX", 998, 54, R_EVO, 0x5A98, 90, 95, 66, 62, 45, 65, 1, T_DRAGON, T_ICE },  // 997 dragon/ice
+  { "BAXCALIBUR", 0, 0, R_EVO, 0x5A98, 115, 145, 92, 87, 75, 86, 1, T_DRAGON, T_ICE },  // 998 dragon/ice
+  { "GIMMIGHOUL", 1000, 30, R_RARO, 0x6AD3, 45, 30, 70, 10, 75, 70, 0, T_GHOST, T_NONE },  // 999 ghost
+  { "GHOLDENGO", 0, 0, R_EVO, 0x6BF1, 87, 60, 95, 84, 133, 91, 4, T_STEEL, T_GHOST },  // 1000 steel/ghost
+  { "WO CHIEN", 0, 0, R_LEGENDARIO, 0x5A47, 85, 85, 100, 70, 95, 135, 2, T_DARK, T_GRASS },  // 1001 dark/grass
+  { "CHIEN PAO", 0, 0, R_LEGENDARIO, 0x5A47, 80, 120, 80, 135, 90, 65, 2, T_DARK, T_ICE },  // 1002 dark/ice
+  { "TING LU", 0, 0, R_LEGENDARIO, 0x5A47, 155, 110, 125, 45, 55, 80, 2, T_DARK, T_GROUND },  // 1003 dark/ground
+  { "CHI YU", 0, 0, R_LEGENDARIO, 0x5A47, 55, 80, 80, 100, 135, 120, 2, T_DARK, T_FIRE },  // 1004 dark/fire
+  { "ROARING MOON", 0, 0, R_RARO, 0x5A98, 105, 139, 71, 119, 55, 101, 1, T_DRAGON, T_DARK },  // 1005 dragon/dark
+  { "IRON VALIANT", 0, 0, R_RARO, 0xC333, 74, 130, 90, 116, 120, 60, 0, T_FAIRY, T_FIGHTING },  // 1006 fairy/fighting
+  { "KORAIDON", 0, 0, R_LEGENDARIO, 0xA2A5, 100, 135, 115, 135, 85, 100, 0, T_FIGHTING, T_DRAGON },  // 1007 fighting/dragon
+  { "MIRAIDON", 0, 0, R_LEGENDARIO, 0xBCA1, 100, 85, 100, 135, 135, 115, 0, T_ELECTRIC, T_DRAGON },  // 1008 electric/dragon
+  { "WALKING WAKE", 0, 0, R_RARO, 0x4C98, 99, 83, 91, 109, 125, 83, 1, T_WATER, T_DRAGON },  // 1009 water/dragon
+  { "IRON LEAVES", 0, 0, R_RARO, 0x3C49, 90, 130, 88, 104, 70, 108, 2, T_GRASS, T_PSYCHIC },  // 1010 grass/psychic
+  { "DIPPLIN", 1019, 30, R_RARO, 0x3C49, 80, 80, 110, 40, 95, 80, 2, T_GRASS, T_DRAGON },  // 1011 grass/dragon
+  { "POLTCHAGEIST", 1013, 30, R_COMUN, 0x3C49, 40, 45, 45, 50, 74, 54, 2, T_GRASS, T_GHOST },  // 1012 grass/ghost
+  { "SINISTCHA", 0, 0, R_EVO, 0x3C49, 71, 60, 106, 70, 121, 80, 2, T_GRASS, T_GHOST },  // 1013 grass/ghost
+  { "OKIDOGI", 0, 0, R_LEGENDARIO, 0x8A73, 88, 128, 115, 80, 58, 86, 0, T_POISON, T_FIGHTING },  // 1014 poison/fighting
+  { "MUNKIDORI", 0, 0, R_LEGENDARIO, 0x8A73, 88, 75, 66, 106, 130, 90, 0, T_POISON, T_PSYCHIC },  // 1015 poison/psychic
+  { "FEZANDIPITI", 0, 0, R_LEGENDARIO, 0x8A73, 88, 91, 82, 99, 70, 125, 0, T_POISON, T_FAIRY },  // 1016 poison/fairy
+  { "OGERPON", 0, 0, R_LEGENDARIO, 0x3C49, 80, 120, 84, 110, 60, 96, 2, T_GRASS, T_NONE },  // 1017 grass
+  { "ARCHALUDON", 0, 0, R_EVO, 0x6BF1, 90, 105, 130, 85, 125, 65, 4, T_STEEL, T_DRAGON },  // 1018 steel/dragon
+  { "HYDRAPPLE", 0, 0, R_EVO, 0x3C49, 106, 80, 110, 44, 120, 80, 2, T_GRASS, T_DRAGON },  // 1019 grass/dragon
+  { "GOUGING FIRE", 0, 0, R_RARO, 0xEA87, 105, 115, 121, 91, 65, 93, 3, T_FIRE, T_DRAGON },  // 1020 fire/dragon
+  { "RAGING BOLT", 0, 0, R_RARO, 0xBCA1, 125, 73, 91, 75, 137, 89, 0, T_ELECTRIC, T_DRAGON },  // 1021 electric/dragon
+  { "IRON BOULDER", 0, 0, R_RARO, 0x9407, 90, 120, 80, 124, 68, 108, 4, T_ROCK, T_PSYCHIC },  // 1022 rock/psychic
+  { "IRON CROWN", 0, 0, R_RARO, 0x6BF1, 90, 72, 100, 98, 122, 108, 4, T_STEEL, T_PSYCHIC },  // 1023 steel/psychic
+  { "TERAPAGOS", 0, 0, R_LEGENDARIO, 0x8C4D, 90, 65, 85, 60, 65, 85, 0, T_NORMAL, T_NONE },  // 1024 normal
+  { "PECHARUNT", 0, 0, R_LEGENDARIO, 0x8A73, 88, 88, 160, 88, 88, 88, 0, T_POISON, T_GHOST },  // 1025 poison/ghost
 };
 
 // el primer huevo de la partida: iniciales clasicos
@@ -891,9 +1107,11 @@ static const int16_t REGION_START_SINNOH[] = { 387, 390, 393 };
 static const int16_t REGION_START_UNOVA[] = { 495, 498, 501 };
 static const int16_t REGION_START_KALOS[] = { 650, 653, 656 };
 static const int16_t REGION_START_ALOLA[] = { 722, 725, 728 };
-static const int16_t REGION_START_ALL[] = { 1, 4, 7, 25, 133, 152, 155, 158, 252, 255, 258, 387, 390, 393, 495, 498, 501, 650, 653, 656, 722, 725, 728 };
-#define REGION_COUNT 8
-#define REGION_ALL 7
+static const int16_t REGION_START_GALAR[] = { 810, 813, 816 };
+static const int16_t REGION_START_PALDEA[] = { 906, 909, 912 };
+static const int16_t REGION_START_ALL[] = { 1, 4, 7, 25, 133, 152, 155, 158, 252, 255, 258, 387, 390, 393, 495, 498, 501, 650, 653, 656, 722, 725, 728, 810, 813, 816, 906, 909, 912 };
+#define REGION_COUNT 10
+#define REGION_ALL 9
 static const RegionInfo REGIONS[REGION_COUNT] = {
   { "KANTO", 1, 151, REGION_START_KANTO, 5 },
   { "JOHTO", 152, 251, REGION_START_JOHTO, 3 },
@@ -902,5 +1120,7 @@ static const RegionInfo REGIONS[REGION_COUNT] = {
   { "UNOVA", 494, 649, REGION_START_UNOVA, 3 },
   { "KALOS", 650, 721, REGION_START_KALOS, 3 },
   { "ALOLA", 722, 809, REGION_START_ALOLA, 3 },
-  { "ALL", 1, 809, REGION_START_ALL, 23 },
+  { "GALAR", 810, 905, REGION_START_GALAR, 3 },
+  { "PALDEA", 906, 1025, REGION_START_PALDEA, 3 },
+  { "ALL", 1, 1025, REGION_START_ALL, 29 },
 };

@@ -81,6 +81,11 @@ uint8_t regionOfDex(int16_t d);
 // REGION_COUNT, which would land on a locked region and silently do nothing.
 uint8_t nextAvailableRegion(uint8_t from);
 
+// Can this species be put on the panel at all: it has art somewhere, and the
+// pack for its region is on the card. THE single answer, asked by the egg pool
+// and by every evolution.
+bool speciesShowable(int16_t d);
+
 class Pet {
 public:
   // Estadisticas 0..100
@@ -347,6 +352,9 @@ public:
   // earned it -- see sleep_test.
   bool inTotalNeglect() const { return !fullness && !joy && !energy && !hygiene; }
   bool canRunawayNow() const;   // abandono total 1h: lista para escaparse (boton triste)
+  // Is there a form this creature could evolve into that this player could be
+  // SHOWN? Public so a test can drive it without reconstructing canEvolveNow().
+  bool evoTargetShowable() const;
   // el usuario decide en un dialogo; "mantener/quedaros" pospone y re-ofrece luego
   bool wantEvolveButton() const { return canEvolveNow() && level() > evoDeclinedLv; }
   bool wantFarewellButton() const { return canFarewellNow() && ageMinutes >= farDeclinedAge; }

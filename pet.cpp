@@ -466,6 +466,14 @@ bool regionAvailable(uint8_t r) {
   return (gRegionArt & (uint16_t)(1u << r)) != 0;
 }
 
+// THE single answer to "can this player be shown this species". The egg pool
+// and every evolution ask it; having two opinions is how EEVEE's branch was
+// filtered for years while the linear path was not.
+bool speciesShowable(int16_t d) {
+  return d >= 1 && d <= DEX_COUNT && speciesHasArt(d) &&
+         regionAvailable(regionOfDex(d));
+}
+
 uint8_t regionOfDex(int16_t d) {
   for (uint8_t i = 0; i < REGION_COUNT; i++) {
     if (i == REGION_ALL) continue;
@@ -1046,11 +1054,31 @@ bool Pet::canEvolveNow() const {
   if (isEgg() || sleeping || ceremony != CER_NONE) return false;
   const DexEntry &d = DEX_TBL[speciesId];
   if (d.evolvesTo == 0) return false;
+  // The TARGET has to be drawable, not merely present in the table. Evolution
+  // is one-way, so evolving into a species with no art or no pack on the card
+  // hands the player a dex number forever -- exactly what eeveeOptions()
+  // already prevents for the branch. The linear path never had the same guard,
+  // and evolution targets routinely reach OUT of the installed region: STEELIX
+  // and BLISSEY always did, and Gen 8/9 added nine more (GIRAFARIG ->
+  // FARIGIRAF, LINOONE -> OBSTAGOON and the rest) that land in Galar and
+  // Paldea. One rule for both paths, stated as what is ALLOWED.
+  if (!evoTargetShowable()) return false;
   // evoPen is the day owed for retiring the PREVIOUS creature early. It rides
   // on the same threshold careMistakes already moves, so there is one rule for
   // "this creature evolves later" rather than two that can disagree.
   return level() >= (uint16_t)(d.evolveLevel + careMistakes + evoPen) &&
          lowestStat() >= 40;
+}
+
+// Is there any form this creature could evolve INTO that this player could
+// actually be shown? For EEVEE that is the filtered branch; for everything else
+// it is the single target in the table.
+bool Pet::evoTargetShowable() const {
+  if (speciesId == DEX_EEVEE) {
+    int16_t opts[EEVEE_EVO_COUNT];
+    return eeveeOptions(opts) > 0;
+  }
+  return speciesShowable(DEX_TBL[speciesId].evolvesTo);
 }
 
 void Pet::evolve() {
@@ -1341,6 +1369,7 @@ void Pet::save() {
   prefs.putUChar("mvlv", lastLearnLevel);
   prefs.putUChar("avtr", avatar);
   prefs.putUChar("reg", region);
+  prefs.putUChar("regn", REGION_COUNT);   // what REGION_ALL meant when this was written
   prefs.putBytes("badgX", badgesX, sizeof(badgesX));
   prefs.putBytes("badhX", badgesHardX, sizeof(badgesHardX));
   prefs.putBytes("eggR", eggByRegion, sizeof(eggByRegion));
@@ -1458,6 +1487,18 @@ void Pet::load() {
   loadBlob(prefs, "badhX", badgesHardX, sizeof(badgesHardX));
   region = prefs.getUChar("reg", REGION_ALL);
   if (region >= REGION_COUNT) region = REGION_ALL;
+  // REGION_ALL is the LAST entry of the table and is persisted RAW, so growing
+  // the table silently renames whatever the player had chosen: with Galar and
+  // Paldea appended, ALL moved 7 -> 9 and a stored 7 became GALAR -- a region
+  // with no sprite pack, which would have emptied the egg pool of every save
+  // still on the default. "regn" records the table size the save was written
+  // with so that cannot happen again; its absence means the last build that
+  // had none, which had 8 entries and ALL at 7.
+  uint8_t storedRegions = prefs.getUChar("regn", 0);
+  if (storedRegions != REGION_COUNT) {
+    if (!storedRegions) storedRegions = 8;
+    if (region >= (uint8_t)(storedRegions - 1)) region = REGION_ALL;
+  }
   // A save from the Kanto-only build has neither key; getBytes leaves the
   // array at its zeroed initialiser, which is exactly "nothing remembered".
   loadBlob(prefs, "eggR", eggByRegion, sizeof(eggByRegion));
