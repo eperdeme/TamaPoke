@@ -39,6 +39,12 @@ bool uiButtonDisabled(int i);
 void uiButtonAt(int i, int *cx, int *cy, int *half);
 bool monSheetBtn(int16_t x, int16_t y, bool left);
 void uiConfirmRects(int *b1Top, int *b1Bot, int *b2Top, int *b2Bot);
+// The round-panel geometry, asked of the firmware rather than restated here.
+int uiSafeHalfWidth(int y);
+int uiTapFinger();
+void partySlotPos(int i, int *cx, int *cy);
+int partySlotAt(int16_t x, int16_t y);
+bool partyHubAt(int16_t x, int16_t y);
 #include "badges.h"
 #include "trainers.h"
 bool badgeArtExists(uint8_t region, uint8_t i);
@@ -194,6 +200,91 @@ int main(){
     }
     printf("      smallest gap between home icons: %d px\n", worst);
     ck(worst >= 0, "the home icons do not overlap");
+  }
+
+  // EVERY primary control is measured against the FINGER floor, and the ones
+  // that cannot reach it are counted rather than hidden.
+  //
+  // UI_TAP_MIN is 44, which is 44 POINTS misread as pixels: this panel is
+  // 466 px over 1.75 in, so a pixel is 0.095 mm, 44 px is 4.2 mm, and the home
+  // icons were 5.7 mm. That one measurement is behind all three "hard to hit"
+  // reports. UI_TAP_FINGER is 9 mm in this panel's pixels -- asked of the
+  // firmware through uiTapFinger(), because a test that retypes the threshold
+  // it is enforcing proves nothing.
+  //
+  // FOUR controls are still under it and CANNOT grow where they are: the party
+  // CLOSE bar and the LAN button have no room below a full screen, the battle
+  // grid cell would push the grid off the panel, and a fourth home icon at 94
+  // reaches radius 236 of 233 -- a finger-safe home row here is three icons,
+  // not four. The count is asserted so a FIFTH cannot appear quietly.
+  {
+    const int FINGER = uiTapFinger();
+    const double PPMM = 466.0 / 1.75 / 25.4;
+    int h[8], n = 0;
+    uiButtonHeights(h, 8, &n);
+    int under = 0, tiny = 0;
+    printf("      primary controls:");
+    for (int i = 0; i < n; i++) printf(" %d(%.1fmm)", h[i], h[i] / PPMM);
+    printf("\n");
+    for (int i = 0; i < n; i++) {
+      if (h[i] < FINGER) under++;
+      if (h[i] < 44) tiny++;
+    }
+    ck(tiny == 0, "no control is below the hard floor");
+    ck(under <= 4, "and no FIFTH control has dropped below the finger floor");
+
+    // The home icons are round-cornered and their hit area is a DISC, so the
+    // honest question is whether their bounding circle clears the bezel --
+    // a square bound would fail them for corners that are not drawn.
+    int offGlass = 0;
+    for (int i = 0; i < 4; i++) {
+      int bx, by, bh;
+      uiButtonAt(i, &bx, &by, &bh);
+      double d = sqrt((double)(bx - 233) * (bx - 233) + (double)(by - 233) * (by - 233));
+      if (d + bh > 233) offGlass++;
+    }
+    ck(offGlass == 0, "every home icon is fully on the glass");
+  }
+
+  // The party ring. Its radius is MEASURED off partySlotAt() rather than read
+  // from PSLOT_R, so this checks the hit areas the firmware actually answers
+  // with -- the drawn size and the tapped size are what drift apart.
+  {
+    const int FINGER = uiTapFinger();
+    int c0x, c0y;
+    partySlotPos(0, &c0x, &c0y);
+    int r = 0;
+    while (r < 200 && partySlotAt((int16_t)(c0x + r + 1), (int16_t)c0y) == 0) r++;
+    printf("      party ring: 6 slots, measured %d px across\n", (r + 1) * 2);
+    ck((r + 1) * 2 >= FINGER, "a party slot is at least a finger across");
+
+    int overlap = 0, offGlass = 0, wrongOwner = 0, hubClash = 0;
+    for (int i = 0; i < PARTY_SLOTS; i++) {
+      int ax, ay;
+      partySlotPos(i, &ax, &ay);
+      if (uiSafeHalfWidth(ay) < abs(ax - 233) + r) offGlass++;
+      if (partySlotAt((int16_t)ax, (int16_t)ay) != i) wrongOwner++;
+      if (partyHubAt((int16_t)ax, (int16_t)ay)) hubClash++;
+      for (int j = i + 1; j < PARTY_SLOTS; j++) {
+        int bx2, by2;
+        partySlotPos(j, &bx2, &by2);
+        int dx = ax - bx2, dy = ay - by2;
+        if (dx * dx + dy * dy < (2 * r) * (2 * r)) overlap++;
+      }
+    }
+    ck(overlap == 0, "no two party slots overlap");
+    ck(offGlass == 0, "and every slot is fully on the glass");
+    ck(wrongOwner == 0, "each slot owns its own centre");
+    ck(hubClash == 0, "and none of them reaches into the hub");
+
+    // The hub is the BOX button, in the middle, where a thumb lands. Nothing
+    // else may answer there -- the same rule that keeps the mon sheet's
+    // primary action, not its dead gap, on the centre line.
+    int hy = 0;
+    for (int i = 0; i < PARTY_SLOTS; i++) { int sx, sy; partySlotPos(i, &sx, &sy); hy += sy; }
+    hy /= PARTY_SLOTS;
+    ck(partyHubAt(233, (int16_t)hy) && partySlotAt(233, (int16_t)hy) < 0,
+       "the hub owns the middle of the ring outright");
   }
 
   // THE EGG REGION PILL. Missing it fell through to pet.eggTap(), and three

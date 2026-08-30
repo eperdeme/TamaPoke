@@ -1318,28 +1318,70 @@ handler skips it (`passive = (i == 2)`), so it reads as information rather than
 a dead button. DEF still trains by itself, +1 per `DEF_TRAIN_TICKS` of good
 wellbeing.
 
-### Swipe map -- DONE, do not re-plan it
+### Gesture map -- DONE, do not re-plan it
 
-This section used to hold a target layout and a list of conflicts. All four
-gestures are now bound, and the conflicts were resolved; it is recorded here as
-fact so nobody redesigns it from the old notes.
+Three axes, one meaning each. This replaced a per-screen grab-bag in v3.13 and
+is recorded here as fact so nobody redesigns it from the old notes.
 
-| Gesture | From the main screen |
-|---|---|
-| Up | the creature's card (4 pages: profile, battle, moves, progress) |
-| Down | the player card (badges + avatar, then medals) |
-| Left | the gym ladder -- which is also where the LAN battle button lives |
-| Right | the party |
+| Gesture | Means | Where |
+|---|---|---|
+| Horizontal | move along the TILE AXIS | `PLAYER . PARTY . [PET] . GYM . DEX` |
+| Up | deeper (the pet's card, a sheet) | everywhere |
+| Down | BACK, one level | everywhere |
+| Rim drag | PAGE the current screen | every paged screen |
 
-The clock lost its gesture on purpose: the menu's SETTINGS row already opens it,
-and the player card is reached far more often. The Pokedex lost its horizontal
-gesture for the same reason -- it has a menu row, and a gesture is worth more
-spent on a screen without one.
+**The horizontal axis BUMPS at both ends and can no longer close anything.**
+That is the entire point. Paging and exiting used to be the SAME gesture -- a
+screen paged until you ran off the end, at which point it closed -- which is
+case 1 of § "Traps" and shipped four times. Paging moved to the rim
+(`onRim`, `uiRimTarget`) precisely so the two can never be confused again.
 
-**Swipe left is spoken for.** The old suggestion of wild encounters there is
-superseded twice over: the gym ladder took it, and the multi-region plan (B2)
-turns it into a region/LAN chooser. Wild encounters, if they happen, need
-another home -- a menu row is the obvious one.
+**`uiRimTarget()` is the single table of paged screens**: which variable holds
+the page and how many there are. The arc scrollbar, the rim drag and
+`swipe_test` all read it, so a new paged screen gets its scrollbar, its gesture
+and its coverage from one edit. Adding a screen to `onSwipe` instead is the old
+mistake wearing new clothes.
 
-Every paged screen reached this way must be added to `swipe_test`; the same
-paging bug shipped four times before that test existed.
+**The tile order is not arbitrary.** `PLAYER . PARTY . [PET] . GYM . DEX` keeps
+the two bindings that already existed -- swipe left for the gym ladder, swipe
+right for the party -- so the axis extends muscle memory rather than fighting
+it. Yours on the left, the world on the right.
+
+**Both multi-region tiles still open on their CHOOSER**, and `swipe_test` still
+asserts it. Down backs out of a ladder to the chooser and out of the chooser to
+the pet; up keeps the region shortcut it always had.
+
+`uiChrome()` draws the axis dots and the arc scrollbar, and every renderer that
+is on the axis or pages calls it immediately before `gfx->flush()`. A screen
+either has the chrome or visibly does not.
+
+### Round-panel geometry: ask, never guess
+
+`uiSafeHalfWidth(y)` is the half-chord at row y, and `uiSafeHalfWidthFor(y0,y1)`
+the narrower of two -- a rounded box is widest at its middle but its CORNERS are
+what leave the circle. Every full-width layout asks these. The gym ladder used
+to draw five identical 326 px rows over y 110..374 where the real chord runs
+448 down to 372: wasting 66 px in the middle AND hanging the end rows' corners
+off the glass, both at once.
+
+**`UI_TAP_MIN` is 44 and is a HARD FLOOR, not a target.** It is 44 *points*
+borrowed as pixels: this panel is 466 px over 1.75 in = 266 ppi, so a pixel is
+0.095 mm and 44 px is 4.2 mm -- under half a fingertip. It survives only because
+several laid-out screens cannot grow without being redesigned. **New work uses
+`UI_TAP_FINGER` (94 px = 9 mm)**, and `hit_test` holds `uiButtonHeights()` to it.
+
+That single mis-scaled constant is behind all three "hard to hit" reports. The
+home icons were 60 px (5.7 mm) with a 6 px gap; they are 80 px now, which is
+only possible because the four care bars moved to the rim as arcs and gave the
+bottom of the panel back. Four `UI_TAP_FINGER` targets in one row would reach
+radius 222 of 233 -- so a finger-safe home row on this panel is three icons, not
+four, and 80 px is the honest compromise that keeps all four.
+
+**The party and box are a RING of six, not a 2x3 grid** (`partySlotPos`,
+`partySlotAt`, `partyHubAt`). A grid on a circle spends its corners on glass
+that is not there; the old 150x70 cells were 70 px tall, under the floor, with
+their outer corners at the bezel. The BOX button is the hub in the middle,
+because the centre of a round panel is the easiest place on it to hit.
+`hit_test` MEASURES the slot radius off `partySlotAt()` rather than reading
+`PSLOT_R`, so it checks the hit areas the firmware actually answers with.
+

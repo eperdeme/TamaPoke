@@ -1,7 +1,10 @@
-// Every paged screen must PAGE on a horizontal swipe rather than closing.
+// Every paged screen must PAGE rather than closing, and the horizontal axis
+// must never close anything at all.
+//
 // This has been got wrong four separate times -- the move picker, the player
-// card, the gym list and the box -- each found by hand, so it is checked here
-// for all of them at once.
+// card, the gym list and the box -- each found by hand. Paging now lives on the
+// RIM (onRim) and the horizontal swipe is the TILE AXIS, which is what makes
+// the two gestures impossible to confuse; both halves are checked here.
 #include "Arduino.h"
 #include "Arduino_GFX_Library.h"
 #include "Preferences.h"
@@ -17,11 +20,14 @@ void FakeESP::restart(){exit(0);}
 int FakeSerial::available(){return 0;}
 String FakeSerial::readStringUntil(char){return String("");}
 void setup(); void render(); void onSwipe(int dir); void onSwipeV(int dir);
+void onRim(int dir);
+int uiTileIndex(); void uiTileGo(int i);
+uint8_t uiCurrentScreen(); uint8_t uiRimPages(); uint8_t uiRimPage();
 extern Pet pet;
 extern bool cardOpen, galleryOpen, clockOpen, kbOpen, menuOpen, partyOpen, partyPick;
 extern bool trainOpen, movePickOpen, battleOpen, gymOpen, playerOpen, boxOpen, pickOpen;
 extern uint8_t cardPage, gymPage, playerPage, movePickPage, boxPage, pickPage, partyDetail;
-extern int galleryPage; extern bool galleryDirty; extern uint8_t galleryDetail;
+extern uint8_t galleryPage; extern bool galleryDirty; extern uint8_t galleryDetail;
 extern uint8_t galleryRegion;
 extern uint8_t gymRegion;
 extern bool gymPick, galleryPick;
@@ -50,13 +56,21 @@ static void clearAll(){
   bagOpen=false;
   partyDetail=0; boxSel=boxSwapFrom=0;
 }
-// swipe left; the page must advance and the screen must stay open
+// Page it forward; the page must advance and the screen must stay open. Paging
+// moved from the horizontal swipe to the RIM, which is what freed the
+// horizontal axis to mean one thing. The bug this guards is unchanged: a paged
+// screen that CLOSES instead of paging.
 static void check(const char *name, bool *open, uint8_t *page){
   *page = 0;
-  onSwipe(-1);
-  if (!*open) { printf("FAIL  %-10s closed on a swipe instead of paging\n", name); bad++; return; }
+  onRim(1);
+  if (!*open) { printf("FAIL  %-10s closed while paging\n", name); bad++; return; }
   if (*page != 1) { printf("FAIL  %-10s did not advance a page (page=%u)\n", name, *page); bad++; return; }
-  printf("PASS  %-10s pages on a horizontal swipe\n", name);
+  // and it must CLAMP at the far end rather than closing or wrapping
+  uint8_t n = uiRimPages();
+  for (int i = 0; i < n + 3; i++) onRim(1);
+  if (!*open) { printf("FAIL  %-10s closed when paged off the end\n", name); bad++; return; }
+  if (*page != n - 1) { printf("FAIL  %-10s did not clamp at the last page (%u of %u)\n", name, *page, n); bad++; return; }
+  printf("PASS  %-10s pages on the rim and clamps at both ends\n", name);
 }
 uint8_t learnableFor(int16_t dex, uint8_t lvl, uint8_t *out, uint8_t max);
 
@@ -90,10 +104,10 @@ int main(){
   // Every species must be reachable: it was capped at 10 flat pages when the dex
   // was 151 long, which silently hid everything past 160 once it grew to 386.
   clearAll(); galleryOpen=true; galleryPick=false; galleryDetail=0; galleryPage=0; galleryRegion=0;
-  onSwipe(-1);
-  if (!galleryOpen) { printf("FAIL  gallery    closed on a swipe instead of paging\n"); bad++; }
-  else if (galleryPage != 1) { printf("FAIL  gallery    did not advance (page=%d)\n", galleryPage); bad++; }
-  else printf("PASS  %-10s pages on a horizontal swipe\n", "gallery");
+  onRim(1);
+  if (!galleryOpen) { printf("FAIL  gallery    closed while paging\n"); bad++; }
+  else if (galleryPage != 1) { printf("FAIL  gallery    did not advance (page=%u)\n", galleryPage); bad++; }
+  else printf("PASS  %-10s pages on the rim\n", "gallery");
   {
     // walk every region to its last page and tick off what it can show
     static bool seen[DEX_COUNT + 1] = { false };
@@ -108,7 +122,7 @@ int main(){
           int d = lo + p * 16 + i;
           if (d <= hi && d <= DEX_COUNT) seen[d] = true;
         }
-        onSwipe(-1);
+        onRim(1);
       }
       if (galleryPage != pages - 1) {
         printf("FAIL  gallery    %s stops at page %d of %d\n",
@@ -120,9 +134,9 @@ int main(){
     for (int d = 1; d <= DEX_COUNT; d++) if (!seen[d]) missing++;
     if (missing) { printf("FAIL  gallery    %d species are unreachable\n", missing); bad++; }
     else printf("PASS  %-10s every one of the %d species is reachable\n", "gallery", DEX_COUNT);
-    // and a vertical swipe really does move between regions
+    // and a vertical swipe UP really does move between regions
     galleryRegion = 0; galleryDetail = 0;
-    onSwipeV(1);
+    onSwipeV(-1);
     if (galleryRegion != 1 || !galleryOpen) {
       printf("FAIL  gallery    a vertical swipe does not change region\n"); bad++;
     } else printf("PASS  %-10s changes region on a vertical swipe\n", "gallery");
@@ -134,19 +148,64 @@ int main(){
   {
     bool ok = true;
     for (int r = 1; r <= GYM_REGIONS; r++) {
-      onSwipeV(1);
+      onSwipeV(-1);
       if (gymRegion != r % GYM_REGIONS || !gymOpen) ok = false;
     }
     if (!ok) { printf("FAIL  gyms       vertical swipe does not cycle the ladders\n"); bad++; }
     else printf("PASS  %-10s cycles all %d ladders on a vertical swipe\n", "gyms", GYM_REGIONS);
     for (int r = 0; r < GYM_REGIONS; r++) {
-      gymRegion = (uint8_t)r; gymPage = 0; gymOpen = true;
-      onSwipe(-1);
+      gymRegion = (uint8_t)r; gymPage = 0; gymOpen = true; gymPick = false;
+      onRim(1);
       if (gymPage != 1 || !gymOpen) {
         printf("FAIL  gyms       %s does not page\n", TRAINER_SETS[r].region); bad++;
       }
     }
-    if (!bad) printf("PASS  %-10s every ladder still pages horizontally\n", "gyms");
+    if (!bad) printf("PASS  %-10s every ladder still pages on the rim\n", "gyms");
+  }
+
+  // THE TILE AXIS. Horizontal is now one gesture with one meaning: move to the
+  // neighbouring tile. It must BUMP at both ends rather than closing, because
+  // "page off the end to exit" -- one gesture meaning two things -- is the
+  // shape that produced the four paging bugs above.
+  {
+    clearAll();
+    int home = uiTileIndex();
+    if (home < 0) { printf("FAIL  tiles      the main screen is not on the axis\n"); bad++; }
+    else printf("PASS  %-10s the main screen is tile %d\n", "tiles", home);
+
+    // walk to the far left end and keep going
+    for (int i = 0; i < 8; i++) onSwipe(1);
+    int left = uiTileIndex();
+    if (left != 0) { printf("FAIL  tiles      swiping right does not reach tile 0 (got %d)\n", left); bad++; }
+    else printf("PASS  %-10s reaches the first tile and stops there\n", "tiles");
+
+    // ...and the far right
+    for (int i = 0; i < 12; i++) onSwipe(-1);
+    int right = uiTileIndex();
+    if (right < 0) { printf("FAIL  tiles      swiping off the right end left the axis entirely\n"); bad++; }
+    else if (right == left) { printf("FAIL  tiles      the axis wrapped instead of bumping\n"); bad++; }
+    else printf("PASS  %-10s reaches the last tile (%d) and bumps\n", "tiles", right);
+
+    // every tile must be reachable, and each must be a DIFFERENT screen
+    for (int i = 0; i < 20; i++) onSwipe(1);
+    uint8_t scr[8]; int n = 0;
+    for (int i = 0; i < right + 1 && n < 8; i++) {
+      scr[n++] = uiCurrentScreen();
+      onSwipe(-1);
+    }
+    int dup = 0;
+    for (int a = 0; a < n; a++)
+      for (int b = a + 1; b < n; b++) if (scr[a] == scr[b]) dup++;
+    if (dup) { printf("FAIL  tiles      two tiles show the same screen\n"); bad++; }
+    else printf("PASS  %-10s all %d tiles are distinct screens\n", "tiles", n);
+
+    // and DOWN is back: from any tile it returns to the pet
+    uiTileGo(0);
+    onSwipeV(1);
+    if (uiCurrentScreen() != scr[home]) {
+      // scr[] was captured left-to-right from tile 0, so the pet is at `home`
+      printf("FAIL  tiles      swipe down from a tile does not return home\n"); bad++;
+    } else printf("PASS  %-10s swipe down returns to the pet\n", "tiles");
   }
 
   // Opening either screen must land on the REGION CHOOSER, not on whichever
@@ -157,16 +216,17 @@ int main(){
     onSwipe(-1);                       // swipe left from the main screen
     if (!gymOpen || !gymPick) { printf("FAIL  gyms       does not open on the region chooser\n"); bad++; }
     else printf("PASS  %-10s opens on the region chooser\n", "gyms");
-    // and paging back off the front of a ladder returns to it
+    // and a swipe DOWN out of a ladder returns to it -- one step of depth, not
+    // a page off the front, which is what used to do this job
     gymPick = false; gymRegion = 2; gymPage = 0;
-    onSwipe(1);
-    if (!gymPick || !gymOpen) { printf("FAIL  gyms       paging back does not return to the chooser\n"); bad++; }
-    else printf("PASS  %-10s paging back returns to the chooser\n", "gyms");
+    onSwipeV(1);
+    if (!gymPick || !gymOpen) { printf("FAIL  gyms       swiping down does not return to the chooser\n"); bad++; }
+    else printf("PASS  %-10s swiping down returns to the chooser\n", "gyms");
 
     clearAll(); galleryOpen = true; galleryPick = false; galleryRegion = 1; galleryPage = 0;
-    onSwipe(1);
-    if (!galleryPick || !galleryOpen) { printf("FAIL  gallery    paging back does not return to the chooser\n"); bad++; }
-    else printf("PASS  %-10s paging back returns to the chooser\n", "gallery");
+    onSwipeV(1);
+    if (!galleryPick || !galleryOpen) { printf("FAIL  gallery    swiping down does not return to the chooser\n"); bad++; }
+    else printf("PASS  %-10s swiping down returns to the chooser\n", "gallery");
   }
 
   // THE REGION CHOOSER IS PAGED NOW, and every paged screen in this sketch has
@@ -182,17 +242,17 @@ int main(){
     uint8_t nreg  = rpickRegions(rpickModeNow());
     uint8_t pages = rpickPageCount(rpickModeNow());
     if (pages < 2) { printf("FAIL  dexpick    expected >1 page for %u regions\n", nreg); bad++; }
-    onSwipe(-1);
-    if (!galleryOpen || !galleryPick) { printf("FAIL  dexpick    closed on a swipe instead of paging\n"); bad++; }
+    onRim(1);
+    if (!galleryOpen || !galleryPick) { printf("FAIL  dexpick    closed while paging\n"); bad++; }
     else if (rpickPage != 1) { printf("FAIL  dexpick    did not advance a page (page=%u)\n", rpickPage); bad++; }
-    else printf("PASS  %-10s pages on a horizontal swipe\n", "dexpick");
+    else printf("PASS  %-10s pages on the rim\n", "dexpick");
 
     // wrapping, in both directions, so no page can strand the player
     rpickPage = (uint8_t)(pages - 1);
-    onSwipe(-1);
+    onRim(1);
     if (rpickPage != 0 || !galleryPick) { printf("FAIL  dexpick    does not wrap forward to page 0\n"); bad++; }
     else printf("PASS  %-10s wraps forward rather than closing\n", "dexpick");
-    onSwipe(1);
+    onRim(-1);
     if (rpickPage != pages - 1 || !galleryPick) { printf("FAIL  dexpick    does not wrap backward\n"); bad++; }
     else printf("PASS  %-10s wraps backward rather than closing\n", "dexpick");
 
@@ -222,10 +282,10 @@ int main(){
     else printf("PASS  %-10s lists every ladder (%u)\n", "gympick", nreg);
     if (pages < 2) { printf("FAIL  gympick    %u regions but only %u page -- the last ladder is unreachable\n", nreg, pages); bad++; }
     else printf("PASS  %-10s needs %u pages and says so\n", "gympick", pages);
-    onSwipe(-1);
-    if (!gymOpen || !gymPick) { printf("FAIL  gympick    closed on a swipe instead of paging\n"); bad++; }
+    onRim(1);
+    if (!gymOpen || !gymPick) { printf("FAIL  gympick    closed while paging\n"); bad++; }
     else if (rpickPage != 1) { printf("FAIL  gympick    did not advance a page (page=%u)\n", rpickPage); bad++; }
-    else printf("PASS  %-10s pages on a horizontal swipe\n", "gympick");
+    else printf("PASS  %-10s pages on the rim\n", "gympick");
     // the LAST ladder must actually be selectable from the page it lands on
     uint8_t last = (uint8_t)(nreg - 1);
     rpickPage = (uint8_t)(last / RPICK_PER_PAGE_T());

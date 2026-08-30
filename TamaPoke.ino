@@ -39,7 +39,7 @@
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
-#define FW_VERSION "3.12"
+#define FW_VERSION "3.13"
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
   LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -91,7 +91,7 @@ uint8_t galleryRegion = 0;
 bool galleryPick = false;
 bool gymPick = false;
 uint8_t rpickPage = 0;      // the region chooser is paged; shared by all 3 modes
-int galleryPage = 0;        // GAL_PAGES paginas de GAL_PER_PAGE
+uint8_t galleryPage = 0;    // GAL_PAGES paginas de GAL_PER_PAGE
 int16_t galleryDetail = 0;  // dex en vista detalle, 0 = rejilla
 
 bool screenOff = false;       // pulsacion corta del boton PWR
@@ -148,10 +148,21 @@ bool releaseConfirm = false;
 #define BOX_PER_PAGE 6
 uint32_t partyBannerUntil = 0;   // "<name> joined the party!"
 char partyBannerName[14] = "";
-#define PARTY_CELL_W 150
-#define PARTY_CELL_H 70
-#define PARTY_GRID_X 78
-#define PARTY_GRID_Y 88
+// The party and box moved from a 2x3 grid to a RING; see partySlotPos(). A grid
+// on a circle spends its corners on glass that is not there -- the old 150x70
+// cells put the outer corners of the top and bottom rows within a few pixels of
+// the bezel, and 70 px is 6.7 mm, under the finger floor, on a screen whose
+// controls have been reported as hard to hit twice already. Six 104 px discs fit
+// inside radius 181 with room to spare, and hand the middle of the panel to the
+// hub instead of to two more cell corners.
+#define PSLOT_CY 224       // the ring leaves a prompt band under the title and
+#define PSLOT_RING 112     // clears the CLOSE bar below
+#define PSLOT_R 50         // 100 px across -- 9.5 mm
+// 94 px: the hub is the one control here that had room to reach the finger
+// floor outright. The slots' inner edge is 62 px from the ring centre, so it
+// can grow to 47 without touching them.
+#define PSLOT_HUB_R 47
+#define PSLOT_PROMPT_Y 68
 
 bool clockOpen = false;       // pantalla de ajuste de hora (deslizar abajo)
 int clockH = 12, clockM = 0;  // hora en edicion
@@ -227,6 +238,19 @@ extern const char *const SCREEN_NAME[SCR_COUNT];   // const is internal linkage 
 // builds; only arduino-cli is.
 void bootReport();
 uint8_t uiCurrentScreen();
+// The gesture model, defined next to uiCurrentScreen() but used by handleTouch()
+// ~1000 lines above it.
+int uiTileIndex();
+void uiTileGo(int i);
+void onRim(int dir);
+uint8_t uiRimPages();
+uint8_t uiRimPage();
+bool uiOnRim(int16_t x, int16_t y);
+float uiRimAngle(int16_t x, int16_t y);
+void uiDrawRimBar();
+void uiChrome();
+uint8_t learnableList(uint8_t *out, uint8_t max);
+uint8_t pickCandidates();
 // Declared here because renderMonSheet() and the sheet's tap handlers use both
 // ~4000 lines above where they are defined. The emulator generates a proto.h and
 // would compile it either way; arduino-cli would not, and that has shipped once.
@@ -320,6 +344,7 @@ static void renderRegionPick(uint8_t mode);   // the region chooser, defined bel
 // would prove the transcription rather than the screen.
 uint8_t rpickRegions(uint8_t mode);           // rows this mode lists (gyms: 3)
 uint8_t rpickPageCount(uint8_t mode);
+uint8_t rpickModeNow();                       // which chooser is up, 0xFF for none
 uint8_t rpickModeNow();                       // which chooser is up, or 0xFF
 static bool rpickSwipe(int dir);              // true if it handled the gesture
 static int regionPickTap(int16_t x, int16_t y, uint8_t mode);
@@ -346,8 +371,15 @@ uint8_t btlMyAct = 0;        // host: our own action, latched until theirs lands
 // The smallest a button may be. Three separate "hard to hit" reports -- the
 // battle grid's bottom row, the party screen's BOX, and the LAN button -- were
 // all the same mistake: a control sized to fit its label rather than a finger.
-// 44 px is the usual guidance and roughly a fingertip on this 466 px panel.
+//
+// 44 is the number everyone quotes, but it is 44 POINTS. This panel is 466 px
+// across 1.75 in = 266 ppi, so a pixel is 0.095 mm and 44 px is 4.2 mm, under
+// half a fingertip. It survives as the HARD FLOOR because several laid-out
+// screens cannot grow without being redesigned, but nothing new may use it.
 #define UI_TAP_MIN 44
+// 9 mm -- what watchOS and Wear OS both land on -- in this panel's pixels.
+// Every control laid out from here on is held to THIS by hit_test.
+#define UI_TAP_FINGER 94
 
 // The LAN battle button on the gym region chooser.
 #define LANBTN_W 190
@@ -355,11 +387,8 @@ uint8_t btlMyAct = 0;        // host: our own action, latched until theirs lands
 #define LANBTN_X (233 - LANBTN_W / 2)
 #define LANBTN_Y 336
 
-#define BOXBTN_X 146
-#define BOXBTN_Y 320
-#define BOXBTN_W 174
-#define BOXBTN_H UI_TAP_MIN
-#define BOXBTN_PAD 8
+// The BOX button is the hub in the middle of the party ring now (PSLOT_HUB_R),
+// so it has no rectangle of its own any more.
 // CLOSE sits below BOX with a real gap between them. They used to touch at
 // y=372, and BOX's padding then reached to 380 -- so the top of CLOSE was
 // inside BOX's hit area and taps there opened the box instead of closing the
@@ -460,6 +489,10 @@ uint8_t playerPage = 0;
 uint8_t gymPage = 0;
 #define GYM_ROWS 5
 #define GYM_ROW_Y(i) (110 + (i) * 50)
+#define GYM_ROW_H 44
+#define GYM_ROW_INSET 18   // how far a row stops short of the glass, so the
+                           // arc scrollbar at RIM_BAR_R has its own lane
+void gymRowRect(int i, int *x, int *y, int *w, int *h);
 // The gym screen's two extra battle buttons: LAN on the left, EXPLORE on the
 // right. At y 380..412 the round panel gives a half-width of 180, so the pair
 // spanning 68..398 sits comfortably on glass.
@@ -594,7 +627,67 @@ int flashIdxForDex(int16_t dex) {
 
 #define CX 233  // centro de la pantalla redonda
 #define CY 233
+#define UI_R 233   // the glass is a CIRCLE, and every full-width layout must ask
 #define PET_CY 202  // centro vertical del sprite
+
+// Half the usable width at row y: the chord of the panel at that height.
+//
+// A layout that picks ONE width for every row is wrong twice -- it wastes the
+// middle, where the full 466 px is available, and it hangs the corners of its
+// top and bottom rows off the glass. Both had shipped: the gym ladder drew five
+// identical 326 px rows over y 110..374, where the real chord runs 448 down to
+// 372. Derive it, never restate it; this is the only place the circle is solved.
+int uiSafeHalfWidth(int y) {
+  int dy = y - CY;
+  if (dy <= -UI_R || dy >= UI_R) return 0;
+  return (int)sqrtf((float)(UI_R * UI_R - dy * dy));
+}
+
+// The narrower of the two chords a box spanning y0..y1 must fit inside. A
+// rounded row is widest at its vertical middle, but its CORNERS are what leave
+// the circle, so it has to be sized by its worst edge rather than its centre.
+int uiSafeHalfWidthFor(int y0, int y1) {
+  int a = uiSafeHalfWidth(y0), b = uiSafeHalfWidth(y1);
+  return a < b ? a : b;
+}
+
+// An arc segment: Arduino_GFX has no arc primitive, so it is stamped from
+// overlapping dots. Angles are degrees clockwise from 12 o'clock.
+void uiArc(int cx, int cy, int r, int a0, int a1, int w, uint16_t col) {
+  if (a1 < a0) { int t = a0; a0 = a1; a1 = t; }
+  int rad = w / 2;
+  if (rad < 1) rad = 1;
+  int n = (int)(((a1 - a0) * 0.01745f * r) / rad) + 1;   // dots must overlap
+  for (int i = 0; i <= n; i++) {
+    float ang = ((float)a0 + (float)(a1 - a0) * (float)i / (float)n - 90.0f) * 0.01745329f;
+    gfx->fillCircle(cx + (int)(cosf(ang) * r), cy + (int)(sinf(ang) * r), rad, col);
+  }
+}
+
+// The gesture model. Its tables and handlers live down beside uiCurrentScreen(),
+// but handleTouch() and onSwipe() sit ~1000 lines above them.
+#define TILE_COUNT 5   // GYM . PARTY . [PET] . DEX . PLAYER
+#define TILE_PET 2
+#define RIM_R0 186     // a drag starting outside this radius pages, not swipes
+#define RIM_STEP 20    // degrees of arc per page
+#define RIM_BAR_R 222  // where the arc scrollbar is drawn
+// 2 to 5 o'clock. Angles are clockwise from 12, so this is the right flank --
+// the top is the title's and the bottom is the tile dots'.
+#define RIM_BAR_A0 55
+#define RIM_BAR_A1 145
+
+// A gym row's rectangle -- as wide as the panel allows AT ITS OWN HEIGHT, so
+// the ladder bulges in the middle instead of throwing away 66 px there and
+// hanging its top and bottom corners off the glass. The draw path and the tap
+// path both ask this; they used to share the literals 70 and 396.
+void gymRowRect(int i, int *x, int *y, int *w, int *h) {
+  int ry = GYM_ROW_Y(i);
+  int half = uiSafeHalfWidthFor(ry, ry + GYM_ROW_H) - GYM_ROW_INSET;
+  if (x) *x = CX - half;
+  if (y) *y = ry;
+  if (w) *w = half * 2;
+  if (h) *h = GYM_ROW_H;
+}
 
 static const uint16_t INK_K = 0x18C4;  // spriteColor('k')
 
@@ -611,7 +704,11 @@ struct Btn {
 // Four, not five. The ball had its own icon here until it became DEFENCE's
 // trainer and moved into the training menu -- at which point tapping it just
 // opened the same menu the dumbbell does, two icons for one destination.
-// They sit on the panel's curve: y = 406 - dx^2/729.
+//
+// They sit on the panel's curve: y = 372 - dx^2/1100, the outer pair lifted so
+// the row stays on glass. At 80 px and 88 px apart the outermost reaches radius
+// 220 of 233 -- the row cannot grow again without losing an icon, because four
+// UI_TAP_FINGER targets need 392 px of chord and reach radius 222.
 #define BTN_COUNT 4
 // Referred to by NAME, never by literal index. Removing the ball icon shifted
 // every index by one and drawButtons() still had `i != 2` meaning LIGHT -- which
@@ -621,13 +718,16 @@ struct Btn {
 #define BTN_BATH  2
 #define BTN_TRAIN 3
 Btn buttons[BTN_COUNT] = {
-  { 134, 393, SPR_ICON_FOOD },   // comer
-  { 200, 405, SPR_ICON_LIGHT },  // luz
-  { 266, 405, SPR_ICON_CLEAN },  // bano
-  { 332, 393, SPR_ICON_TRAIN },  // entrenar
+  { 101, 356, SPR_ICON_FOOD },   // comer
+  { 189, 370, SPR_ICON_LIGHT },  // luz
+  { 277, 370, SPR_ICON_CLEAN },  // bano
+  { 365, 356, SPR_ICON_TRAIN },  // entrenar
 };
-#define BTN_HALF 30  // boton de 60x60 -- mas grande y mas separado que antes
-#define BTN_HIT 40   // radio tactil (un poco mas generoso)
+// 80x80. It was 60, which is 5.7 mm on a 266 ppi panel -- well under the 9 mm
+// a fingertip needs, and the reason three separate controls were reported as
+// hard to press. The care bars moved to the rim to make room for this.
+#define BTN_HALF 40
+#define BTN_HIT 46   // radio tactil (un poco mas generoso)
 
 // grietas del huevo (pixeles 'k' sobre el sprite)
 static const uint8_t CRACK1[][2] = { {15,8},{16,9},{15,10} };
@@ -671,6 +771,14 @@ static bool starterRegionDone = false;
 #define FAR_BTN_H 58
 #define FAR_BTN_X (CX - FAR_BTN_W / 2)
 #define FAR_BTN_Y 176
+
+// The food popup. It had its rectangle written out twice -- once where it is
+// drawn and once in the tap handler -- which is the shape that drifts the
+// moment either moves, and it had to move: the home row grew up into it.
+#define FEED_MENU_X 101
+#define FEED_MENU_Y 236
+#define FEED_MENU_W 264
+#define FEED_MENU_H 64
 // el CST9217 avisa por el pin INT cuando hay datos tactiles; lo usamos para no
 // leer el bus I2C mientras el chip esta dormido (esa lectura se colgaba ~1s)
 volatile bool gTouchIrq = false;
@@ -687,6 +795,12 @@ uint32_t choiceUntil = 0;   // se cierra solo a este millis
 int16_t tX0, tY0, tXl, tYl; // gesto en curso (inicio y ultima posicion)
 uint32_t tStart = 0;
 bool holdFired = false;
+// Rim-drag state. Decided at touch-down: a gesture that starts outside RIM_R0
+// is a scroll for its whole life, and never also resolves as a swipe or a tap.
+bool rimActive = false;
+bool rimMoved = false;
+float rimA0 = 0;
+int rimSteps = 0;
 
 void setup() {
   Serial.setRxBufferSize(8192);  // la transferencia a SD llega en bloques de 2 KB
@@ -1233,6 +1347,13 @@ void handleTouch() {
     tY0 = tYl = y;
     tStart = millis();
     holdFired = false;
+    // A drag that STARTS on the rim is a scroll, not a swipe. Deciding it at
+    // touch-down rather than on release is what keeps it unambiguous: the
+    // finger never has to be told afterwards what it meant.
+    rimActive = uiOnRim(x, y) && uiRimPages() > 1;
+    rimA0 = uiRimAngle(x, y);
+    rimSteps = 0;
+    rimMoved = false;
     swallowGesture = (dimStage > 0) || screenOff;  // si estaba a oscuras, solo despierta
     if (screenOff) pet.setScreenOff(false);        // waking the screen wakes it
     screenOff = false;
@@ -1240,6 +1361,15 @@ void handleTouch() {
   } else if (pressed) {  // sigue apoyado
     tXl = x;
     tYl = y;
+    if (rimActive && !swallowGesture) {
+      float d = uiRimAngle(x, y) - rimA0;
+      while (d > 180.0f) d -= 360.0f;
+      while (d < -180.0f) d += 360.0f;
+      if (d > 6.0f || d < -6.0f) rimMoved = true;
+      int want = (int)(d / RIM_STEP);
+      while (rimSteps < want) { onRim(1); rimSteps++; }
+      while (rimSteps > want) { onRim(-1); rimSteps--; }
+    }
     // pulsacion larga sin moverse sobre el bicho -> dialogo de soltar
     //
     // Gated on the MAIN screen, not on a hand-maintained list of screens to
@@ -1261,72 +1391,93 @@ void handleTouch() {
     lastInteract = millis();
     int dx = tXl - tX0, dy = tYl - tY0;
     uint32_t dt = millis() - tStart;
+    if (rimMoved) { rimActive = false; wasPressed = pressed; return; }   // it was a scroll
     if (!holdFired && !swallowGesture) {
       if (abs(dx) > 80 && abs(dy) < 70 && dt < 800) onSwipe(dx > 0 ? 1 : -1);
       else if (abs(dy) > 80 && abs(dx) < 70 && dt < 800) onSwipeV(dy > 0 ? 1 : -1);
       else if (dt < 1500 && abs(dx) < 40 && abs(dy) < 40) onTap(tX0, tY0);
     }
+    rimActive = false;
   }
   wasPressed = pressed;
 }
 
-// deslizar vertical: abre/cierra la ficha del bicho
+// deslizar vertical: DOWN is back, UP is deeper.
+//
+// One meaning per direction, on every screen. It used to be a per-screen
+// grab-bag -- vertical closed some screens, changed region on others, and on
+// the main screen down opened the player card while up opened the creature's.
+// The player card is a tile now, so down is free to mean the one thing a round
+// UI most needs and never had: a back gesture that works everywhere.
 
 void openClock();  // prototipo
 
 void onSwipeV(int dir) {
   if (pet.awaitingStarter()) return;  // bloqueado durante la eleccion de inicial
-  if (uiCurrentScreen() == SCR_DEXPICK || uiCurrentScreen() == SCR_GYMPICK)
-    return;                 // on the chooser, vertical does nothing: pick a row
   if (menuOpen) { menuOpen = false; return; }   // any swipe closes the menu
   if (battleOpen) return;   // no swiping out of a fight
-  if (pickOpen) { pickOpen = false; return; }
-  if (lanOpen) { lanLeave(); lanOpen = false; return; }
+  const bool back = dir > 0;
+
+  // Modals and sheets: down backs out, up has nowhere deeper to go.
+  if (pickOpen)     { if (back) pickOpen = false; return; }
+  if (lanOpen)      { if (back) { lanLeave(); lanOpen = false; } return; }
+  if (trainOpen)    { if (back) trainOpen = false; return; }
+  if (bagOpen)      { if (back) bagOpen = false; return; }
+  if (movePickOpen) { if (back) movePickOpen = false; return; }
+  if (boxOpen)      { if (back) { boxOpen = false; boxSel = 0; } return; }
+  // Either minigame exits on a swipe, keeping what was earned. A swipe cannot
+  // be confused with a ball hit -- the gesture resolver separates them -- which
+  // the header tap no longer could once the ball became hittable up there.
+  if (gameOpen) { leaveGame(); return; }
+  if (sackOpen) { leaveSack(); return; }
+  if (spdOpen)  { leaveSpeed(); return; }
+  if (kbOpen || pet.ceremony) return;
+  if (clockOpen) { if (back) clockOpen = false; return; }
+
+  // The two multi-region tiles are two levels deep: chooser, then ladder/grid.
+  // DOWN walks back out of them one step at a time; UP keeps the region
+  // shortcut, which is now a convenience rather than the only way in.
   if (gymOpen) {
-    // Same gesture as the Pokedex: vertical changes region, horizontal pages.
-    gymRegion = (uint8_t)((gymRegion + (dir > 0 ? 1 : GYM_REGIONS - 1)) % GYM_REGIONS);
+    if (gymPick) { if (back) uiTileGo(TILE_PET); return; }
+    if (back) { gymPick = true; rpickPage = 0; sfxPlay(SFX_TAP); return; }
+    gymRegion = (uint8_t)((gymRegion + 1) % GYM_REGIONS);
     gymPage = 0;
     sfxPlay(SFX_TAP);
     return;
   }
-  if (playerOpen) { playerOpen = false; return; }
-  if (trainOpen) { trainOpen = false; return; }
-  if (bagOpen) { bagOpen = false; return; }   // vertical backs out
-  if (movePickOpen) { movePickOpen = false; return; }
-  if (boxOpen) { boxOpen = false; boxSel = 0; return; }   // vertical backs out
-  if (partyOpen) {
-    if (partyDetail) { partyDetail = 0; return; }
-    if (partyPick) { partyPick = false; pet.endedKind = CER_NONE; }
-    partyOpen = false;
-    return;
-  }
-  // Either minigame exits on a swipe. A swipe cannot be confused with a ball
-  // hit -- the gesture resolver separates them -- which the header tap no
-  // longer can now that the ball is hittable up there.
-  if (gameOpen) { leaveGame(); return; }
-  if (sackOpen) { leaveSack(); return; }
-  if (spdOpen) { leaveSpeed(); return; }
   if (galleryOpen) {
-    if (galleryDetail) { galleryDetail = 0; galleryPmd.unload(); galleryDirty = true; return; }
-    galleryRegion = (uint8_t)((galleryRegion + (dir > 0 ? 1 : GAL_REGIONS - 1)) % GAL_REGIONS);
+    if (galleryDetail) {
+      if (back) { galleryDetail = 0; galleryPmd.unload(); galleryDirty = true; }
+      return;
+    }
+    if (galleryPick) { if (back) uiTileGo(TILE_PET); return; }
+    if (back) {
+      galleryPick = true; rpickPage = 0;
+      galleryPmd.unload();
+      galleryDirty = true;
+      sfxPlay(SFX_TAP);
+      return;
+    }
+    galleryRegion = (uint8_t)((galleryRegion + 1) % GAL_REGIONS);
     galleryPage = 0;
     galleryDirty = true;
     sfxPlay(SFX_TAP);
     return;
   }
-  if (kbOpen || pet.ceremony) return;
-  if (clockOpen) { clockOpen = false; return; }
-  if (cardOpen) {
-    if (dir < 0) cardOpen = false;  // arriba cierra la ficha
+  if (playerOpen) { if (back) uiTileGo(TILE_PET); return; }
+  if (partyOpen) {
+    if (partyDetail) { if (back) partyDetail = 0; return; }
+    if (back) {
+      if (partyPick) { partyPick = false; pet.endedKind = CER_NONE; }
+      uiTileGo(TILE_PET);
+    }
     return;
   }
-  // Swipe down is the PLAYER card, up is the creature's. The clock lost this
-  // gesture on purpose -- the menu's SETTINGS row already opens it, and the
-  // player card is the thing you reach for far more often.
-  if (dir > 0) {
-    if (!confirmUntil && !feedMenuUntil) playerOpen = true;
-  } else if (!pet.isEgg() && !confirmUntil && !feedMenuUntil) {
-    cardOpen = true;                // deslizar arriba: ficha
+  if (cardOpen) { if (back) cardOpen = false; return; }
+
+  // The pet tile itself. UP is its detail sheet; DOWN is already home.
+  if (!back && !pet.isEgg() && !confirmUntil && !feedMenuUntil) {
+    cardOpen = true;
     cardPage = 0;
   }
 }
@@ -1447,7 +1598,8 @@ void renderBoxDetail() {
 // Every primary button's height, so a test can hold them all to UI_TAP_MIN
 // instead of waiting for somebody to report the next one by hand.
 void uiButtonHeights(int *out, int max, int *n) {
-  const int h[] = { BOXBTN_H, PARTYCLOSE_H, LANBTN_H, BTL_CELL_H + BTL_HIT_PAD * 2 };
+  const int h[] = { PSLOT_HUB_R * 2, PSLOT_R * 2, PARTYCLOSE_H, LANBTN_H,
+                    BTL_CELL_H + BTL_HIT_PAD * 2, BTN_HALF * 2 };
   int c = (int)(sizeof(h) / sizeof(h[0]));
   if (c > max) c = max;
   for (int i = 0; i < c; i++) out[i] = h[i];
@@ -1485,8 +1637,8 @@ void gymHeaderRects(int *pillTop, int *pillBot, int *rowTop) {
 }
 
 void partyButtonRects(int *boxTop, int *boxBot, int *closeTop, int *closeBot) {
-  if (boxTop) *boxTop = BOXBTN_Y - BOXBTN_PAD;
-  if (boxBot) *boxBot = BOXBTN_Y + BOXBTN_H + BOXBTN_PAD;
+  if (boxTop) *boxTop = PSLOT_CY - PSLOT_HUB_R;
+  if (boxBot) *boxBot = PSLOT_CY + PSLOT_HUB_R;
   if (closeTop) *closeTop = PARTYCLOSE_Y;
   if (closeBot) *closeBot = PARTYCLOSE_Y + PARTYCLOSE_H;
 }
@@ -1529,6 +1681,36 @@ bool monSheetConfirmTap(int16_t x, int16_t y, bool fromBox) {
   return false;
 }
 
+// The six party/box slots on a RING rather than a 2x3 grid; the geometry is
+// declared with the other party layout constants above.
+void partySlotPos(int i, int *cx, int *cy) {
+  float a = (-120.0f + 60.0f * (float)i) * 0.01745329f;   // clockwise from top-left
+  if (cx) *cx = CX + (int)(cosf(a) * PSLOT_RING);
+  if (cy) *cy = PSLOT_CY + (int)(sinf(a) * PSLOT_RING);
+}
+
+// Which slot a tap landed in, or -1. The draw path and both tap paths ask this
+// one function; the grid they replace had its rectangle written out in three
+// places, which is how the party screen's controls drifted apart before.
+int partySlotAt(int16_t x, int16_t y) {
+  for (int i = 0; i < PARTY_SLOTS; i++) {
+    int sx, sy;
+    partySlotPos(i, &sx, &sy);
+    int dx = x - sx, dy = y - sy;
+    if (dx * dx + dy * dy <= PSLOT_R * PSLOT_R) return i;
+  }
+  return -1;
+}
+
+bool partyHubAt(int16_t x, int16_t y) {
+  int dx = x - CX, dy = y - PSLOT_CY;
+  return dx * dx + dy * dy <= PSLOT_HUB_R * PSLOT_HUB_R;
+}
+
+// Exposed so hit_test can hold every control to the finger floor without
+// keeping its own copy of the number it is enforcing.
+int uiTapFinger() { return UI_TAP_FINGER; }
+
 void partyTap(int16_t x, int16_t y) {
   if (boxOpen) { boxTap(x, y); return; }
   // The SHEET IS CHECKED FIRST, and that is not cosmetic ordering. It covers the
@@ -1569,8 +1751,7 @@ void partyTap(int16_t x, int16_t y) {
     sfxPlay(SFX_TAP);
     return;
   }
-  if (!partyPick && y >= BOXBTN_Y - BOXBTN_PAD && y <= BOXBTN_Y + BOXBTN_H + BOXBTN_PAD &&
-      x >= BOXBTN_X - BOXBTN_PAD && x <= BOXBTN_X + BOXBTN_W + BOXBTN_PAD) {
+  if (!partyPick && partyHubAt(x, y)) {
     boxOpen = true;                  // open the box, nothing picked yet
     boxPage = 0;
     boxSwapFrom = 0;
@@ -1578,7 +1759,8 @@ void partyTap(int16_t x, int16_t y) {
     return;
   }
   // exit button, and the top band, both always work
-  if ((y >= 372 && y <= 416 && x >= 133 && x <= 333) || y < 34) {
+  if ((y >= PARTYCLOSE_Y && y <= PARTYCLOSE_Y + PARTYCLOSE_H &&
+       x >= PARTYCLOSE_X && x <= PARTYCLOSE_X + PARTYCLOSE_W) || y < 34) {
     if (partyPick) {                 // declined the swap: the pet is let go
       partyPick = false;
       pet.endedKind = CER_NONE;
@@ -1588,9 +1770,7 @@ void partyTap(int16_t x, int16_t y) {
     return;
   }
   for (int i = 0; i < PARTY_SLOTS; i++) {
-    int cx0 = PARTY_GRID_X + (i % 2) * (PARTY_CELL_W + 10);
-    int cy0 = PARTY_GRID_Y + (i / 2) * (PARTY_CELL_H + 8);
-    if (x < cx0 || x > cx0 + PARTY_CELL_W || y < cy0 || y > cy0 + PARTY_CELL_H) continue;
+    if (partySlotAt(x, y) != i) continue;
     if (boxSel) {                    // a box creature is waiting for a slot
       party.swapPartyBox(i, boxSel - 1);
       boxSel = 0;
@@ -1623,102 +1803,46 @@ void partyTap(int16_t x, int16_t y) {
 }
 
 // deslizar: dir +1 = hacia la derecha
+//
+// HORIZONTAL IS THE TILE AXIS, and nothing else. Every screen used to keep its
+// own opinion in here -- some paged, some closed, and several paged and THEN
+// closed off the end, which is one gesture meaning two things and is exactly
+// how the same paging bug shipped four times. Paging moved to the rim
+// (onRim), which is what frees this axis to mean one thing.
 void onSwipe(int dir) {
-  // The region chooser pages, and it is checked before everything else because
-  // it sits on TOP of the starter/gallery/gym screens -- each of which has its
-  // own horizontal handler that would otherwise swallow the gesture. Paging a
-  // screen by closing it is the bug this project shipped four times.
-  if (rpickSwipe(dir)) return;
-  if (pet.awaitingStarter()) return;  // bloqueado durante la eleccion de inicial
+  // First boot has no axis yet -- nothing but the region chooser exists -- so
+  // horizontal still pages it there. The rim is not a gesture anyone has been
+  // taught on the first screen they ever see.
+  if (pet.awaitingStarter()) { rpickSwipe(dir); return; }
   if (menuOpen) { menuOpen = false; return; }   // any swipe closes the menu
   if (battleOpen) return;   // no swiping out of a fight
-  if (pickOpen) {   // horizontal pages the candidates, as everywhere else
-    uint8_t pages = (pickCandidates() + PICK_PER_PAGE - 1) / PICK_PER_PAGE;
-    if (!pages) pages = 1;
-    int p = (int)pickPage + (dir > 0 ? -1 : 1);
-    if (p < 0 || p >= pages) pickOpen = false;
-    else pickPage = (uint8_t)p;
-    return;
-  }
-  if (gymOpen) {   // horizontal pages the ladder; vertical backs out
-    uint8_t pages = (TRAINER_COUNT + GYM_ROWS - 1) / GYM_ROWS;
-    int p = (int)gymPage + (dir > 0 ? -1 : 1);
-    if (p < 0 || p >= pages) { gymPick = true; rpickPage = 0; }  // back to the chooser
-    else gymPage = (uint8_t)p;
-    return;
-  }
-  if (playerOpen) {   // horizontal pages it, like the card and the gallery
-    int p = (int)playerPage + (dir > 0 ? -1 : 1);
-    if (p < 0 || p >= PLAYER_PAGES) playerOpen = false;
-    else playerPage = (uint8_t)p;
-    return;
-  }
-  if (trainOpen) { trainOpen = false; return; }
-  if (bagOpen) {   // horizontal pages the bag, like every other paged screen --
-    uint8_t pages = bagPages();   // and it is in swipe_test for that same reason
-    int p = (int)bagPage + (dir > 0 ? -1 : 1);
-    if (p < 0 || p >= pages) bagOpen = false;
-    else bagPage = (uint8_t)p;
-    return;
-  }
-  if (movePickOpen) {   // the picker is paged; without this its later pages
-    uint8_t all[64];    // were simply unreachable
-    uint8_t n = learnableList(all, sizeof(all));
-    uint8_t pages = n ? (n + MOVE_PICK_PER_PAGE - 1) / MOVE_PICK_PER_PAGE : 1;
-    int p = (int)movePickPage + (dir > 0 ? -1 : 1);
-    if (p < 0 || p >= pages) movePickOpen = false;
-    else movePickPage = (uint8_t)p;
-    return;
-  }
-  if (boxOpen) {   // horizontal pages the box, as every other paged screen
-    uint8_t pages = BOX_SLOTS / BOX_PER_PAGE;
-    int p = (int)boxPage + (dir > 0 ? -1 : 1);
-    if (p < 0 || p >= pages) { boxOpen = false; boxSel = 0; }
-    else boxPage = (uint8_t)p;
-    return;
-  }
-  if (partyOpen) {
+
+  int t = uiTileIndex();
+  if (t >= 0) {
+    // A sheet drawn on top of a tile closes first; the axis is underneath it.
+    if (galleryDetail) { galleryDetail = 0; galleryPmd.unload(); galleryDirty = true; return; }
     if (partyDetail) { partyDetail = 0; return; }
     if (partyPick) { partyPick = false; pet.endedKind = CER_NONE; }
-    partyOpen = false;
+    if (pet.ceremony || confirmUntil) return;
+    int n = t - dir;   // the content follows the finger
+    // IT BUMPS. This is the whole point of the axis: a horizontal swipe can no
+    // longer close anything, so it cannot be confused with paging.
+    if (n < 0 || n >= TILE_COUNT) { sfxPlay(SFX_DENY); return; }
+    uiTileGo(n);
     return;
   }
+
+  // Off the axis are modals -- pickers, sheets, minigames. None of them page
+  // any more, so here horizontal simply backs out.
+  if (pickOpen) { pickOpen = false; return; }
+  if (trainOpen) { trainOpen = false; return; }
+  if (bagOpen) { bagOpen = false; return; }
+  if (movePickOpen) { movePickOpen = false; return; }
+  if (boxOpen) { boxOpen = false; boxSel = 0; return; }
   if (gameOpen) { leaveGame(); return; }   // swipe out, keeping what you earned
   if (spdOpen) { leaveSpeed(); return; }
   if (kbOpen || clockOpen) return;
-  if (cardOpen) {  // dentro de la ficha: cambiar entre las 4 paginas
-    int p = (int)cardPage + (dir > 0 ? -1 : 1);  // izquierda avanza
-    cardPage = p < 0 ? 0 : (p > CARD_PAGES - 1 ? CARD_PAGES - 1 : p);
-    return;
-  }
-  if (!galleryOpen) {
-    // Swipe LEFT is the gym ladder, RIGHT is the party. The Pokedex lost this
-    // gesture: it has a menu row, and gestures are worth more spent on screens
-    // without one.
-    if (!pet.ceremony && !confirmUntil) {
-      if (dir < 0) { gymOpen = true; gymPick = true; gymPage = 0; rpickPage = 0; }
-      else partyOpen = true;
-    }
-    return;
-  }
-  if (galleryDetail) {  // en detalle: volver a la rejilla
-    galleryDetail = 0;
-    galleryPmd.unload();
-    galleryDirty = true;
-    return;
-  }
-  int np = galleryPage - dir;  // deslizar a la izquierda avanza pagina
-  if (np < 0) {                // back past the first page = the region chooser
-    galleryPick = true;
-    rpickPage = 0;
-    galleryPmd.unload();
-    return;
-  }
-  if (np > GAL_PAGES - 1) np = GAL_PAGES - 1;
-  if (np != galleryPage) {
-    galleryPage = np;
-    galleryDirty = true;
-  }
+  if (cardOpen) { cardOpen = false; return; }
 }
 
 void onTap(int16_t x, int16_t y) {
@@ -1821,8 +1945,9 @@ void onTap(int16_t x, int16_t y) {
     for (int i = 0; i < GYM_ROWS; i++) {
       uint8_t idx = gymPage * GYM_ROWS + i;
       if (idx >= TRAINER_COUNT) break;
-      int ry = GYM_ROW_Y(i);
-      if (x < 70 || x > 396 || y < ry || y > ry + 44) continue;
+      int rx, ry, rw, rh;
+      gymRowRect(i, &rx, &ry, &rw, &rh);
+      if (x < rx || x > rx + rw || y < ry || y > ry + rh) continue;
       if (!gymUnlocked(idx, gymHard)) { sfxPlay(SFX_DENY); return; }
       sfxPlay(SFX_TAP);
       gymOpen = false;
@@ -2000,8 +2125,10 @@ void onTap(int16_t x, int16_t y) {
     return;
   }
   if (feedMenuUntil) {       // selector de comida
-    if (millis() < feedMenuUntil && y >= 288 && y <= 352 && x >= 101 && x <= 365) {
-      int item = (x - 101) / 66;
+    if (millis() < feedMenuUntil && y >= FEED_MENU_Y && y <= FEED_MENU_Y + FEED_MENU_H &&
+        x >= FEED_MENU_X && x <= FEED_MENU_X + FEED_MENU_W) {
+      int item = (x - FEED_MENU_X) / (FEED_MENU_W / 4);
+      if (item > 3) item = 3;
       if (item == 3) pet.feedCandy();
       else pet.feedBerry(item);
       sfxPlay(SFX_EAT);
@@ -2241,6 +2368,189 @@ uint8_t uiCurrentScreen() {
   return SCR_MAIN;
 }
 
+// ---------------------------------------------------------------------------
+// The tile axis and the rim.
+//
+// Two rules replace the pile of per-screen opinions that used to live in
+// onSwipe(), and between them they close the bug this project shipped FOUR
+// times -- a paged screen that CLOSED instead of paging:
+//
+//   HORIZONTAL is the tile axis. Five peer screens with the pet in the middle,
+//   and it BUMPS at the ends. It can no longer close anything, so the gesture
+//   that means "next page" and the gesture that means "exit" are different
+//   gestures, which they never were before.
+//
+//   THE RIM is paging. A drag that starts outside RIM_R0 pages whatever is in
+//   front of you, and CLAMPS at both ends. This is what frees the horizontal
+//   axis -- A and C only work as a pair, and this is the joint.
+//
+// Vertical stays depth: up opens, down goes back.
+
+// A tile's screen, and the chooser it opens on where it has one. Both belong to
+// the same tile: the region choosers are not a level of depth, they ARE the gym
+// and Pokedex tiles until a region is picked. One table, so uiTileIndex() and
+// uiTileGo() cannot end up with different ideas of what is on the axis.
+//
+// PLAYER . PARTY . [PET] . GYM . DEX -- yours on the left, the world on the
+// right. The order is not arbitrary: it keeps the two bindings that already
+// existed, swipe left for the gym ladder and swipe right for the party, so the
+// axis extends muscle memory instead of contradicting it.
+struct TileDef { uint8_t scr, alt; };
+static const TileDef TILE[TILE_COUNT] = {
+  { SCR_PLAYER, SCR_PLAYER }, { SCR_PARTY, SCR_PARTY }, { SCR_MAIN, SCR_MAIN },
+  { SCR_GYM, SCR_GYMPICK }, { SCR_GALLERY, SCR_DEXPICK },
+};
+
+int uiTileIndex() {
+  uint8_t s = uiCurrentScreen();
+  for (int i = 0; i < TILE_COUNT; i++)
+    if (TILE[i].scr == s || TILE[i].alt == s) return i;
+  return -1;   // not on the axis: a modal, a minigame, a fight
+}
+
+// Jump to tile i. Every stop on the axis is a top-level screen, so this closes
+// the others rather than stacking on them.
+void uiTileGo(int i) {
+  if (i < 0) i = 0;
+  if (i >= TILE_COUNT) i = TILE_COUNT - 1;
+  gymOpen = partyOpen = galleryOpen = playerOpen = false;
+  boxOpen = false;
+  boxDetail = partyDetail = 0;
+  galleryDetail = 0;
+  switch (TILE[i].scr) {
+    // The two multi-region screens land on their CHOOSER, never on whichever
+    // region was last set. Opening straight into it is how Johto and Hoenn came
+    // to be built, reachable, and completely invisible.
+    case SCR_GYM: gymOpen = true; gymPick = true; gymPage = 0; rpickPage = 0; break;
+    case SCR_PARTY: partyOpen = true; break;
+    case SCR_GALLERY:
+      galleryOpen = true; galleryPick = true; galleryPage = 0; rpickPage = 0;
+      galleryDirty = true;
+      break;
+    case SCR_PLAYER: playerOpen = true; playerPage = 0; break;
+    default: break;   // the pet tile is everything else being shut
+  }
+  sfxPlay(SFX_TAP);
+}
+
+// ---------- the rim ----------
+
+// The paged screens as ONE table: which variable holds the page, and how many
+// there are. Three separate switches over the same list -- one to draw the
+// scrollbar, one to page, one for the test -- is precisely the shape CLAUDE.md
+// warns about, so draw, input and test all come through here.
+static uint8_t *uiRimTarget(uint8_t *pages) {
+  uint8_t n = 1;
+  uint8_t *p = nullptr;
+  switch (uiCurrentScreen()) {
+    case SCR_GYM:     p = &gymPage;     n = (TRAINER_COUNT + GYM_ROWS - 1) / GYM_ROWS; break;
+    case SCR_GALLERY: p = &galleryPage; n = (uint8_t)GAL_PAGES; break;
+    case SCR_PLAYER:  p = &playerPage;  n = PLAYER_PAGES; break;
+    case SCR_BOX:     p = &boxPage;     n = BOX_SLOTS / BOX_PER_PAGE; break;
+    case SCR_BAGSCR:  p = &bagPage;     n = bagPages(); break;
+    case SCR_CARD:    p = &cardPage;    n = CARD_PAGES; break;
+    case SCR_MOVEPICK: {
+      uint8_t all[64];
+      uint8_t k = learnableList(all, sizeof(all));
+      p = &movePickPage;
+      n = k ? (uint8_t)((k + MOVE_PICK_PER_PAGE - 1) / MOVE_PICK_PER_PAGE) : 1;
+      break;
+    }
+    case SCR_PICK: {
+      uint8_t k = pickCandidates();
+      p = &pickPage;
+      n = k ? (uint8_t)((k + PICK_PER_PAGE - 1) / PICK_PER_PAGE) : 1;
+      break;
+    }
+    default: break;
+  }
+  if (pages) *pages = n ? n : 1;
+  return p;
+}
+
+uint8_t uiRimPages() {
+  uint8_t n = 1;
+  if (rpickModeNow() != 0xFF) return rpickPageCount(rpickModeNow());
+  uiRimTarget(&n);
+  return n;
+}
+
+uint8_t uiRimPage() {
+  if (rpickModeNow() != 0xFF) return rpickPage;
+  uint8_t *p = uiRimTarget(nullptr);
+  return p ? *p : 0;
+}
+
+// dir > 0 is clockwise, which is forwards.
+void onRim(int dir) {
+  if (rpickSwipe(-dir)) return;   // the chooser pages itself, and WRAPS
+  uint8_t n = 1;
+  uint8_t *p = uiRimTarget(&n);
+  if (!p || n < 2) return;
+  int v = (int)(*p) + dir;
+  if (v < 0) v = 0;
+  if (v >= n) v = n - 1;          // CLAMPS: the rim can never close a screen
+  if (v == (int)(*p)) return;
+  *p = (uint8_t)v;
+  if (uiCurrentScreen() == SCR_GALLERY) galleryDirty = true;
+  sfxPlay(SFX_TAP);
+}
+
+bool uiOnRim(int16_t x, int16_t y) {
+  int dx = x - CX, dy = y - CY;
+  return dx * dx + dy * dy >= RIM_R0 * RIM_R0;
+}
+
+float uiRimAngle(int16_t x, int16_t y) {
+  return atan2f((float)(y - CY), (float)(x - CX)) * 57.29578f;
+}
+
+// ---------- the chrome that makes both of the above visible ----------
+#define TILE_DOT_Y 440
+
+static inline uint16_t uiChromeInk() {
+  return uiCurrentScreen() == SCR_MAIN ? inkColor() : UI_INK;
+}
+
+// The tile axis, drawn on every screen that is on it. Five bound gestures that
+// nothing on the panel mentions is precisely how Johto and Hoenn came to be
+// built, reachable and completely invisible; an axis nobody can see is that
+// same mistake one level up.
+void uiDrawTileDots() {
+  int t = uiTileIndex();
+  if (t < 0) return;
+  uint16_t ink = uiChromeInk();
+  for (int i = 0; i < TILE_COUNT; i++) {
+    int x = CX - (TILE_COUNT - 1) * 13 + i * 26;
+    if (i == t) gfx->fillRoundRect(x - 9, TILE_DOT_Y - 3, 18, 7, 3, ink);
+    else gfx->fillCircle(x, TILE_DOT_Y, 3, UI_TRACK);
+  }
+}
+
+// The arc scrollbar, at 2-4 o'clock, replacing the dot rows the paged screens
+// used to carry. A straight bar is at its thinnest exactly where a list is
+// longest, and dots show position without showing extent. Both this and the
+// rim drag read uiRimTarget(), so they cannot disagree about where you are.
+void uiDrawRimBar() {
+  uint8_t n = uiRimPages();
+  if (n < 2) return;
+  uint8_t p = uiRimPage();
+  if (p >= n) p = n - 1;
+  int span = RIM_BAR_A1 - RIM_BAR_A0;
+  int thumb = span / n;
+  if (thumb < 9) thumb = 9;
+  int a0 = RIM_BAR_A0 + (span - thumb) * (int)p / (int)(n - 1);
+  uiArc(CX, CY, RIM_BAR_R, RIM_BAR_A0, RIM_BAR_A1, 7, UI_TRACK);
+  uiArc(CX, CY, RIM_BAR_R, a0, a0 + thumb, 7, uiChromeInk());
+}
+
+// Called by every renderer that is on the axis or pages, immediately before it
+// flushes. One call, so a screen either has the chrome or visibly does not.
+void uiChrome() {
+  uiDrawTileDots();
+  uiDrawRimBar();
+}
+
 static void crumbDrop() {
   gCrumbMagic = CRUMB_MAGIC;
   gCrumbScreen = uiCurrentScreen();
@@ -2439,12 +2749,12 @@ void render() {
     if (millis() > feedMenuUntil) {
       feedMenuUntil = 0;
     } else {
-      gfx->fillRoundRect(101, 288, 264, 64, 14, UI_WHITE);
-      gfx->drawRoundRect(101, 288, 264, 64, 14, inkColor());
-      drawMap(SPR_ICON_FOOD, 16, 110, 296, 3, false);
-      drawMap(SPR_ICON_BERRY_B, 16, 176, 296, 3, false);
-      drawMap(SPR_ICON_BERRY_G, 16, 242, 296, 3, false);
-      drawMap(SPR_ICON_CANDY, 16, 308, 296, 3, false);
+      gfx->fillRoundRect(FEED_MENU_X, FEED_MENU_Y, FEED_MENU_W, FEED_MENU_H, 14, UI_WHITE);
+      gfx->drawRoundRect(FEED_MENU_X, FEED_MENU_Y, FEED_MENU_W, FEED_MENU_H, 14, inkColor());
+      drawMap(SPR_ICON_FOOD, 16, FEED_MENU_X + 9, FEED_MENU_Y + 8, 3, false);
+      drawMap(SPR_ICON_BERRY_B, 16, FEED_MENU_X + 75, FEED_MENU_Y + 8, 3, false);
+      drawMap(SPR_ICON_BERRY_G, 16, FEED_MENU_X + 141, FEED_MENU_Y + 8, 3, false);
+      drawMap(SPR_ICON_CANDY, 16, FEED_MENU_X + 207, FEED_MENU_Y + 8, 3, false);
     }
   }
 
@@ -2493,6 +2803,7 @@ void render() {
     }
   }
 
+  uiChrome();
   if (menuOpen) drawMenu();
 
   gfx->flush();
@@ -4528,15 +4839,11 @@ void renderPlayer() {
   if (playerPage < GYM_REGIONS) renderPlayerBadges();
   else renderPlayerMedals();
 
-  for (uint8_t i = 0; i < PLAYER_PAGES; i++) {
-    int dx = CX - (PLAYER_PAGES - 1) * 13 + i * 26;
-    if (i == playerPage) gfx->fillCircle(dx, 366, 5, UI_INK);
-    else gfx->drawCircle(dx, 366, 4, UI_INK);
-  }
   gfx->setTextColor(UI_TRACK);
   gfx->setTextSize(2);
   gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 392);
   gfx->print(T(S_BACK));
+  uiChrome();
   gfx->flush();
 }
 
@@ -5019,18 +5326,19 @@ void renderGyms() {
     uint8_t idx = gymPage * GYM_ROWS + i;
     if (idx >= TRAINER_COUNT) break;
     const Trainer &t = TRAINERS[idx];
-    int y = GYM_ROW_Y(i);
+    int rx, y, rw, rh;
+    gymRowRect(i, &rx, &y, &rw, &rh);
     bool done = pet.hasBadge(gymRegion, idx, gymHard);
     bool open_ = gymUnlocked(idx, gymHard);
-    gfx->fillRoundRect(70, y, 326, 44, 10, done ? UI_TRACK : UI_BG_DAY);
-    gfx->drawRoundRect(70, y, 326, 44, 10, open_ ? UI_INK : UI_TRACK);
+    gfx->fillRoundRect(rx, y, rw, rh, 10, done ? UI_TRACK : UI_BG_DAY);
+    gfx->drawRoundRect(rx, y, rw, rh, 10, open_ ? UI_INK : UI_TRACK);
     gfx->setTextColor(open_ ? UI_INK : UI_TRACK);
     gfx->setTextSize(2);
-    gfx->setCursor(84, y + 8);
+    gfx->setCursor(rx + 14, y + 8);
     gfx->print(t.name);
     gfx->setTextSize(1);
     gfx->setTextColor(UI_TRACK);
-    gfx->setCursor(84, y + 28);
+    gfx->setCursor(rx + 14, y + 28);
     gfx->print(open_ ? t.place : T(S_LOCKED));
     // the level of the strongest creature: the honest measure of the wall
     uint8_t top = 0;
@@ -5039,19 +5347,13 @@ void renderGyms() {
     char lv[16];
     snprintf(lv, sizeof(lv), "Lv.%u x%u", top, t.count);
     gfx->setTextColor(done ? UI_BAR_OK : (open_ ? UI_INK : UI_TRACK));
-    gfx->setCursor(384 - (int)strlen(lv) * 6, y + 28);
+    gfx->setCursor(rx + rw - 12 - (int)strlen(lv) * 6, y + 28);
     gfx->print(lv);
     if (done) {
       gfx->setTextColor(UI_BAR_OK);
-      gfx->setCursor(370, y + 8);
+      gfx->setCursor(rx + rw - 26, y + 8);
       gfx->print("*");
     }
-  }
-  uint8_t pages = (TRAINER_COUNT + GYM_ROWS - 1) / GYM_ROWS;
-  for (uint8_t i = 0; i < pages; i++) {
-    int dx = CX - (pages - 1) * 13 + i * 26;
-    if (i == gymPage) gfx->fillCircle(dx, 366, 5, UI_INK);
-    else gfx->drawCircle(dx, 366, 4, UI_INK);
   }
   // The two other kinds of battle live here too. This screen is the battle hub
   // -- swipe left reaches it -- and wild encounters had nowhere else to go:
@@ -5070,6 +5372,7 @@ void renderGyms() {
     gfx->setCursor(bx + (GYMBTN_W - (int)strlen(other[i]) * 12) / 2, GYMBTN_Y + 8);
     gfx->print(other[i]);
   }
+  uiChrome();
   gfx->flush();
 }
 
@@ -5279,6 +5582,7 @@ static void renderRegionPick(uint8_t mode) {
     gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 392);
     gfx->print(T(S_BACK));
   }
+  uiChrome();
   gfx->flush();
 }
 
@@ -5452,6 +5756,7 @@ void renderCard() {
   gfx->setTextSize(2);
   gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 398);
   gfx->print(T(S_BACK));
+  uiChrome();
   gfx->flush();
 }
 
@@ -5624,6 +5929,7 @@ void renderBag() {
   gfx->setTextSize(2);
   gfx->setCursor(CX - (int)strlen(T(S_BACK)) * 6, 414);
   gfx->print(T(S_BACK));
+  uiChrome();
   gfx->flush();
 }
 
@@ -5808,46 +6114,25 @@ void renderBox() {
              p.empty() ? "-" : (p.nick[0] ? p.nick : DEX_TBL[p.dex].name));
     gfx->setTextColor(UI_BAR_WARN);
     gfx->setTextSize(1);
-    gfx->setCursor(CX - (int)strlen(sub) * 3, 64);
+    gfx->setCursor(CX - (int)strlen(sub) * 3, PSLOT_PROMPT_Y);
     gfx->print(sub);
   }
   for (uint8_t i = 0; i < BOX_PER_PAGE; i++) {
     uint8_t idx = boxPage * BOX_PER_PAGE + i;
     if (idx >= BOX_SLOTS) break;
-    const PartyMon &m = party.box[idx];
-    int x = PARTY_GRID_X + (i % 2) * (PARTY_CELL_W + 10);
-    int y = 88 + (i / 2) * (PARTY_CELL_H + 8);
-    gfx->fillRoundRect(x, y, PARTY_CELL_W, PARTY_CELL_H, 10,
-                       m.empty() ? UI_TRACK : UI_WHITE);
-    gfx->drawRoundRect(x, y, PARTY_CELL_W, PARTY_CELL_H, 10, UI_INK);
-    if (m.empty()) {
-      gfx->setTextColor(0x8410);
-      gfx->setTextSize(1);
-      gfx->setCursor(x + PARTY_CELL_W / 2 - 18, y + PARTY_CELL_H / 2 - 4);
-      gfx->print(T(S_PARTY_EMPTY));
-      continue;
-    }
-    const uint8_t *th = thumbs.get(m.dex);
-    if (th) drawThumb(th, x - 14, y - 4, 2, false);
-    gfx->setTextColor(UI_INK);
-    gfx->setTextSize(1);
-    gfx->setCursor(x + 52, y + 16);
-    gfx->print(m.nick[0] ? m.nick : DEX_TBL[m.dex].name);
-    char l[16];
-    snprintf(l, sizeof(l), "Lv.%u%s", (unsigned)m.level, m.shiny ? " *" : "");
-    gfx->setCursor(x + 52, y + 34);
-    gfx->print(l);
+    drawPartySlot(i, party.box[idx]);
   }
-  uint8_t pages = BOX_SLOTS / BOX_PER_PAGE;
-  for (uint8_t i = 0; i < pages; i++) {
-    int dx = CX - (pages - 1) * 13 + i * 26;
-    if (i == boxPage) gfx->fillCircle(dx, 366, 5, UI_INK);
-    else gfx->drawCircle(dx, 366, 4, UI_INK);
+  {
+    char pg[12];
+    snprintf(pg, sizeof(pg), "%u/%u", (unsigned)(boxPage + 1),
+             (unsigned)(BOX_SLOTS / BOX_PER_PAGE));
+    drawPartyHub(pg, T(S_BOX_BTN), boxSwapFrom != 0);
   }
   gfx->setTextColor(UI_TRACK);
   gfx->setTextSize(2);
   gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 392);
   gfx->print(T(S_BACK));
+  uiChrome();
   gfx->flush();
 }
 
@@ -5877,9 +6162,7 @@ void boxTap(int16_t x, int16_t y) {
   for (uint8_t i = 0; i < BOX_PER_PAGE; i++) {
     uint8_t idx = boxPage * BOX_PER_PAGE + i;
     if (idx >= BOX_SLOTS) break;
-    int cx0 = PARTY_GRID_X + (i % 2) * (PARTY_CELL_W + 10);
-    int cy0 = 88 + (i / 2) * (PARTY_CELL_H + 8);
-    if (x < cx0 || x > cx0 + PARTY_CELL_W || y < cy0 || y > cy0 + PARTY_CELL_H) continue;
+    if (partySlotAt(x, y) != (int)i) continue;
     if (boxSwapFrom) {           // a party slot is waiting: complete the trade
       if (party.slots[boxSwapFrom - 1].empty() && party.box[idx].empty()) {
         sfxPlay(SFX_DENY);
@@ -5914,38 +6197,54 @@ void boxTap(int16_t x, int16_t y) {
 
 // ---------- party ----------
 
-void drawPartySlot(int i, int x, int y) {
-  const PartyMon &m = party.slots[i];
-  gfx->fillRoundRect(x, y, PARTY_CELL_W, PARTY_CELL_H, 10,
-                     m.empty() ? UI_TRACK : UI_WHITE);
-  gfx->drawRoundRect(x, y, PARTY_CELL_W, PARTY_CELL_H, 10, UI_INK);
+void drawPartySlot(int i, const PartyMon &m) {
+  int cx, cy;
+  partySlotPos(i, &cx, &cy);
+  gfx->fillCircle(cx, cy, PSLOT_R, m.empty() ? UI_TRACK : UI_WHITE);
+  gfx->drawCircle(cx, cy, PSLOT_R, UI_INK);
+  gfx->drawCircle(cx, cy, PSLOT_R - 1, UI_INK);
   if (m.empty()) {
     gfx->setTextColor(0x8410);
     gfx->setTextSize(2);
-    gfx->setCursor(x + (PARTY_CELL_W - (int)strlen(T(S_PARTY_EMPTY)) * 12) / 2,
-                   y + PARTY_CELL_H / 2 - 8);
+    gfx->setCursor(cx - (int)strlen(T(S_PARTY_EMPTY)) * 6, cy - 8);
     gfx->print(T(S_PARTY_EMPTY));
     return;
   }
   const uint8_t *th = thumbs.get(m.dex);
-  if (th) drawThumb(th, x - 6, y - 3, 1, false);
+  if (th) drawThumb(th, cx - 24, cy - 44, 1, false);
   const DexEntry &d = DEX_TBL[m.dex];
   const char *nm = m.nick[0] ? m.nick : d.name;
   gfx->setTextColor(d.accent);
   gfx->setTextSize(1);
-  gfx->setCursor(x + 62, y + 18);
+  gfx->setCursor(cx - (int)strlen(nm) * 3, cy + 8);
   gfx->print(nm);
   if (m.shiny) {
     gfx->setTextColor(UI_BAR_WARN);
-    gfx->setCursor(x + 62 + (int)strlen(nm) * 6 + 3, y + 18);
+    gfx->setCursor(cx + (int)strlen(nm) * 3 + 3, cy + 8);
     gfx->print("*");
   }
   char lv[12];
   snprintf(lv, sizeof(lv), T(S_LVL_FMT), (unsigned)m.level);
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(2);
-  gfx->setCursor(x + 62, y + 36);
+  gfx->setCursor(cx - (int)strlen(lv) * 6, cy + 20);
   gfx->print(lv);
+}
+
+// The hub in the middle of the ring. On the party it is the BOX button; in the
+// box it is the page. Either way the centre of a round panel is the easiest
+// place on it to hit, so the primary action belongs there.
+void drawPartyHub(const char *top, const char *bot, bool armed) {
+  gfx->fillCircle(CX, PSLOT_CY, PSLOT_HUB_R, armed ? UI_BAR_WARN : UI_BG_DAY);
+  gfx->drawCircle(CX, PSLOT_CY, PSLOT_HUB_R, UI_INK);
+  gfx->drawCircle(CX, PSLOT_CY, PSLOT_HUB_R - 1, UI_INK);
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - (int)strlen(top) * 6, PSLOT_CY - 14);
+  gfx->print(top);
+  gfx->setTextSize(1);
+  gfx->setCursor(CX - (int)strlen(bot) * 3, PSLOT_CY + 10);
+  gfx->print(bot);
 }
 
 void renderParty() {
@@ -5959,19 +6258,12 @@ void renderParty() {
   gfx->setCursor(CX - (int)strlen(head) * 9, 42);
   gfx->print(head);
 
-  // the box lives behind this button; it also shows how full it is, so the
-  // player knows there is anything in there without opening it
+  // the box lives behind the hub in the middle of the ring; it also shows how
+  // full it is, so the player knows there is anything in there without opening
   if (!partyPick) {
     char bl[24];
-    snprintf(bl, sizeof(bl), T(S_BOX_FMT), party.boxCount(), BOX_SLOTS);
-    bool armed = boxSwapFrom != 0;
-    gfx->fillRoundRect(BOXBTN_X, BOXBTN_Y, BOXBTN_W, BOXBTN_H, 10,
-                       armed ? UI_BAR_WARN : UI_BG_DAY);
-    gfx->drawRoundRect(BOXBTN_X, BOXBTN_Y, BOXBTN_W, BOXBTN_H, 10, UI_INK);
-    gfx->setTextColor(UI_INK);
-    gfx->setTextSize(2);
-    gfx->setCursor(233 - (int)strlen(bl) * 6, BOXBTN_Y + 12);
-    gfx->print(bl);
+    snprintf(bl, sizeof(bl), "%u/%u", party.boxCount(), BOX_SLOTS);
+    drawPartyHub(bl, T(S_BOX_BTN), boxSwapFrom != 0);
   }
 
   if (boxSel) {
@@ -5981,7 +6273,7 @@ void renderParty() {
              b.nick[0] ? b.nick : DEX_TBL[b.dex].name);
     gfx->setTextColor(UI_BAR_WARN);
     gfx->setTextSize(1);
-    gfx->setCursor(CX - (int)strlen(sw) * 3, 72);
+    gfx->setCursor(CX - (int)strlen(sw) * 3, PSLOT_PROMPT_Y);
     gfx->print(sw);
   }
 
@@ -5989,15 +6281,11 @@ void renderParty() {
   if (partyPick) {
     gfx->setTextColor(UI_BAR_BAD);
     gfx->setTextSize(1);
-    gfx->setCursor(CX - (int)strlen(T(S_PARTY_FULL)) * 3, 74);
+    gfx->setCursor(CX - (int)strlen(T(S_PARTY_FULL)) * 3, PSLOT_PROMPT_Y);
     gfx->print(T(S_PARTY_FULL));
   }
 
-  for (int i = 0; i < PARTY_SLOTS; i++) {
-    int x = PARTY_GRID_X + (i % 2) * (PARTY_CELL_W + 10);
-    int y = PARTY_GRID_Y + (i / 2) * (PARTY_CELL_H + 8);
-    drawPartySlot(i, x, y);
-  }
+  for (int i = 0; i < PARTY_SLOTS; i++) drawPartySlot(i, party.slots[i]);
 
   // exit: an explicit button, always in the same place
   const char *ex = partyPick ? T(S_PARTY_LETGO) : T(S_CLOSE);
@@ -6008,6 +6296,7 @@ void renderParty() {
   gfx->setTextSize(2);
   gfx->setCursor(CX - (int)strlen(ex) * 6, PARTYCLOSE_Y + 14);
   gfx->print(ex);
+  uiChrome();
   gfx->flush();
 }
 
@@ -6131,6 +6420,7 @@ void renderGallery() {
     gfx->setTextSize(2);
     gfx->setCursor(CX - strlen(T(S_DETAIL_BACK)) * 6, 408);
     gfx->print(T(S_DETAIL_BACK));
+    uiChrome();
     gfx->flush();
     return;
   }
@@ -6182,8 +6472,9 @@ void renderGallery() {
   snprintf(pg, sizeof(pg), "%d/%d", galleryPage + 1, (int)GAL_PAGES);
   gfx->setTextColor(UI_TRACK);
   gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(pg) * 6, 428);
+  gfx->setCursor(CX - (int)strlen(pg) * 6, 410);
   gfx->print(pg);
+  uiChrome();
   gfx->flush();
 }
 
@@ -6746,32 +7037,51 @@ void drawPoops() {
   }
 }
 
-void drawBars() {
-  drawBar(78, 318, T(S_BAR_FOOD), pet.fullness);
-  drawBar(244, 318, T(S_BAR_JOY), pet.joy);
-  drawBar(78, 346, T(S_BAR_ENE), pet.energy);
-  drawBar(244, 346, T(S_BAR_HYG), pet.hygiene);
-}
+// The four care stats, on the panel's RIM.
+//
+// They were 2x2 bars across y 318..361 -- four 100 px tracks laid over the
+// widest part of the circle, which is the one place a round panel has room to
+// spare, while the home row below them had to make do with 60 px icons. An arc
+// lives where no rectangular layout can put anything at all.
+//
+// Colour still means SEVERITY, exactly as the bars did; the label says which
+// stat it is. The gap at 12 o'clock is for the name, and the arcs stop short of
+// +-102 degrees so the ends stay clear of the poop row on the left.
+#define CARE_R 216        // the track's radius
+#define CARE_W 12         // and its thickness
+#define CARE_LBL_R 190    // labels hug the track rather than floating mid-field
+static const int16_t CARE_ARC[4][2] = {
+  { -104, -70 }, { -66, -32 }, { 32, 66 }, { 70, 104 },
+};
 
-void drawBar(int x, int y, const char *label, uint8_t val) {
+static void drawCareArc(int i, const char *label, uint8_t val) {
+  int a0 = CARE_ARC[i][0], a1 = CARE_ARC[i][1];
+  uint16_t fill = (val >= 50) ? UI_BAR_OK : (val >= 25) ? UI_BAR_WARN : UI_BAR_BAD;
+  uiArc(CX, CY, CARE_R, a0, a1, CARE_W, UI_TRACK);
+  if (val) uiArc(CX, CY, CARE_R, a0, a0 + (a1 - a0) * val / 100, CARE_W, fill);
+  float mid = ((float)(a0 + a1) / 2.0f - 90.0f) * 0.01745329f;
+  int lx = CX + (int)(cosf(mid) * CARE_LBL_R);
+  int ly = CY + (int)(sinf(mid) * CARE_LBL_R);
   gfx->setTextColor(inkColor());
   gfx->setTextSize(2);
-  gfx->setCursor(x, y);
+  gfx->setCursor(lx - (int)strlen(label) * 6, ly - 8);
   gfx->print(label);
-  int bx = x + 48, bw = 100, bh = 15;  // +48: deja sitio a etiquetas de 4 letras (EN)
-  uint16_t fill = (val >= 50) ? UI_BAR_OK : (val >= 25) ? UI_BAR_WARN : UI_BAR_BAD;
-  gfx->fillRoundRect(bx, y, bw, bh, 4, UI_TRACK);
-  int fw = (bw - 4) * val / 100;
-  if (fw > 0) gfx->fillRoundRect(bx + 2, y + 2, fw, bh - 4, 3, fill);
+}
+
+void drawBars() {
+  drawCareArc(0, T(S_BAR_FOOD), pet.fullness);
+  drawCareArc(1, T(S_BAR_JOY), pet.joy);
+  drawCareArc(2, T(S_BAR_ENE), pet.energy);
+  drawCareArc(3, T(S_BAR_HYG), pet.hygiene);
 }
 
 void drawButtons() {
   for (int i = 0; i < BTN_COUNT; i++) {
     bool off = uiButtonDisabled(i);   // durmiendo solo funciona LUZ
     int bx = buttons[i].cx - BTN_HALF, by = buttons[i].cy - BTN_HALF;
-    if (!pet.sleeping) gfx->fillRoundRect(bx, by, 2 * BTN_HALF, 2 * BTN_HALF, 14, UI_WHITE);
-    gfx->drawRoundRect(bx, by, 2 * BTN_HALF, 2 * BTN_HALF, 14, inkColor());
-    if (!off) drawMap(buttons[i].icon, 16, buttons[i].cx - 16, buttons[i].cy - 16, 2, false);
+    if (!pet.sleeping) gfx->fillRoundRect(bx, by, 2 * BTN_HALF, 2 * BTN_HALF, 18, UI_WHITE);
+    gfx->drawRoundRect(bx, by, 2 * BTN_HALF, 2 * BTN_HALF, 18, inkColor());
+    if (!off) drawMap(buttons[i].icon, 16, buttons[i].cx - 24, buttons[i].cy - 24, 3, false);
   }
 }
 

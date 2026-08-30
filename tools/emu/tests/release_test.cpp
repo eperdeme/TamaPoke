@@ -41,9 +41,12 @@ static int bad=0;
 static void ck(bool ok,const char*w){printf("%s  %s\n",ok?"PASS":"FAIL",w); if(!ok)bad++;}
 
 // Geometry taken from the sketch's own constants rather than copied as numbers:
-// a test that restates the layout drifts from it and then proves nothing.
-#define PCELL_X(i) (78 + ((i) % 2) * 160)
-#define PCELL_Y(i) (88 + ((i) / 2) * 78)
+// a test that restates the layout drifts from it and then proves nothing. This
+// file used to do exactly that -- PCELL_X/Y were the 2x3 grid's literals, so
+// every party tap missed once the slots became a ring.
+void partySlotPos(int i, int *cx, int *cy);
+static int SLOT_X(int i){ int x, y; partySlotPos(i, &x, &y); return x; }
+static int SLOT_Y(int i){ int x, y; partySlotPos(i, &x, &y); return y; }
 bool monSheetBtn(int16_t,int16_t,bool);
 #define SHEET_L_X 160
 #define SHEET_R_X 320
@@ -92,7 +95,7 @@ int main(){
     party.slots[0]=mon(25,30,"PIKA");
     party.save();
     partyOpen=true;
-    partyTap(PCELL_X(0)+40, PCELL_Y(0)+30);      // open its sheet
+    partyTap(SLOT_X(0), SLOT_Y(0));      // open its sheet
     ck(partyDetail==1, "tapping a party slot opens its sheet");
     ck(!releaseConfirm, "with no confirm up yet");
 
@@ -130,7 +133,7 @@ int main(){
     party.box[0]=mon(133,25,"EEVEE");
     party.boxSave();
     partyOpen=true; boxOpen=true;
-    boxTap(PCELL_X(0)+40, PCELL_Y(0)+30);
+    boxTap(SLOT_X(0), SLOT_Y(0));
     ck(boxDetail==1, "tapping a box slot opens its sheet");
     ck(party.count()==0, "rather than moving the creature on one tap");
 
@@ -151,7 +154,7 @@ int main(){
     party.box[0]=mon(143,40,"SNORLAX");
     party.boxSave();
     partyOpen=true; boxOpen=true;
-    boxTap(PCELL_X(0)+40, PCELL_Y(0)+30);
+    boxTap(SLOT_X(0), SLOT_Y(0));
     boxTap(SHEET_L_X, SHEET_BTN_Y);              // TO PARTY
     ck(party.count()==1 && party.slots[0].dex==143, "TO PARTY withdraws it");
     ck(party.boxCount()==0, "and the box slot is freed");
@@ -163,7 +166,7 @@ int main(){
     party.slots[0]=mon(25,30,"PIKA");
     party.save();
     partyOpen=true;
-    partyTap(PCELL_X(0)+40, PCELL_Y(0)+30);
+    partyTap(SLOT_X(0), SLOT_Y(0));
     ck(boxSwapFrom==1, "opening a sheet arms the swap side");
     partyTap(SHEET_R_X, SHEET_BTN_Y);
     partyTap(CONF_X, CONF_YES_Y);
@@ -185,7 +188,7 @@ int main(){
     if (!pet.isEgg()) { pet.newEgg(); }
     if (pet.awaitingStarter()) pet.chooseStarter(4);
     partyOpen = true;
-    partyTap(PCELL_X(0) + 40, PCELL_Y(0) + 30);
+    partyTap(SLOT_X(0), SLOT_Y(0));
     ck(partyDetail == 1, "the sheet opens with an egg waiting");
     partyTap(233, SHEET_BTN_Y);                  // dead centre
     ck(pet.speciesId == 3, "BRING BACK works when tapped at the panel centre");
@@ -221,7 +224,7 @@ int main(){
     ck(dimStage==0, "the panel is awake, so the gate is what is being tested");
     ck(!strcmp(SCREEN_NAME[uiCurrentScreen()],"party"), "and the party screen is up");
     confirmUntil=0; holdFired=false;
-    hold(153,123,3400);                     // dead centre of party slot 0
+    hold(SLOT_X(0), SLOT_Y(0), 3400);       // dead centre of party slot 0
     ck(confirmUntil==0, "holding a party slot does NOT open the release dialog");
     ck(partyDetail==0 || !holdFired, "and it was a hold, not a tap that opened a sheet");
 

@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>TamaPoke - round UI prototypes</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #0b0d11; color: #dfe4ec;
+    font: 14px/1.55 ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+    display: flex; gap: 28px; padding: 24px; align-items: flex-start;
+  }
+  h1 { font-size: 15px; letter-spacing: .16em; text-transform: uppercase; margin: 0 0 4px; color: #f2e9d8; }
+  .sub { color: #7d8798; font-size: 12px; margin: 0 0 16px; }
+  .stage { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  .bezel {
+    width: 466px; height: 466px; border-radius: 50%;
+    background: #000; position: relative;
+    box-shadow: 0 0 0 10px #16191f, 0 0 0 13px #2c313b, 0 26px 60px rgba(0,0,0,.75);
+  }
+  canvas { width: 466px; height: 466px; border-radius: 50%; display: block; touch-action: none; cursor: grab; }
+  canvas:active { cursor: grabbing; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; max-width: 500px; }
+  button {
+    background: #171c25; color: #b9c2d1; border: 1px solid #2a323f; border-radius: 7px;
+    padding: 7px 12px; font: 600 11px/1 ui-monospace, Menlo, monospace;
+    letter-spacing: .08em; cursor: pointer; text-transform: uppercase;
+  }
+  button:hover { border-color: #3d4757; color: #e8eef8; }
+  button[aria-pressed="true"] { background: #3fd0b6; border-color: #3fd0b6; color: #06231e; }
+  button.alt[aria-pressed="true"] { background: #f5b93c; border-color: #f5b93c; color: #2a1c00; }
+  .notes { width: 430px; }
+  .notes h2 { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: #3fd0b6; margin: 20px 0 6px; }
+  .notes h2:first-child { margin-top: 0; }
+  .notes p { margin: 0 0 10px; color: #aab3c2; font-size: 13px; }
+  .notes ul { margin: 0 0 10px; padding-left: 18px; color: #aab3c2; font-size: 13px; }
+  .notes li { margin-bottom: 5px; }
+  code { font: 600 12px ui-monospace, Menlo, monospace; color: #f5b93c; background: #171c25; padding: 1px 5px; border-radius: 4px; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; margin-bottom: 10px; }
+  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid #232a35; color: #aab3c2; }
+  th { color: #7d8798; font-weight: 600; text-transform: uppercase; font-size: 10.5px; letter-spacing: .1em; }
+  kbd { font: 600 11px ui-monospace, Menlo, monospace; background: #232a35; border: 1px solid #333c4a;
+        border-bottom-width: 2px; border-radius: 4px; padding: 1px 5px; color: #dfe4ec; }
+  .legend { font: 11px ui-monospace, Menlo, monospace; color: #6d7787; text-align: center; max-width: 470px; }
+  .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: -1px; margin-right: 3px; }
+</style>
+
+<div class="stage">
+  <div class="row" id="tabs"></div>
+  <div class="bezel"><canvas id="cv" width="466" height="466"></canvas></div>
+  <div class="row" id="views"></div>
+  <div class="row" id="toggles"></div>
+  <div class="legend" id="legend"></div>
+</div>
+
+<div class="notes" id="notes"></div>
+
+<script>
+// ---------------------------------------------------------------- geometry
+const R = 233, CX = 233, CY = 233;
+const PPMM = 466 / 1.75 / 25.4;          // 266 ppi -> 10.47 px per mm
+const TAP_MIN = 94;                       // 9 mm finger floor, in px
+const hc = y => Math.sqrt(Math.max(0, R * R - (y - CY) * (y - CY)));  // half chord
+
+const C = {
+  bg: '#07090c', ink: '#f2e9d8', dim: '#7f8a9b', track: '#1b212b', panel: '#131923',
+  line: '#26303d', teal: '#3fd0b6', amber: '#f5b93c', rose: '#ef6a6a',
+  blue: '#5aa9f0', gold: '#ffd76a', green: '#6dd36d', cream: '#efe3ca'
+};
+
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const dpr = Math.min(3, window.devicePixelRatio || 1);
+cv.width = 466 * dpr; cv.height = 466 * dpr; ctx.scale(dpr, dpr);
+
+let HITS = [];   // every renderer declares its tappable areas here, per frame
+let HIT_ON = true;
+const hitR = (x, y, w, h, label) => HIT_ON && HITS.push({ x, y, w, h, label });
+const hitC = (x, y, r, label) => HIT_ON && HITS.push({ x: x - r, y: y - r, w: r * 2, h: r * 2, label, round: true });
+
+// ---------------------------------------------------------------- drawing
+function T(txt, x, y, size, color, align = 'center', weight = 700) {
+  ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = 'middle';
+  ctx.font = `${weight} ${size}px ui-monospace, Menlo, monospace`;
+  ctx.fillText(txt, x, y);
+}
+function ring(r, a0, a1, w, color, cap = 'butt') {
+  ctx.beginPath(); ctx.arc(CX, CY, r, a0, a1);
+  ctx.lineWidth = w; ctx.strokeStyle = color; ctx.lineCap = cap; ctx.stroke(); ctx.lineCap = 'butt';
+}
+function rrect(x, y, w, h, r, fill, stroke, lw = 2) {
+  ctx.beginPath(); ctx.roundRect(x, y, w, h, r);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.lineWidth = lw; ctx.strokeStyle = stroke; ctx.stroke(); }
+}
+function disc(x, y, r, fill, stroke, lw = 2) {
+  ctx.beginPath(); ctx.arc(x, y, r, 0, 7);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.lineWidth = lw; ctx.strokeStyle = stroke; ctx.stroke(); }
+}
+function bar(x, y, w, h, pct, color) {
+  rrect(x, y, w, h, h / 2, C.track);
+  if (pct > 0) rrect(x, y, Math.max(h, w * pct), h, h / 2, color);
+}
+
+// a stand-in creature; the firmware streams real PMD sprites here
+function mon(x, y, s, c1 = '#f0913c', c2 = '#ffd9a3') {
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  ctx.fillStyle = c1;
+  ctx.beginPath(); ctx.moveTo(26, 16); ctx.quadraticCurveTo(74, 6, 56, -40);
+  ctx.quadraticCurveTo(84, -6, 66, 26); ctx.quadraticCurveTo(48, 42, 26, 34); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(-22, 52, 15, 9, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(22, 52, 15, 9, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(0, 14, 38, 41, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = c2; ctx.beginPath(); ctx.ellipse(0, 24, 23, 26, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = c1; ctx.beginPath(); ctx.ellipse(0, -32, 43, 35, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = '#0b0e13';
+  ctx.beginPath(); ctx.ellipse(-16, -36, 6, 8.5, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(16, -36, 6, 8.5, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.ellipse(-14, -39, 2.3, 3, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(18, -39, 2.3, 3, 0, 0, 7); ctx.fill();
+  ctx.restore();
+}
+
+function icon(name, x, y, s, col) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(s / 32, s / 32);
+  ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 3.4;
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  const P = (...pts) => { ctx.beginPath(); ctx.moveTo(pts[0], pts[1]); for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]); };
+  switch (name) {
+    case 'food':
+      ctx.beginPath(); ctx.ellipse(-4, 3, 11, 12, 0, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(5, 3, 11, 12, 0, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(0, -9); ctx.quadraticCurveTo(2, -17, 10, -18); ctx.stroke(); break;
+    case 'light':
+      ctx.beginPath(); ctx.arc(0, 0, 8, 0, 7); ctx.fill();
+      for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4; ctx.beginPath(); ctx.moveTo(Math.cos(a) * 13, Math.sin(a) * 13); ctx.lineTo(Math.cos(a) * 19, Math.sin(a) * 19); ctx.stroke(); } break;
+    case 'bath':
+      ctx.beginPath(); ctx.moveTo(0, -18); ctx.quadraticCurveTo(14, 0, 14, 6);
+      ctx.arc(0, 6, 14, 0, Math.PI); ctx.quadraticCurveTo(-14, 0, 0, -18); ctx.fill(); break;
+    case 'train':
+      P(-18, 0, 18, 0); ctx.lineWidth = 5; ctx.stroke(); ctx.lineWidth = 3.4;
+      rrect(-19, -10, 9, 20, 3, col); rrect(10, -10, 9, 20, 3, col); break;
+    case 'party':
+      ctx.beginPath(); ctx.arc(0, 0, 17, 0, 7); ctx.stroke();
+      P(-17, 0, -6, 0); ctx.stroke(); P(6, 0, 17, 0); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 0, 6, 0, 7); ctx.fill(); break;
+    case 'dex':
+      rrect(-15, -17, 30, 34, 4, null, col, 3.4); P(-6, -17, -6, 17); ctx.stroke();
+      P(1, -8, 10, -8); ctx.stroke(); P(1, 0, 10, 0); ctx.stroke(); break;
+    case 'gym':
+      ctx.beginPath(); ctx.moveTo(0, -18); for (let i = 1; i < 6; i++) { const a = -Math.PI / 2 + i * Math.PI / 3; ctx.lineTo(Math.cos(a) * 18, Math.sin(a) * 18); } ctx.closePath(); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 0, 7, 0, 7); ctx.fill(); break;
+    case 'gear':
+      ctx.beginPath(); ctx.arc(0, 0, 15, 0, 7); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 0, 6, 0, 7); ctx.stroke();
+      for (let i = 0; i < 6; i++) { const a = i * Math.PI / 3; ctx.beginPath(); ctx.moveTo(Math.cos(a) * 15, Math.sin(a) * 15); ctx.lineTo(Math.cos(a) * 20, Math.sin(a) * 20); ctx.lineWidth = 6; ctx.stroke(); } break;
+    case 'bag':
+      rrect(-15, -8, 30, 24, 5, null, col, 3.4);
+      ctx.beginPath(); ctx.arc(0, -8, 9, Math.PI, 0); ctx.stroke(); break;
+    case 'back':
+      P(8, -12, -8, 0, 8, 12); ctx.lineWidth = 4; ctx.stroke(); break;
+  }
+  ctx.restore();
+}
+
+function clipCircle() { ctx.save(); ctx.beginPath(); ctx.arc(CX, CY, R, 0, 7); ctx.clip(); }
+
+// ---------------------------------------------------------------- state
+const S = {
+  proto: 'now', view: 0,
+  overlays: { safe: false, targets: false, chord: false },
+  tile: 2, tilePos: 2, detail: 0, detailTarget: 0,   // A
+  bloom: 0, bloomTarget: 0, hubSel: -1,              // B
+  scroll: 0, scrollPos: 0,                           // C
+  toast: '', toastUntil: 0, flash: 0
+};
+const say = m => { S.toast = m; S.toastUntil = performance.now() + 1400; };
+
+const DATA = {
+  pet: { name: 'EMBER', species: 'CHARMANDER', lvl: 27, food: .72, joy: .45, ene: .88, hyg: .3, bond: .6 },
+  party: [
+    { n: 'BULBA', d: 'IVYSAUR', l: 41, c: '#6dd36d' }, { n: 'SQUIRT', d: 'WARTORTLE', l: 38, c: '#5aa9f0' },
+    { n: 'PIKA', d: 'PIKACHU', l: 52, c: '#f5d33c' }, { n: 'ONIX', d: 'ONIX', l: 33, c: '#9aa4b2' },
+    { n: '', d: '', l: 0, c: '' }, { n: 'GENGAR', d: 'GENGAR', l: 61, c: '#a878d8' }
+  ],
+  gyms: [
+    { n: 'BROCK', t: 'ROCK', l: 14, w: 1 }, { n: 'MISTY', t: 'WATER', l: 21, w: 1 },
+    { n: 'SURGE', t: 'ELECTRIC', l: 24, w: 1 }, { n: 'ERIKA', t: 'GRASS', l: 29, w: 0 },
+    { n: 'KOGA', t: 'POISON', l: 43, w: 0 }, { n: 'SABRINA', t: 'PSYCHIC', l: 43, w: 0 },
+    { n: 'BLAINE', t: 'FIRE', l: 47, w: 0 }, { n: 'GIOVANNI', t: 'GROUND', l: 50, w: 0 },
+    { n: 'LORELEI', t: 'ICE', l: 52, w: 0 }, { n: 'BRUNO', t: 'FIGHT', l: 53, w: 0 },
+    { n: 'AGATHA', t: 'GHOST', l: 54, w: 0 }, { n: 'LANCE', t: 'DRAGON', l: 56, w: 0 }
+  ],
+  box: [
+    { n: 'RATTATA', l: 12, c: '#c08a5a' }, { n: 'PIDGEY', l: 18, c: '#d8c08a' },
+    { n: 'ODDISH', l: 22, c: '#6dd36d' }, { n: '', l: 0, c: '' },
+    { n: 'ABRA', l: 29, c: '#f0a0c0' }, { n: 'MACHOP', l: 31, c: '#9aa4b2' }
+  ]
+};
+
+// ================================================================ CURRENT UI
+function drawNow() {
+  ctx.fillStyle = C.bg; ctx.fillRect(0, 0, 466, 466);
+  if (S.view === 0) nowMain(); else if (S.view === 1) nowList(); else nowBox();
+}
+
+function nowMain() {
+  const p = DATA.pet;
+  T(p.name + '  LV.' + p.lvl, CX, 46, 20, C.ink);
+  T('3d 04h  *  KANTO', CX, 72, 13, C.dim);
+  const stats = [['FOOD', p.food, C.amber], ['JOY', p.joy, C.rose], ['ENE', p.ene, C.teal], ['HYG', p.hyg, C.blue]];
+  stats.forEach(([n, v, col], i) => {
+    const y = 100 + i * 26;
+    T(n, 74, y + 5, 12, C.dim, 'left');
+    bar(118, y, 172, 11, v, col);
+  });
+  T('BOND', 70, 216, 12, C.dim, 'left');   // the collision this file's notes describe
+  bar(112, 211, 180, 11, p.bond, '#e0709a');
+  mon(CX, 292, 0.92);
+  // four 60 px icons at 66 px pitch, on the panel arc
+  const names = ['food', 'light', 'bath', 'train'];
+  names.forEach((n, i) => {
+    const dx = (i - 1.5) * 66, x = CX + dx, y = 406 - dx * dx / 729;
+    disc(x, y, 30, C.panel, C.line, 2);
+    icon(n, x, y, 30, i === 2 ? '#3a4250' : C.cream);   // BATH greyed while asleep
+    hitR(x - 30, y - 30, 60, 60, n.toUpperCase());
+  });
+  T('MENU', CX, 452, 11, '#39414f');
+}
+
+function nowList() {
+  ctx.fillStyle = C.cream; ctx.fillRect(0, 0, 466, 466);
+  T('GYMS - KANTO', CX, 44, 18, '#3a3226');
+  for (let i = 0; i < 5; i++) {
+    const g = DATA.gyms[i], y = 84 + i * 62;
+    rrect(64, y, 338, 54, 8, g.w ? '#e2d3b4' : '#e9dcc2', '#c9b78f', 2);
+    T(g.n, 78, y + 20, 17, '#3a3226', 'left');
+    T(g.t + '  -  LV.' + g.l, 78, y + 40, 12, '#8a7c62', 'left');
+    if (g.w) { disc(372, y + 27, 15, C.gold, '#a8862a', 2); T('*', 372, y + 27, 15, '#6b5210'); }
+    hitR(64, y, 338, 54, 'ROW ' + (i + 1));
+  }
+  T('1 / 3   swipe: page  -  past the end: exit', CX, 424, 11, '#8a7c62');
+}
+
+function nowBox() {
+  ctx.fillStyle = C.cream; ctx.fillRect(0, 0, 466, 466);
+  T('BOX  1/3', CX, 40, 18, '#3a3226');
+  for (let i = 0; i < 6; i++) {
+    const x = 62 + (i % 2) * 178, y = 74 + ((i / 2) | 0) * 118, b = DATA.box[i];
+    rrect(x, y, 164, 106, 8, '#e9dcc2', '#c9b78f', 2);
+    if (b.n) {
+      disc(x + 38, y + 46, 26, b.c || '#ccc');
+      T(b.n, x + 72, y + 36, 12, '#3a3226', 'left');
+      T('Lv.' + b.l, x + 72, y + 58, 12, '#8a7c62', 'left');
+    } else T('- EMPTY -', x + 82, y + 53, 12, '#b6a88f');
+    hitR(x, y, 164, 106, 'SLOT ' + (i + 1));
+  }
+  T('tap: back', CX, 440, 12, '#8a7c62');
+}
+
+// ================================================================ A - TILES
+const TILES = ['GYM', 'PARTY', 'PET', 'DEX', 'PLAYER'];
+
+function drawA() {
+  ctx.fillStyle = C.bg; ctx.fillRect(0, 0, 466, 466);
+  clipCircle();
+  const off = (S.tilePos - S.tile) * 466;
+  for (let d = -1; d <= 1; d++) {
+    const idx = S.tile + d; if (idx < 0 || idx >= TILES.length) continue;
+    ctx.save(); ctx.translate(d * 466 - off, 0);
+    HIT_ON = (d === 0);
+    tileBody(idx);
+    HIT_ON = true;
+    ctx.restore();
+  }
+  ctx.restore();
+
+  // persistent chrome: a title pill at 12 o'clock, tile dots at 6 o'clock
+  rrect(CX - 60, 5, 120, 27, 13, 'rgba(7,9,12,.92)');
+  T(TILES[S.tile], CX, 19, 13, C.teal);
+  const n = TILES.length, w = 14, gap = 8, tot = n * w + (n - 1) * gap;
+  for (let i = 0; i < n; i++) {
+    const x = CX - tot / 2 + i * (w + gap);
+    rrect(x, 432, i === S.tile ? w + 10 : w, 6, 3, i === S.tile ? C.teal : '#2c3542');
+  }
+  if (S.detail > .01) drawADetail();
+  T('^ DETAIL', CX, 50, 10, 'rgba(63,208,182,' + (0.55 * (1 - S.detail)) + ')');
+}
+
+function tileBody(i) {
+  if (i === 0) tileGym(); else if (i === 1) tileParty();
+  else if (i === 2) tilePet(); else if (i === 3) tileDex(); else tilePlayer();
+}
+
+function tilePet() {
+  const p = DATA.pet;
+  // care stats become rim arcs, kept in the top half so the action row stays clear
+  const seg = 0.14 * Math.PI;
+  [[-0.94, p.food, C.amber, 'FOOD'], [-0.78, p.joy, C.rose, 'JOY'],
+   [-0.36, p.ene, C.teal, 'ENE'], [-0.20, p.hyg, C.blue, 'HYG']].forEach(([s, v, col, lbl]) => {
+    const a0 = s * Math.PI;
+    ring(216, a0, a0 + seg, 9, '#1a2029', 'round');
+    ring(216, a0, a0 + seg * v, 9, col, 'round');
+    const am = a0 + seg / 2;
+    T(lbl, CX + Math.cos(am) * 188, CY + Math.sin(am) * 188, 10, col);
+  });
+  T(p.name, CX, 118, 24, C.ink);
+  T('LV.' + p.lvl + '  ' + p.species, CX, 142, 12, C.dim);
+  mon(CX, 252, 0.88);
+  // home row at y~352: four 94 px targets need 392 px of chord, and only 361 exists at y=406
+  ['food', 'light', 'bath', 'train'].forEach((n, i) => {
+    const dx = (i - 1.5) * 98, x = CX + dx, y = 352 - dx * dx / 900;
+    disc(x, y, 47, '#111823', C.line, 2);
+    icon(n, x, y, 34, i === 2 ? '#39414f' : C.cream);
+    hitC(x, y, 47, n.toUpperCase());
+  });
+}
+
+function tileGym() {
+  T('KANTO', CX, 74, 22, C.ink); T('3 / 8 BADGES', CX, 100, 12, C.dim);
+  for (let i = 0; i < 8; i++) {
+    const x = CX + ((i % 4) - 1.5) * 78, y = 152 + ((i / 4) | 0) * 84;
+    const won = DATA.gyms[i].w;
+    disc(x, y, 33, won ? '#2a2410' : '#111823', won ? C.gold : C.line, 2);
+    if (won) { disc(x, y, 20, C.gold); T('*', x, y + 1, 18, '#5c4406'); }
+    else T('?', x, y, 18, '#39414f');
+    hitC(x, y, 33, 'BADGE ' + (i + 1));
+  }
+  rrect(CX - 150, 336, 300, 62, 14, '#111823', C.line, 2);
+  T('NEXT: ERIKA', CX, 356, 15, C.teal);
+  T('GRASS  -  LV.29  -  3 MONS', CX, 378, 11, C.dim);
+  hitR(CX - 150, 336, 300, 62, 'NEXT LEADER');
+}
+
+function tileParty() {
+  // six slots on a ring, rotated so nothing sits under the title pill
+  DATA.party.forEach((m, i) => {
+    const a = -Math.PI / 3 + i * Math.PI / 3;
+    const x = CX + Math.cos(a) * 126, y = CY + Math.sin(a) * 126;
+    disc(x, y, 52, m.n ? '#111823' : '#0d1219', m.n ? C.line : '#1a2029', 2);
+    if (m.n) {
+      disc(x, y - 12, 22, m.c);
+      T(m.n.slice(0, 7), x, y + 18, 11, C.ink);
+      T('L' + m.l, x, y + 34, 10, C.dim);
+    } else T('+', x, y, 26, '#2c3542');
+    hitC(x, y, 52, m.n || 'EMPTY');
+  });
+  disc(CX, CY, 46, '#0d1219', C.teal, 2);
+  T('5/6', CX, CY - 8, 19, C.teal); T('BOX', CX, CY + 14, 11, C.dim);
+  hitC(CX, CY, 46, 'BOX');
+}
+
+function tileDex() {
+  T('POKEDEX', CX, 74, 20, C.ink);
+  ring(150, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * 0.42, 18, C.teal, 'round');
+  ring(150, -Math.PI / 2 + Math.PI * 2 * 0.42, Math.PI * 1.5, 18, '#1a2029');
+  T('162', CX, CY - 8, 46, C.ink); T('OF 386', CX, CY + 28, 13, C.dim);
+  T('KANTO 151  JOHTO 11', CX, 388, 12, C.dim);
+}
+
+function tilePlayer() {
+  T('NATHAN', CX, 74, 22, C.ink);
+  disc(CX, 176, 56, '#111823', C.line, 2); T('@', CX, 176, 40, C.teal);
+  [['BADGES', '3'], ['MEDALS', '7'], ['STREAK', '12d']].forEach(([k, v], i) => {
+    const y = 268 + i * 50;
+    T(k, 128, y, 12, C.dim, 'left'); T(v, 338, y, 16, C.ink, 'right');
+  });
+}
+
+function drawADetail() {
+  const t = S.detail, y0 = 466 - 466 * t;
+  ctx.save(); clipCircle();
+  ctx.globalAlpha = t;
+  ctx.fillStyle = '#0c1119'; ctx.fillRect(0, y0, 466, 466);
+  ctx.strokeStyle = C.teal; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(120, y0 + 1); ctx.lineTo(346, y0 + 1); ctx.stroke();
+  ctx.translate(0, y0);
+  T('MOVES', CX, 56, 18, C.teal);
+  [['FLAMETHROWER', 'FIRE', 95], ['SLASH', 'NORMAL', 70], ['DRAGON RAGE', 'DRAGON', 40], ['SMOKESCREEN', 'NORMAL', 0]]
+    .forEach(([n, ty, pw], i) => {
+      const yy = 104 + i * 62, w = 2 * hc(yy + 24) - 34;
+      rrect(CX - w / 2, yy, w, 50, 10, '#131b26', C.line, 2);
+      T(n, CX - w / 2 + 16, yy + 20, 14, C.ink, 'left');
+      T(ty + (pw ? '  PWR ' + pw : '  STATUS'), CX - w / 2 + 16, yy + 38, 11, C.dim, 'left');
+    });
+  T('v  BACK', CX, 404, 12, C.dim);
+  ctx.restore();
+}
+
+// ================================================================ B - HUB
+const HUB = [['food', 'FEED'], ['light', 'LIGHT'], ['bath', 'BATH'], ['train', 'TRAIN'],
+             ['party', 'PARTY'], ['dex', 'DEX'], ['gym', 'GYM'], ['gear', 'SETUP']];
+
+function drawB() {
+  ctx.fillStyle = C.bg; ctx.fillRect(0, 0, 466, 466);
+  const b = S.bloom, p = DATA.pet;
+  ctx.globalAlpha = Math.max(0, 1 - b * 1.4);
+  T(p.name + '  LV.' + p.lvl, CX, 46, 20, C.ink);
+  const segs = [[-Math.PI * .92, -Math.PI * .58, p.food, C.amber],
+                [-Math.PI * .42, -Math.PI * .08, p.joy, C.rose],
+                [Math.PI * .08, Math.PI * .42, p.ene, C.teal],
+                [Math.PI * .58, Math.PI * .92, p.hyg, C.blue]];
+  segs.forEach(([a0, a1, v, col]) => {
+    ring(220, a0, a1, 8, '#1a2029', 'round'); ring(220, a0, a0 + (a1 - a0) * v, 8, col, 'round');
+  });
+  ctx.globalAlpha = 1;
+  mon(CX, CY + 30 - b * 26, 1.02 - b * .34);
+
+  if (b > .01) {
+    ctx.fillStyle = `rgba(5,7,10,${.74 * b})`;
+    ctx.beginPath(); ctx.arc(CX, CY, R, 0, 7); ctx.fill();
+    HUB.forEach(([ic, lbl], i) => {
+      const a = -Math.PI / 2 + i * Math.PI / 4;
+      const rr = 165 * b, x = CX + Math.cos(a) * rr, y = CY + Math.sin(a) * rr;
+      const on = S.hubSel === i;
+      ctx.globalAlpha = b;
+      disc(x, y, 48, on ? '#0d2b26' : '#121a25', on ? C.teal : C.line, on ? 3 : 2);
+      icon(ic, x, y - 8, 32, on ? C.teal : C.cream);
+      T(lbl, x, y + 24, 10, on ? C.teal : C.dim);
+      ctx.globalAlpha = 1;
+      if (b > .9) hitC(x, y, 48, lbl);
+    });
+    ctx.globalAlpha = b;
+    disc(CX, CY, 40, 'rgba(10,14,20,.9)', C.line, 2);
+    icon('back', CX, CY, 30, C.dim);
+    ctx.globalAlpha = 1;
+    if (b > .9) hitC(CX, CY, 40, 'CLOSE');
+  } else {
+    T('TAP THE PET', CX, 404, 13, C.dim);
+    T('* HOLD FOR ACTIONS *', CX, 430, 11, '#3a4250');
+    hitC(CX, CY + 30, 84, 'PET / OPEN HUB');
+  }
+}
+
+// ================================================================ C - ARCS
+function drawC() {
+  ctx.fillStyle = C.bg; ctx.fillRect(0, 0, 466, 466);
+  if (S.view === 0) arcList(); else honeycomb();
+}
+
+function arcList() {
+  clipCircle();
+  const list = DATA.gyms, rowH = 78;
+  for (let i = 0; i < list.length; i++) {
+    const y = 112 + (i - S.scrollPos) * rowH;
+    if (y < -60 || y > 526) continue;
+    const d = Math.min(1, Math.abs(y - CY) / 236);
+    const sc = 1 - .2 * d, al = 1 - .62 * d * d;
+    const g = list[i], h = 62 * sc;
+    // width comes from the NARROWER of the two corners, so no corner leaves the circle
+    const w = Math.max(140, 2 * Math.min(hc(y - h / 2), hc(y + h / 2)) - 18);
+    ctx.globalAlpha = al;
+    rrect(CX - w / 2, y - h / 2, w, h, h / 2, g.w ? '#14201d' : '#111823', g.w ? '#27473f' : C.line, 2);
+    disc(CX - w / 2 + h / 2, y, h / 2 - 7, g.w ? C.gold : '#1b2531', g.w ? '#a8862a' : '#252f3c', 2);
+    if (g.w) T('*', CX - w / 2 + h / 2, y + 1, 16 * sc, '#5c4406');
+    T(g.n, CX - w / 2 + h + 6, y - 8 * sc, 16 * sc, g.w ? C.teal : C.ink, 'left');
+    T(g.t + '  LV.' + g.l, CX - w / 2 + h + 6, y + 11 * sc, 11 * sc, C.dim, 'left');
+    T((w | 0) + 'px', CX + w / 2 - 12, y, 9 * sc, 'rgba(63,208,182,.45)', 'right');
+    ctx.globalAlpha = 1;
+    if (d < .85) hitR(CX - w / 2, y - h / 2, w, h, g.n);
+  }
+  ctx.restore();
+
+  rrect(CX - 78, 5, 156, 27, 13, 'rgba(7,9,12,.92)');
+  T('KANTO LADDER', CX, 19, 12, C.teal);
+  // the rim doubles as scrollbar and scroll surface: an arc, because a straight
+  // bar is thinnest exactly where the list is longest
+  const a0 = -Math.PI * .30, a1 = Math.PI * .30;
+  ring(210, a0, a1, 42, 'rgba(63,208,182,.05)');
+  const maxS = Math.max(1, list.length - 5), frac = S.scrollPos / maxS;
+  const span = (a1 - a0) * (5 / list.length);
+  ring(222, a0, a1, 6, '#1b2530', 'round');
+  ring(222, a0 + (a1 - a0 - span) * frac, a0 + (a1 - a0 - span) * frac + span, 6, C.teal, 'round');
+  [[a0, -1], [a1, 1]].forEach(([a, d]) => {
+    const x = CX + Math.cos(a) * 198, y = CY + Math.sin(a) * 198;
+    ctx.strokeStyle = '#39414f'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(x - 6, y + 4 * d); ctx.lineTo(x, y - 3 * d); ctx.lineTo(x + 6, y + 4 * d); ctx.stroke();
+  });
+}
+
+function honeycomb() {
+  rrect(CX - 44, 5, 88, 27, 13, 'rgba(7,9,12,.92)');
+  T('BOX', CX, 19, 13, C.teal);
+  DATA.box.forEach((b, i) => {
+    const a = -Math.PI / 3 + i * Math.PI / 3;
+    const x = CX + Math.cos(a) * 126, y = CY + Math.sin(a) * 126;
+    disc(x, y, 56, b.n ? '#111823' : '#0c1118', b.n ? C.line : '#182029', 2);
+    if (b.n) {
+      disc(x, y - 14, 24, b.c); T(b.n.slice(0, 8), x, y + 20, 11, C.ink); T('LV.' + b.l, x, y + 37, 10, C.dim);
+    } else T('+', x, y, 28, '#2c3542');
+    hitC(x, y, 56, b.n || 'EMPTY');
+  });
+  disc(CX, CY, 44, '#0c1118', C.teal, 2);
+  T('1/3', CX, CY - 7, 19, C.teal); T('PAGE', CX, CY + 14, 10, C.dim);
+  hitC(CX, CY, 44, 'PAGE');
+  T('v  BACK', CX, 446, 11, '#39414f');
+}
+
+// ================================================================ overlays
+function drawOverlays() {
+  const o = S.overlays;
+  if (o.safe) {
+    ctx.setLineDash([6, 6]);
+    ctx.strokeStyle = 'rgba(90,169,240,.55)'; ctx.lineWidth = 1.5;
+    ctx.strokeRect(68, 68, 330, 330);                       // inscribed square
+    ctx.strokeStyle = 'rgba(245,185,60,.5)';
+    ctx.beginPath(); ctx.arc(CX, CY, R * .9, 0, 7); ctx.stroke();   // text ring
+    ctx.strokeStyle = 'rgba(239,106,106,.5)';
+    ctx.beginPath(); ctx.arc(CX, CY, R * .85, 0, 7); ctx.stroke();  // interactive ring
+    ctx.setLineDash([]);
+    T('INSCRIBED SQUARE 330', CX, 60, 9, 'rgba(90,169,240,.9)');
+  }
+  if (o.chord) {
+    ctx.strokeStyle = 'rgba(63,208,182,.28)'; ctx.lineWidth = 1;
+    for (let y = 40; y <= 426; y += 44) {
+      const w = hc(y);
+      ctx.beginPath(); ctx.moveTo(CX - w, y); ctx.lineTo(CX + w, y); ctx.stroke();
+      T((w * 2) | 0, CX + w - 20, y - 9, 9, 'rgba(63,208,182,.75)', 'right');
+    }
+  }
+  if (o.targets) {
+    HITS.forEach(h => {
+      const m = Math.min(h.w, h.h);
+      const col = m >= TAP_MIN ? 'rgba(109,211,109,.95)' : m >= 78 ? 'rgba(245,185,60,.95)' : 'rgba(239,106,106,.95)';
+      ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.setLineDash([4, 4]);
+      if (h.round) { ctx.beginPath(); ctx.arc(h.x + h.w / 2, h.y + h.h / 2, h.w / 2, 0, 7); ctx.stroke(); }
+      else ctx.strokeRect(h.x, h.y, h.w, h.h);
+      ctx.setLineDash([]);
+      T((m / PPMM).toFixed(1) + 'mm', h.x + h.w / 2, h.y + h.h / 2, 10, col);
+    });
+  }
+}
+
+// ================================================================ frame
+function frame() {
+  const now = performance.now();
+  S.tilePos += (S.tile - S.tilePos) * .22;
+  S.detail += (S.detailTarget - S.detail) * .22;
+  S.bloom += (S.bloomTarget - S.bloom) * .24;
+  S.scrollPos += (S.scroll - S.scrollPos) * .2;
+  HITS = [];
+  ctx.save(); ctx.beginPath(); ctx.arc(CX, CY, R, 0, 7); ctx.clip();
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 466, 466);
+  if (S.proto === 'now') drawNow(); else if (S.proto === 'a') drawA();
+  else if (S.proto === 'b') drawB(); else drawC();
+  drawOverlays();
+  if (S.flash > 0) {
+    ctx.fillStyle = `rgba(63,208,182,${S.flash * .1})`; ctx.fillRect(0, 0, 466, 466); S.flash -= .05;
+  }
+  if (now < S.toastUntil) {
+    const a = Math.min(1, (S.toastUntil - now) / 300);
+    ctx.globalAlpha = a;
+    rrect(CX - 118, 392, 236, 34, 17, 'rgba(10,14,20,.94)', C.teal, 2);
+    T(S.toast, CX, 409, 12, C.teal);
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+  requestAnimationFrame(frame);
+}
+
+// ================================================================ input
+let ptr = null;
+cv.addEventListener('pointerdown', e => {
+  const r = cv.getBoundingClientRect();
+  const x = (e.clientX - r.left) * 466 / r.width, y = (e.clientY - r.top) * 466 / r.height;
+  const rad = Math.hypot(x - CX, y - CY);
+  ptr = { x, y, x0: x, y0: y, t: performance.now(), rim: rad > 188, a0: Math.atan2(y - CY, x - CX), s0: S.scroll };
+  cv.setPointerCapture(e.pointerId);
+});
+cv.addEventListener('pointermove', e => {
+  if (!ptr) return;
+  const r = cv.getBoundingClientRect();
+  ptr.x = (e.clientX - r.left) * 466 / r.width; ptr.y = (e.clientY - r.top) * 466 / r.height;
+  if (ptr.rim && S.proto === 'c' && S.view === 0) {
+    let da = Math.atan2(ptr.y - CY, ptr.x - CX) - ptr.a0;
+    while (da > Math.PI) da -= 2 * Math.PI; while (da < -Math.PI) da += 2 * Math.PI;
+    S.scroll = clamp(ptr.s0 + da * 3.2, 0, Math.max(1, DATA.gyms.length - 5));
+  }
+});
+cv.addEventListener('pointerup', () => {
+  if (!ptr) return;
+  const dx = ptr.x - ptr.x0, dy = ptr.y - ptr.y0, dt = performance.now() - ptr.t;
+  const rim = ptr.rim, p = ptr; ptr = null;
+  if (rim && S.proto === 'c' && S.view === 0) return;
+  if (Math.abs(dx) > 40 && Math.abs(dy) < 40 && dt < 900) return onSwipe(dx > 0 ? 1 : -1);
+  if (Math.abs(dy) > 40 && Math.abs(dx) < 40 && dt < 900) return onSwipeV(dy > 0 ? 1 : -1);
+  if (Math.abs(dx) < 22 && Math.abs(dy) < 22) onTap(p.x, p.y);
+});
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+
+function onTap(x, y) {
+  S.flash = 1;
+  if (S.proto === 'b') {
+    if (S.bloomTarget < .5) { S.bloomTarget = 1; S.hubSel = -1; return; }
+    const rad = Math.hypot(x - CX, y - CY);
+    if (rad < 60) { S.bloomTarget = 0; return; }
+    let best = -1, bd = 1e9;
+    HUB.forEach((h, i) => {
+      const a = -Math.PI / 2 + i * Math.PI / 4;
+      const d = Math.hypot(x - (CX + Math.cos(a) * 165), y - (CY + Math.sin(a) * 165));
+      if (d < 48 && d < bd) { bd = d; best = i; }
+    });
+    if (best >= 0) { S.hubSel = best; say(HUB[best][1]); }
+    return;
+  }
+  const h = HITS.find(t => t.round
+    ? Math.hypot(x - (t.x + t.w / 2), y - (t.y + t.h / 2)) <= t.w / 2
+    : x >= t.x && x <= t.x + t.w && y >= t.y && y <= t.y + t.h);
+  if (h) say(h.label);
+  else if (S.proto === 'now' && S.view === 2) say('BACK (tap anywhere)');
+}
+
+function onSwipe(dir) {
+  if (S.proto === 'a') {
+    if (S.detailTarget) return say('DETAIL: no horizontal');
+    const n = clamp(S.tile - dir, 0, TILES.length - 1);
+    if (n === S.tile) { say('END OF ROW - bumps, never exits'); S.tilePos += dir * 12; }
+    S.tile = n; return;
+  }
+  if (S.proto === 'c') { say(S.view === 0 ? 'HORIZONTAL FREE' : 'PAGE'); return; }
+  if (S.proto === 'now') say(dir > 0 ? 'SWIPE R = exit / party' : 'SWIPE L = page or exit');
+}
+function onSwipeV(dir) {
+  if (S.proto === 'a') { S.detailTarget = dir > 0 ? 0 : 1; say(dir > 0 ? 'BACK' : 'DETAIL'); return; }
+  if (S.proto === 'b') { S.bloomTarget = dir > 0 ? 0 : 1; return; }
+  if (S.proto === 'c') { if (dir > 0) say('BACK'); else say('DETAIL'); return; }
+  say('SWIPE V = card / player');
+}
+addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight') onSwipe(-1); else if (e.key === 'ArrowLeft') onSwipe(1);
+  else if (e.key === 'ArrowUp') onSwipeV(-1); else if (e.key === 'ArrowDown') onSwipeV(1);
+});
+
+// ================================================================ shell
+const PROTOS = {
+  now: {
+    label: 'CURRENT', views: ['MAIN', 'GYM LIST', 'BOX'],
+    legend: 'Four different back gestures. Nothing on screen names any of them.',
+    notes: `<h2>Current UI - the baseline</h2>
+    <p>Redrawn from <code>TamaPoke.ino</code> and the shipped screenshots, at true panel geometry.
+    Turn on <b>TOUCH TARGETS</b> and <b>SAFE AREA</b> to see the two structural problems at once.</p>
+    <table><tr><th>Finding</th><th>Measured</th></tr>
+    <tr><td>Home row icon</td><td>60 px = <b>5.7 mm</b> (floor is 9 mm)</td></tr>
+    <tr><td>Gap between icons</td><td>6 px = <b>0.6 mm</b></td></tr>
+    <tr><td>Gym row width</td><td>fixed 338 px; chord at the top row is 404, at the bottom 372</td></tr>
+    <tr><td>Box grid corners</td><td>outside the 0.85R interactive ring</td></tr>
+    <tr><td>Screens</td><td>23, resolved by a 15-boolean cascade</td></tr></table>
+    <p>The BOND label at x=70 and its bar at x=112 leave three characters of room for a
+    four-character word - the collision already recorded in CLAUDE.md, drawn here to scale.</p>`
+  },
+  a: {
+    label: 'A - TILES', views: [],
+    legend: 'Drag / arrows. Horizontal = siblings (bumps at the ends). Up = detail, down = back.',
+    notes: `<h2>A - Watch face + tiles</h2>
+    <p>Five peer tiles on one horizontal axis, the pet in the middle. The axis is <b>always drawn</b>
+    as the dot row at 6 o'clock, so the navigation documents itself - the thing today's four hidden
+    swipes cannot do.</p>
+    <ul>
+      <li><b>Horizontal bumps, never exits.</b> Try swiping past GYM or PLAYER. This removes
+      "page off the end to close", which is the same gesture meaning two things today.</li>
+      <li><b>Vertical is depth, and only depth.</b> Up opens detail on whatever tile is in front of
+      you, down closes it. One gesture, one meaning, every screen.</li>
+      <li><b>Care stats become rim arcs.</b> Four bars stacked in the middle waste the widest part of
+      the circle; arcs live in the part no rectangular layout can use, and read at a glance.</li>
+      <li><b>The home row moved up to y=352.</b> Four 94 px targets need 392 px of chord; at the
+      current y=406 only 361 px exists. This is why the icons are 60 px today - the old position
+      could not fit finger-sized ones.</li>
+      <li><b>Party is a ring of six</b> around a BOX hub: 112 px targets, no wasted corners.</li>
+    </ul>
+    <p>Depth never exceeds 2, because tiles are peers rather than a hierarchy.</p>
+    <p><b>One honest finding this mock produced:</b> four 94 px targets in one row reach radius 222,
+    outside the 0.85R (198 px) interactive ring. Three would fit comfortably. So a finger-safe home
+    row on this panel is <i>three</i> actions, not four - which is the strongest argument for B,
+    where a ring of eight is all inside 213.</p>`
+  },
+  b: {
+    label: 'B - RADIAL HUB', views: [],
+    legend: 'Tap the pet to bloom. Tap an icon to select, centre to close. Down also closes.',
+    notes: `<h2>B - Radial hub</h2>
+    <p>The circle <i>is</i> the menu. Eight actions at 45 degree intervals on radius 165, each a
+    <b>96 px disc</b> - over the 9 mm floor with 30 px of clear space between neighbours, so a
+    fumble cannot land on the wrong one.</p>
+    <ul>
+      <li><b>Replaces three things at once</b>: <code>SCR_MENU</code>, the four hidden main-screen
+      swipes, and the cramped four-icon home row.</li>
+      <li><b>Radial separation beats linear.</b> A vertical list puts targets 1 px apart on one axis;
+      a ring separates them on two, which is what makes 8 items safe at this size.</li>
+      <li><b>The pet stays visible</b> in the middle and the ring dims the background, so the hub
+      reads as an overlay rather than a screen change - no orientation is lost.</li>
+      <li><b>Cost:</b> it is the one idea here that must be taught. A single bloom animation on
+      first boot, and the "* HOLD FOR ACTIONS *" hint until first use, covers it.</li>
+    </ul>
+    <p>Turn on <b>TOUCH TARGETS</b> with the hub open: all eight are green, which no arrangement of
+    eight items in a list on this panel achieves.</p>`
+  },
+  c: {
+    label: 'C - ARC LISTS', views: ['GYM LADDER', 'BOX'],
+    legend: 'Drag the outer ring to scroll (the highlighted band). Tap a row to select.',
+    notes: `<h2>C - Arc list + rim scroll</h2>
+    <p>Keeps the information architecture; changes only how lists are drawn. Applies to the gym
+    ladder, box, bag, move picker, party and dex in one change.</p>
+    <ul>
+      <li><b>Row width follows the chord</b>: <code>w(y) = 2 sqrt(233^2 - (y-233)^2) - 30</code>.
+      Compare with CURRENT / GYM LIST, where all five rows are 338 px and the middle one throws away
+      66 px of usable width.</li>
+      <li><b>Rows scale to 0.8 and fade toward the rim</b>, which reads as a physical drum and gives
+      free depth cues - the edge rows look intentional instead of accidentally short.</li>
+      <li><b>The scrollbar is an arc</b> at 2-4 o'clock. A straight bar is at its thinnest exactly
+      where the list is longest, and it shows position but not extent.</li>
+      <li><b>Rim drag scrolls</b>, content taps select. The board has no crown
+      (<code>rtcbat.h</code> exposes only <code>pwrShortPressed()</code>), so an arc drag in the
+      outer 45 px is the software substitute - spatially unambiguous, cannot collide with a tap.</li>
+      <li><b>BOX becomes a hex ring</b>: six 112 px cells around a page hub. The same 6 slots per
+      page as today, at 4.4x the target area, with the corners the round panel does not have
+      simply not used.</li>
+    </ul>`
+  }
+};
+
+const tabs = document.getElementById('tabs'), views = document.getElementById('views'),
+      toggles = document.getElementById('toggles'), notes = document.getElementById('notes'),
+      legend = document.getElementById('legend');
+
+Object.entries(PROTOS).forEach(([k, v]) => {
+  const b = document.createElement('button');
+  b.textContent = v.label; b.onclick = () => setProto(k); b.dataset.k = k;
+  tabs.appendChild(b);
+});
+[['safe', 'SAFE AREA'], ['targets', 'TOUCH TARGETS'], ['chord', 'CHORD WIDTHS']].forEach(([k, l]) => {
+  const b = document.createElement('button');
+  b.className = 'alt'; b.textContent = l;
+  b.onclick = () => { S.overlays[k] = !S.overlays[k]; b.setAttribute('aria-pressed', S.overlays[k]); };
+  b.setAttribute('aria-pressed', 'false');
+  toggles.appendChild(b);
+});
+
+function setProto(k) {
+  S.proto = k; S.view = 0; S.detailTarget = 0; S.detail = 0;
+  S.bloomTarget = 0; S.bloom = 0; S.tile = 2; S.tilePos = 2; S.scroll = 0; S.scrollPos = 0;
+  [...tabs.children].forEach(b => b.setAttribute('aria-pressed', b.dataset.k === k));
+  views.innerHTML = '';
+  PROTOS[k].views.forEach((label, i) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.onclick = () => { S.view = i; [...views.children].forEach((c, j) => c.setAttribute('aria-pressed', j === i)); };
+    b.setAttribute('aria-pressed', i === 0);
+    views.appendChild(b);
+  });
+  legend.textContent = PROTOS[k].legend;
+  notes.innerHTML = `<h1>TamaPoke round UI</h1>
+    <p class="sub">466 x 466 - 1.75 in - 266 ppi - 1 mm = 10.5 px - finger floor 94 px</p>` + PROTOS[k].notes +
+    `<h2>Shared foundation</h2>
+    <ul>
+      <li><b>A real nav stack.</b> <code>navPush()</code> / <code>navPop()</code> replacing the
+      15-boolean cascade in <code>uiCurrentScreen()</code>, so a new screen inherits back-navigation
+      instead of inventing it. Structural cure for the paging bug that shipped four times.</li>
+      <li><b>uiSafeHalfWidth(y)</b> - one function returning the chord, used by every layout.
+      Derive it, never restate it.</li>
+      <li><b>UI_TAP_MIN = 94</b>, asserted in <code>hit_test</code> against every registered target.
+      Would have caught all three by-hand touch reports before they reached a board.</li>
+    </ul>
+    <p class="sub">Keys: <kbd>&larr;</kbd><kbd>&rarr;</kbd> siblings &nbsp; <kbd>&uarr;</kbd><kbd>&darr;</kbd> depth</p>`;
+}
+setProto('now');
+frame();
+</script>
