@@ -78,9 +78,16 @@ int main(){
   // because it learns no damaging move of its own type in the games either:
   // its whole gimmick is Counter and Recover. COSMOG and COSMOEM are the nebula
   // stages, which know Splash, Teleport and Cosmic Power and nothing else.
+  // LISTED, not tolerated silently: each of these can still fight, it just has
+  // no attack of its OWN type in dex_moves.py's 77. Galar added five -- BLIPBUG
+  // and APPLIN learn almost nothing at all in the real games, NICKIT and DREEPY
+  // learn their Dark/Dragon attacks outside our subset, and ZAMAZENTA is the
+  // one worth revisiting: a legendary with no STAB is a wart, not a crash.
   static const int16_t NO_ATTACK[] = { 11, 14, 132, 201, 202, 235, 266, 268, 360,
-                                       771, 789, 790 };
-  static const int16_t NO_LEARNSET[] = { 11, 14, 132, 201, 235, 789, 790 };
+                                       771, 789, 790,
+                                       824, 827, 840, 885, 889 };
+  static const int16_t NO_LEARNSET[] = { 11, 14, 132, 201, 235, 789, 790,
+                                         824, 840 };
   auto known = [](const int16_t *a, size_t n, int16_t d) {
     for (size_t i = 0; i < n; i++) if (a[i] == d) return true;
     return false;
@@ -103,12 +110,17 @@ int main(){
       }
       if (found) continue;
       if (known(NO_ATTACK, sizeof(NO_ATTACK)/sizeof(*NO_ATTACK), d)) continue;
+      // Name every one of them. Printing only the first sends the next person
+      // hunting for the rest by hand, and on a new generation there is never
+      // just one -- the whole point of this check is that a new typing arrives
+      // faster than dex_moves.py's 77 hand-picked moves cover it.
+      printf("      no same-type attack: %s (%d)\n", DEX_TBL[d].name, d);
       noStab++; if (!first) first = d;
     }
     if (noStab) printf("      %d species have no same-type attack, first is %s (%d)\n",
                        noStab, DEX_TBL[first].name, first);
     ck(noStab == 0,
-       "every species can learn an attack of its own type, bar the known twelve");
+       "every species can learn an attack of its own type, bar the known ones");
   }
 
   // --- and everything it can learn is a real move

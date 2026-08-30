@@ -3,7 +3,7 @@
 [![Flash in browser](https://img.shields.io/badge/flash-in%20browser-FF6B00?logo=googlechrome&logoColor=white)](https://dylanpdao.github.io/TamaPoke/web/)
 [![MakerWorld](https://img.shields.io/badge/MakerWorld-3D%20case-00AE42?logo=bambulab&logoColor=white)](https://makerworld.com/es/models/2937822-tamapoke-a-pokemon-pokeball-tamagotchi)
 ![Board](https://img.shields.io/badge/board-ESP32--S3%20round%20AMOLED-E7352C?logo=espressif&logoColor=white)
-![Firmware](https://img.shields.io/badge/firmware-v3.11-8A2BE2)
+![Firmware](https://img.shields.io/badge/firmware-v3.12-8A2BE2)
 ![Code](https://img.shields.io/badge/code-MIT-blue)
 ![Languages](https://img.shields.io/badge/languages-6-FFCB05)
 [![Stars](https://img.shields.io/github/stars/DylanPDao/TamaPoke?style=flat&logo=github&color=yellow)](https://github.com/DylanPDao/TamaPoke/stargazers)
@@ -100,7 +100,7 @@ way. Same reasoning that makes Hoenn Emerald throughout.
 
 ## Status
 
-Running on hardware. Implemented: 809 species + shinies animated from microSD, full
+Running on hardware. Implemented: 1025 species + shinies animated from microSD, full
 life cycle (egg by rarity → evolution → farewell/release/runaway, each gated
 behind a decision dialog), bred-Pokédex with gallery, turn-based trainer, wild
 and LAN battles, **wild capture and a shared bag**, battle stats (IVs +
@@ -109,6 +109,10 @@ backgrounds, ball minigame, training bag, animated bath, RTC with offline
 progression, battery (AXP2101) and PWR button, anti-burn-in dimming,
 **sound (ES8311)**, **6 UI languages (English default)**, **starter choice on
 first run**, and a one-click **web installer**.
+
+All nine regions are in the dex. **Galar and Paldea have no sprite pack yet**, so
+they show as NEEDS PACK and stay out of the egg pool until one is built — the
+same gating every region has always used.
 
 Pending: 3D case, soak test. See **Roadmap**.
 
@@ -765,8 +769,12 @@ To test fast: lower `PET_TICK_MS`, `MINUTES_PER_LEVEL` and `FAREWELL_AGE_MIN` in
 ## Roadmap
 
 - **Soak test** 24–48 h (instrumentation ready: `HEALTH` command/heartbeat).
-- **Galar / Paldea** — the pipeline already handles them; needs a
-  `gen_dex_data.py` run and a fresh `check_sprites.py --emit`.
+- **Galar and Paldea sprite packs** — the data is in; the art needs a
+  `pack_pmd.py` run. Until then both regions read NEEDS PACK.
+- **Galar and Paldea gym ladders** — `trainers.h` stops at seven regions. There
+  is no pret disassembly for either, so they cannot be verified the way
+  `verify_rosters.py` checks the others; writing them from memory is how the
+  first Johto and Hoenn ladders ended up with ten errors.
 
 *(Done: wild encounters, catching and the bag; 3D-printed case [published on MakerWorld](https://makerworld.com/es/models/2937822-tamapoke-a-pokemon-pokeball-tamagotchi); repo public with the browser installer + one-click sprite bundle.)*
 
