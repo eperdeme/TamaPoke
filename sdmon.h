@@ -63,7 +63,7 @@ bool sdBegin();                 // monta la SD (SDMMC 1-bit), true si hay tarjet
 // region, which is what the boot report wants; the runtime rescan passes false so
 // its output cannot interleave with the PUT transfer protocol the host is parsing.
 void sdScanRegionArt(bool verbose = true);
-bool sdSerialCommand(const String &line);  // PUT/LS por USB; true si la maneja
+bool sdSerialCommand(const String &line);  // Handles USB PUT/LS/PACK commands.
 extern bool sdReady;
 extern bool sdDirty;  // true tras recibir archivos: recargar sprite
 // A region's pack can arrive AFTER the card was mounted -- the web installer

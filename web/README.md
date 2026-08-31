@@ -8,8 +8,15 @@ same one as `tools/send_sd.py`).
 
 ## Contents
 
-- `index.html` — the page (flashing + sprite loader).
-- `manifest.json` — ESP Web Tools config (points at the firmware).
+- `index.html` — the installer and board-manager shell.
+- `style.css` / `installer.js` — responsive UI, Web Serial transport, pack
+   reconciliation, and save backup/restore.
+- `editions.json` — firmware choices shown by the page. Each entry points to an
+   ESP Web Tools manifest, so another edition does not require changing HTML or
+   JavaScript.
+- `manifest.json` — the Standard edition's ESP Web Tools config.
+- `paks.json` — generated region sizes, CRC32s, file counts, and firmware region
+   indices.
 - `firmware/bootloader.bin` `partitions.bin` `boot_app0.bin` `app.bin` — what the
   installer actually writes, each at its own offset. **This is deliberate**: a
   single image at `0x0` pads the gaps with `0xFF` and so blanks the NVS
@@ -18,9 +25,8 @@ same one as `tools/send_sd.py`).
 - `firmware/tamapoke.bin` — the same four merged into one image for flashing a
   **blank** board from the command line. Not in the manifest, because installing
   it over an existing game erases the pet.
-- `sprites-kanto.pak`, `sprites-johto.pak`, `sprites-hoenn.pak`,
-  `sprites-sinnoh.pak` — the sprites bundled (TPAK) **one file per region**, so
-  the page sends a region in one click. **Generated** by
+- `sprites-<region>.pak` — the sprites bundled (TPAK) **one file per region**, so
+   the page sends a region in one click. They are **generated** by
   `tools/pack_bundle.py`, which derives the region list from `dex_data.py`, and
   **committed** — see *Hosting the sprites* below for why they have to be.
 
@@ -38,20 +44,62 @@ Web Serial and ESP Web Tools need a **secure context**: `https://` or
 `http://localhost`. To test:
 
 ```bash
-cd web && python3 -m http.server 8000
-# open http://localhost:8000 in Chrome/Edge
+python3 -m http.server 8000
+# open http://localhost:8000/web/ in Chrome/Edge
 ```
 
 ## End-user flow
 
-1. **Install TamaPoke** → flashes the firmware (pick the USB port; tick "Erase
-   device" for a fresh board).
-2. **Connect board** + a region button → downloads that region's `.pak` and copies it to
-   the microSD over USB (progress bar, ~8–10 min). Close the step-1 install tab
+1. Pick a firmware edition and **Install firmware**. Pick the USB port; only
+   tick "Erase device" for a fresh board.
+2. **Connect board**. The page compares the installed SD marker for every region
+   against the CRC in `paks.json` and labels it Current, Update available,
+   Installed / unversioned, or Not installed.
+3. **Select needed** excludes current packs. Install the remaining choices over
+   USB (progress bar, ~8–10 min per 40 MB). Close the step-1 install dialog
    first: only one program can use the port at a time.
-3. Restart (PWR button) → choose your starter and play.
+4. Use **Download save** before an upgrade. **Restore save** accepts that same
+   `.tpsave`, streams its `IMPORT` commands with flow control, and lets the
+   firmware validate the whole checksum before NVS is changed.
+5. Restart (PWR button) after changing packs so thumbnails are reloaded.
 
-A hidden "pick them manually" option lets advanced users send their own `.bin`.
+The custom-file option lets advanced users send their own `.bin`. Because those
+files did not come from a known bundle, firmware invalidates the affected pack
+marker and the page reports it as unversioned on the next refresh.
+
+## Firmware editions
+
+The page does not hard-code a single install button. It builds the edition
+selector from `editions.json`; the repository currently publishes one real
+edition, Standard. To publish another:
+
+1. Put that edition's four firmware parts under its own directory and create an
+   ESP Web Tools manifest that points to them at `0x0`, `0x8000`, `0xe000`, and
+   `0x10000`. Never span the NVS partition at `0x9000`.
+2. Add an entry with a unique `id`, display `name`, `channel`, `manifest`, and
+   `description` to `editions.json`.
+3. Run `python3 tools/check_installer.py path/to/manifest.json` before publishing.
+
+Do not list an edition until its actual binaries and manifest exist. The
+selector intentionally shows only installable builds.
+
+## Installed pack identity
+
+`paks.json` carries the CRC32 of each complete TPAK. The browser verifies that
+download before sending any file, then uses three firmware commands:
+
+```text
+PACKS                         # PACK <region-index> <crc|legacy|missing>
+PACK BEGIN <region-index>     # remove the old marker before changing files
+PACK COMMIT <index> <crc32>   # write it only after all PUTs and probes pass
+```
+
+An interrupted upload therefore cannot continue to claim that the old version
+is current. `PUT` also checks the SD write length and invalidates the relevant
+marker itself, so `tools/send_sd.py` and manual uploads cannot leave a false
+Current status behind. Cards populated before this protocol are detected by the
+existing start/middle/end probes and shown as Installed / unversioned once;
+reinstalling writes the exact version marker.
 
 ## Hosting the sprites
 
@@ -73,13 +121,9 @@ bash tools/build_web.sh   # rebuilds the firmware, the manifest and every .pak
 git add web/sprites-*.pak # yes, really
 ```
 
-The page tries **same-origin first**, then `PAK_RELEASE`. Same-origin is the
-path that actually works in a browser; the release fallback is a convenience for
-people downloading a bundle by hand, and for local testing you can leave the
-`.pak` files in `web/` and run `python3 -m http.server`.
-
-`PAK_RELEASE` at the top of the script block in `index.html` points at the repo;
-change it if you fork.
+The page fetches the packs from the same directory as `index.html`. Same-origin
+is the path that works in a browser and keeps CRC metadata beside the exact
+bytes it describes.
 
 **Why one file per region and not one big one:** all four together come to about
 140 MB, and GitHub's hard per-file limit is 100 MB — a single bundle would be
@@ -105,3 +149,6 @@ attribution is allowed); see [`../CREDITS.md`](../CREDITS.md).
 ## Limitations
 
 - Desktop **Chrome/Edge** only (Web Serial isn't in Firefox/Safari).
+- Firmware from before the `PACKS` protocol can still receive packs and use save
+   backup/restore, but the page cannot identify exact installed pack versions.
+   Flash the current Standard edition once to enable comparison.

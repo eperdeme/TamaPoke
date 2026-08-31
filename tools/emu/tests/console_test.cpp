@@ -95,6 +95,8 @@ int main(){
 
   gRestarted = false;
   std::string res = runConsole(back);
+    ck(res.find("IMPORT MORE") != std::string::npos,
+      "each import chunk acknowledges browser flow control");
   ck(res.find("IMPORT OK") != std::string::npos, "pasting the block back is accepted");
   ck(gRestarted, "and it reboots, as a restore has to");
 

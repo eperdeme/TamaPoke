@@ -54,13 +54,14 @@ def write_index():
     27.5 MB pack. Derive it; never restate it.
     """
     regions = {}
-    for name, _lo, _hi in REGIONS:
+    for index, (name, _lo, _hi) in enumerate(REGIONS):
         path = os.path.join(WEB, f'sprites-{name}.pak')
         if not os.path.exists(path):
             continue
         blob = open(path, 'rb').read()
         count = struct.unpack('<H', blob[4:6])[0] if blob[:4] == b'TPAK' else 0
         regions[name] = {
+            'index': index,
             'bytes': len(blob),
             'crc32': format(zlib.crc32(blob) & 0xFFFFFFFF, '08x'),
             'sprites': count,

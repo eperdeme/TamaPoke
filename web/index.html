@@ -1,429 +1,194 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TamaPoke · Installer</title>
-<style>
-  :root { --bg:#f2efe1; --ink:#2a2a36; --accent:#4f93c4; --ok:#58b868; --bad:#e8503a; --track:#d8d2bd; }
-  * { box-sizing: border-box; }
-  body { margin:0; font-family: system-ui, -apple-system, sans-serif; background:var(--bg);
-         color:var(--ink); line-height:1.6; }
-  .wrap { max-width: 680px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
-  h1 { font-size: 2rem; margin: 0 0 .25rem; }
-  h2 { font-size: 1.25rem; margin: 2.5rem 0 .5rem; }
-  .sub { color:#6b6b76; margin: 0 0 1.5rem; }
-  .step { background:#fff; border:1px solid var(--track); border-radius:14px; padding:1.25rem 1.5rem; margin: 1rem 0; }
-  .num { display:inline-flex; width:26px; height:26px; border-radius:50%; background:var(--accent); color:#fff;
-         align-items:center; justify-content:center; font-weight:600; margin-right:.5rem; font-size:.9rem; }
-  button { font: inherit; font-weight:500; padding:.6rem 1.2rem; border-radius:10px; border:1px solid var(--ink);
-           background:#fff; cursor:pointer; }
-  button:hover { background:var(--bg); }
-  button:disabled { opacity:.5; cursor:default; }
-  esp-web-install-button { display:inline-block; }
-  esp-web-install-button[install-unsupported] { display:none; }
-  .unsupported { display:none; color:var(--bad); font-weight:500; }
-  .row { display:flex; gap:.75rem; align-items:center; flex-wrap:wrap; }
-  .pick { display:inline-flex; align-items:center; gap:.4rem; cursor:pointer;
-          border:1px solid #ccc; border-radius:8px; padding:.4rem .7rem; user-select:none; }
-  .pick:has(input:checked) { border-color:#e8503a; background:#fff1ee; }
-  .pick input { cursor:pointer; }
-  #log { font-family: ui-monospace, monospace; font-size:.85rem; background:#1b1b25; color:#d8dcf0;
-         border-radius:10px; padding:.75rem 1rem; margin-top:1rem; max-height:220px; overflow:auto; white-space:pre-wrap; display:none; }
-  .bar { height:10px; background:var(--track); border-radius:5px; overflow:hidden; margin-top:.75rem; display:none; }
-  .bar > div { height:100%; width:0; background:var(--ok); transition: width .15s; }
-  code { background:#0001; padding:.1em .4em; border-radius:5px; }
-  a { color:var(--accent); }
-  .note { font-size:.9rem; color:#6b6b76; }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f1e8">
+  <title>TamaPoke - Installer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@500;600&amp;family=DM+Sans:opsz,wght@9..40,400;9..40,600;9..40,700&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="wrap">
-  <h1>🐢 TamaPoke</h1>
-  <p class="sub">A 1025-Pokémon tamagotchi for the Waveshare ESP32-S3-Touch-AMOLED-1.75.
-     Install it from your browser — no Arduino, no drivers.</p>
+  <header class="topbar">
+    <a class="brand" href="https://github.com/DylanPDao/TamaPoke" target="_blank" rel="noreferrer">
+      <span class="brand-mark" aria-hidden="true"><span></span></span>
+      <span>TamaPoke</span>
+    </a>
+    <span class="device-label">ESP32-S3 / 466 AMOLED</span>
+  </header>
 
-  <p class="unsupported" id="unsupported">
-    ⚠️ Your browser doesn't support Web Serial. Use <b>Chrome</b> or <b>Edge</b> on a computer.
-  </p>
+  <main class="shell">
+    <section class="intro" aria-labelledby="page-title">
+      <div class="intro-copy">
+        <p class="eyebrow">Firmware and SD manager</p>
+        <h1 id="page-title">Build your TamaPoke.</h1>
+        <p>Flash the board, install only the regions you need, and keep a restorable copy of your trainer, Pokemon, party, box, badges, and settings.</p>
+        <div class="compatibility">
+          <span class="signal signal-ready" aria-hidden="true"></span>
+          Chrome or Edge on macOS, Windows, or Linux
+        </div>
+      </div>
+      <div class="device-preview" aria-label="TamaPoke running on its round display">
+        <img src="../docs/screens/main.png" alt="TamaPoke main pet screen">
+        <img src="../docs/screens/player.png" alt="TamaPoke trainer screen">
+      </div>
+    </section>
 
-  <div class="step" style="border-left:4px solid #e8503a;background:#fff6f4">
-    <p><b>⚠️ Board not showing up? Read this first — it is almost always this.</b></p>
-    <p>A brand-new board <b>does not appear as a serial port at all</b>. The firmware it
-       ships with never switches USB on, so your computer sees nothing and it looks like a
-       dead board or a broken cable. It is neither. Put it in <b>download mode</b>:</p>
-    <p style="font-size:1.05em"><b>hold BOOT&nbsp;→ tap RESET&nbsp;→ let go of BOOT</b></p>
-    <p class="note">The two small buttons next to the USB-C socket. Nothing on screen will
-       change — that is normal. Now press install and the port will be there.
-       After TamaPoke is on it, this is never needed again.</p>
-    <p class="note">Still nothing? Use a cable that carries <b>data</b> (a charge-only USB-C
-       cable powers the board perfectly and carries nothing), and plug <b>straight into your
-       computer</b> rather than through a hub.</p>
-  </div>
-
-  <h2><span class="num">1</span>Flash the firmware</h2>
-  <div class="step">
-    <p>Plug the board in via USB and press install. Pick the port and wait.
-       Takes about a minute. No drivers needed on any OS.</p>
-    <esp-web-install-button manifest="manifest.json">
-      <button slot="activate">⚡ Install TamaPoke</button>
-      <span slot="unsupported">Browser not supported (use Chrome/Edge).</span>
-      <span slot="not-allowed">Needs HTTPS.</span>
-    </esp-web-install-button>
-    <p class="note" style="border-left:4px solid #e8503a;padding-left:10px">
-       🔄 <b>Updating? Leave "Erase device" unchecked.</b> The installer asks
-       once, with the box already unchecked — click <b>Next</b> without ticking
-       it and your creature, Pokédex and badges all survive, because the
-       firmware is written around the save rather than over it. Tick that box
-       and everything is gone, with no undo. The sprites on the microSD are
-       untouched either way.<br><br>
-       <b>Installers before v2.7 erased it every time, without asking.</b>
-       They shipped one image covering the whole start of flash, the save
-       included, and were configured to wipe the chip before writing. Both are
-       fixed here. Even so, <code>EXPORT</code> on the serial console is the
-       only real safety net: it prints your whole save as a block of
-       <code>IMPORT</code> lines, and pasting that block back restores it.
-       Worth doing before any update you care about.<br><br>
-       A fresh board with nothing on it can be erased safely, and on a board
-       that has never run TamaPoke it makes no difference either way.</p>
-  </div>
-
-  <h2><span class="num">2</span>Load the sprites onto the microSD</h2>
-  <div class="step">
-    <p>Put a microSD into the board (it formats itself). Press <b>Connect board</b>,
-       tick the regions you want, then <b>Install selected</b>. Any one region works
-       on its own &mdash; pick Johto or Hoenn if that is the game you want &mdash; and
-       more can be added later without redoing the ones already on the card.
-       Kanto is simply the usual place to start.</p>
-    <p class="note">⏱️ <b>This part is slow, and that is normal.</b> The sprites go over
-       the USB serial link, so Kanto's 40 MB takes roughly <b>10–15 minutes</b>. Leave the
-       tab open and the card in. The progress bar moves the whole time. Every pack is
-       checksummed before a byte is sent, and a region that does not finish says so
-       loudly rather than reporting a smaller success.</p>
-    <p class="note">Close the step-1 install tab first (only one program can use
-       the port at a time).</p>
-    <div class="row">
-      <button id="connect">🔌 Connect board</button>
-      <button id="install" disabled>⬇️ Install selected</button>
-      <label class="pick"><input type="checkbox" id="all"> <b>Select all</b></label>
+    <div class="notice notice-error" id="unsupported" hidden>
+      <i data-lucide="circle-alert" aria-hidden="true"></i>
+      <div><strong>Web Serial is not available.</strong> Open this page in desktop Chrome or Edge.</div>
     </div>
-    <div class="row" id="regions">
-      <label class="pick"><input type="checkbox" data-region="kanto" disabled> Kanto</label>
-      <label class="pick"><input type="checkbox" data-region="johto" disabled> Johto</label>
-      <label class="pick"><input type="checkbox" data-region="hoenn" disabled> Hoenn</label>
-      <label class="pick"><input type="checkbox" data-region="sinnoh" disabled> Sinnoh</label>
-      <label class="pick"><input type="checkbox" data-region="unova" disabled> Unova</label>
-      <label class="pick"><input type="checkbox" data-region="kalos" disabled> Kalos</label>
-      <label class="pick"><input type="checkbox" data-region="alola" disabled> Alola</label>
-      <label class="pick"><input type="checkbox" data-region="galar" disabled> Galar</label>
-      <label class="pick"><input type="checkbox" data-region="paldea" disabled> Paldea</label>
-    </div>
-    <p class="note" id="total">Pick one or more regions.</p>
-    <p class="note">Have your own <code>.bin</code> files? <label style="cursor:pointer;text-decoration:underline">pick them manually<input id="files" type="file" accept=".bin" multiple disabled hidden></label></p>
-    <p class="note">🎨 Want to make your own sprites? See <a href="https://github.com/DylanPDao/TamaPoke#generate-and-load-the-sprites-yourself" target="_blank">how to generate &amp; load them</a> in the repo.</p>
-    <div class="bar" id="bar"><div></div></div>
-    <pre id="log"></pre>
-  </div>
 
-  <h2>How to play</h2>
-  <p>Care for your egg until it hatches, feed it, play, train it and complete them
-     all. Tap the creature to pet it; swipe to open the Pokédex (sideways), the
-     stat card (up) or set the clock (down); the physical PWR button turns the
-     screen off (short press) or everything off (long press).
-     More in the <a href="https://github.com/DylanPDao/TamaPoke" target="_blank">repository</a>.</p>
-  <p class="note">TamaPoke was created by <b>Quique Tortosa</b> —
-     <a href="https://github.com/socquique/TamaPoke" target="_blank">socquique/TamaPoke</a>.
-     This is a fork that builds on his work.</p>
+    <section class="work-section" aria-labelledby="firmware-title">
+      <header class="section-heading">
+        <span class="step-number">01</span>
+        <div>
+          <p class="eyebrow">Board firmware</p>
+          <h2 id="firmware-title">Choose an edition and flash</h2>
+        </div>
+      </header>
 
-  <p class="note">Sprites from <a href="https://github.com/PMDCollab/SpriteCollab" target="_blank">PMD SpriteCollab</a> (CC BY-NC).
-     Pokémon is a ™ of Nintendo / Game Freak. Non-commercial project.</p>
-</div>
+      <div class="edition-grid" id="editions" aria-live="polite">
+        <p class="muted">Loading firmware catalogue...</p>
+      </div>
 
-<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js"></script>
-<script>
-const log = (m) => { const el = document.getElementById('log'); el.style.display='block';
-  el.textContent += m + '\n'; el.scrollTop = el.scrollHeight; };
-const supported = 'serial' in navigator;
-if (!supported) { document.getElementById('unsupported').style.display='block';
-  document.getElementById('connect').disabled = true; }
+      <div class="action-row flash-row">
+        <esp-web-install-button id="flash-button" manifest="manifest.json">
+          <button class="button button-primary" slot="activate">
+            <i data-lucide="cpu" aria-hidden="true"></i>
+            Install firmware
+          </button>
+          <span slot="unsupported">Use Chrome or Edge to flash this board.</span>
+          <span slot="not-allowed">This installer requires HTTPS.</span>
+        </esp-web-install-button>
+        <p class="action-copy" id="edition-summary">The standard edition includes every game feature and loads region art from microSD.</p>
+      </div>
 
-let port, reader, writer, lineBuf = '';
+      <details class="install-note">
+        <summary><i data-lucide="shield-check" aria-hidden="true"></i> Updating an existing board</summary>
+        <p>Leave <strong>Erase device</strong> unchecked. A normal update preserves the save in flash and every sprite on the microSD. Erasing has no undo, so make a backup below first.</p>
+        <p>A brand-new board may only appear in download mode: hold <strong>BOOT</strong>, tap <strong>RESET</strong>, then release <strong>BOOT</strong>.</p>
+      </details>
+    </section>
 
-async function readLine(timeoutMs = 6000) {
-  const deadline = Date.now() + timeoutMs;
-  while (true) {
-    const nl = lineBuf.indexOf('\n');
-    if (nl >= 0) { const l = lineBuf.slice(0, nl).trim(); lineBuf = lineBuf.slice(nl + 1); return l; }
-    if (Date.now() > deadline) return null;
-    const { value, done } = await reader.read();
-    if (done) return null;
-    lineBuf += new TextDecoder().decode(value);
-  }
-}
+    <section class="work-section" aria-labelledby="packs-title">
+      <header class="section-heading section-heading-split">
+        <div class="heading-group">
+          <span class="step-number">02</span>
+          <div>
+            <p class="eyebrow">microSD library</p>
+            <h2 id="packs-title">Sync region packs</h2>
+          </div>
+        </div>
+        <div class="connection" id="connection-state">
+          <span class="signal" aria-hidden="true"></span>
+          <span>Board not connected</span>
+        </div>
+      </header>
 
-async function waitFor(token, timeoutMs = 6000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const l = await readLine(deadline - Date.now());
-    if (l === null) return false;
-    if (l === token) return true;
-    if (l === 'ERR') return false;
-  }
-  return false;
-}
+      <div class="connect-strip">
+        <button class="button button-primary" id="connect">
+          <i data-lucide="usb" aria-hidden="true"></i>
+          Connect board
+        </button>
+        <p>One connection manages packs and saves. Close the firmware install dialog before connecting here.</p>
+      </div>
 
-const enc = new TextEncoder();
+      <div class="pack-toolbar">
+        <div>
+          <h3>Available regions</h3>
+          <p id="catalogue-summary">Loading pack catalogue...</p>
+        </div>
+        <div class="toolbar-actions">
+          <button class="button button-quiet button-small" id="refresh-packs" disabled title="Read installed packs again">
+            <i data-lucide="refresh-cw" aria-hidden="true"></i>
+            Refresh
+          </button>
+          <button class="button button-quiet button-small" id="select-needed" disabled>Select needed</button>
+        </div>
+      </div>
 
-// sends one file to the board with the PUT protocol (name includes the mons/ prefix)
-async function sendOne(name, data) {
-  await writer.write(enc.encode(`PUT ${name} ${data.length}\n`));
-  if (!await waitFor('OK')) return false;
-  for (let i = 0; i < data.length; i += 2048) {
-    await writer.write(data.slice(i, i + 2048));
-    if (!await waitFor('#')) return false;
-  }
-  return await waitFor('DONE', 30000);
-}
+      <div class="region-grid" id="regions" aria-live="polite"></div>
 
-// A dropped ack used to cost that species its sprite for good -- it draws as a
-// bare dex number, and the run still printed "Done". Retry before giving up.
-const SEND_TRIES = 3;
-async function sendOneRetrying(name, data) {
-  for (let attempt = 1; attempt <= SEND_TRIES; attempt++) {
-    if (await sendOne(name, data)) return true;
-    if (attempt < SEND_TRIES) {
-      log(`   retrying ${name} (${attempt}/${SEND_TRIES - 1})`);
-      lineBuf = '';                 // drop whatever the failed transfer left behind
-      await new Promise(r => setTimeout(r, 250));
-    }
-  }
-  return false;
-}
+      <div class="deploy-bar">
+        <div>
+          <strong id="selection-title">No packs selected</strong>
+          <span id="selection-detail">Connect a board to compare its SD card.</span>
+        </div>
+        <button class="button button-accent" id="install" disabled>
+          <i data-lucide="download" aria-hidden="true"></i>
+          Install selected
+        </button>
+      </div>
 
-// splits the sprites.pak bundle (TPAK) into its individual files
-function parsePak(buf) {
-  const dv = new DataView(buf), td = new TextDecoder();
-  if (td.decode(new Uint8Array(buf, 0, 4)) !== 'TPAK') throw new Error('invalid bundle');
-  const count = dv.getUint16(4, true);
-  let off = 6; const items = [];
-  for (let i = 0; i < count; i++) {
-    const nl = dv.getUint8(off); off += 1;
-    const name = td.decode(new Uint8Array(buf, off, nl)); off += nl;
-    const size = dv.getUint32(off, true); off += 4;
-    items.push({ name, size });
-  }
-  let pos = off;
-  for (const it of items) { it.data = new Uint8Array(buf, pos, it.size); pos += it.size; }
-  // The index and the payload must account for the file exactly. A truncated
-  // download otherwise surfaces as a Uint8Array constructor throwing halfway
-  // through, or worse as a short last sprite that uploads "successfully".
-  if (pos !== buf.byteLength)
-    throw new Error(`bundle is ${buf.byteLength} B but its index describes ${pos} B`);
-  return items;
-}
+      <div class="progress" id="progress" hidden>
+        <div class="progress-copy">
+          <span id="progress-label">Preparing transfer...</span>
+          <span id="progress-value">0%</span>
+        </div>
+        <div class="progress-track"><div id="progress-fill"></div></div>
+      </div>
 
-async function sendAll(items) {
-  const bar = document.getElementById('bar'); bar.style.display = 'block';
-  const fill = bar.firstElementChild;
-  let done = 0, fail = 0;
-  for (const it of items) {
-    if (!await sendOneRetrying(it.name, it.data)) { log('   FAILED ' + it.name); fail++; }
-    done++;
-    fill.style.width = (done / items.length * 100) + '%';
-  }
-  return fail;
-}
+      <div class="custom-pack">
+        <i data-lucide="file-up" aria-hidden="true"></i>
+        <span>Generated your own sprite files?</span>
+        <label class="text-action">Choose .bin files<input id="files" type="file" accept=".bin" multiple disabled hidden></label>
+      </div>
+    </section>
 
-document.getElementById('connect').onclick = async () => {
-  try {
-    port = await navigator.serial.requestPort();
-    await port.open({ baudRate: 115200 });
-    reader = port.readable.getReader();
-    writer = port.writable.getWriter();
-    lineBuf = '';
-    log('Connected. Pick your regions, then press "Install selected".');
-    for (const b of document.querySelectorAll('[data-region]')) b.disabled = false;
-    document.getElementById('files').disabled = false;
-    await probeRegions();   // grey out any region that has no bundle to download
-    refreshTotal();
-    document.getElementById('connect').disabled = true;
-  } catch (e) { log('Could not connect: ' + e.message); }
-};
+    <section class="work-section" aria-labelledby="save-title">
+      <header class="section-heading">
+        <span class="step-number">03</span>
+        <div>
+          <p class="eyebrow">Save vault</p>
+          <h2 id="save-title">Back up or restore your game</h2>
+        </div>
+      </header>
+      <div class="save-layout">
+        <div>
+          <h3>Download backup</h3>
+          <p>Exports the complete save from internal flash: the live Pokemon, party, box, Pokedex, badges, inventory, and settings.</p>
+          <button class="button button-secondary" id="backup" disabled>
+            <i data-lucide="hard-drive-download" aria-hidden="true"></i>
+            Download save
+          </button>
+        </div>
+        <div>
+          <h3>Restore backup</h3>
+          <p>The firmware validates the format and checksum before replacing anything, then restarts with the restored save.</p>
+          <label class="button button-secondary button-file" id="restore-label" aria-disabled="true">
+            <i data-lucide="hard-drive-upload" aria-hidden="true"></i>
+            Restore save
+            <input id="restore" type="file" accept=".tpsave,.txt" disabled hidden>
+          </label>
+        </div>
+      </div>
+    </section>
 
-// One bundle per region. Kanto alone is ~40 MB and all three would be ~100 MB,
-// which is GitHub's hard per-file limit -- so they are separate files, and a
-// player can take Kanto and stop, or add a region later without re-sending what
-// is already on the card.
-// Where the bundles live. They are NOT committed: each is ~40 MB, and putting
-// them in the repo would make every clone of a firmware project carry 100+ MB of
-// sprites forever. A GitHub Release hosts them outside the git history, and its
-// downloads send Access-Control-Allow-Origin, so fetch() from Pages works.
-//
-// Same origin is tried first anyway, so `python3 -m http.server` in web/ with the
-// paks sitting there works for local testing without touching this.
-const PAK_RELEASE = 'https://github.com/DylanPDao/TamaPoke/releases/latest/download';
+    <section class="activity" aria-labelledby="activity-title">
+      <header>
+        <div>
+          <p class="eyebrow">Live output</p>
+          <h2 id="activity-title">Activity</h2>
+        </div>
+        <button class="icon-button" id="clear-log" title="Clear activity log" aria-label="Clear activity log">
+          <i data-lucide="trash-2" aria-hidden="true"></i>
+        </button>
+      </header>
+      <pre id="log" aria-live="polite">Ready. Flash the firmware or connect a running board.</pre>
+    </section>
+  </main>
 
-function pakUrls(region) {
-  return [`sprites-${region}.pak`, `${PAK_RELEASE}/sprites-${region}.pak`];
-}
+  <footer>
+    <span>Personal, non-commercial fan project.</span>
+    <span>Sprites: <a href="https://github.com/PMDCollab/SpriteCollab" target="_blank" rel="noreferrer">PMD SpriteCollab</a> (CC BY-NC)</span>
+    <a href="https://github.com/DylanPDao/TamaPoke" target="_blank" rel="noreferrer">Source and game manual</a>
+  </footer>
 
-async function fetchPak(region) {
-  let last;
-  for (const url of pakUrls(region)) {
-    try {
-      const resp = await fetch(url);
-      if (resp.ok) return await resp.arrayBuffer();
-      last = new Error('HTTP ' + resp.status);
-    } catch (e) { last = e; }
-  }
-  throw last || new Error('not found');
-}
-
-// HEAD, not a ranged GET: a ranged GET against a server that ignores Range --
-// python's http.server does -- starts streaming all 40 MB just to find out the
-// file exists. HEAD sends headers only, and both a local server and GitHub
-// releases support it.
-// A region whose sprites have not been packed yet should not present a button
-// that can only fail -- "Failed to fetch" means nothing to somebody installing
-// this for the first time.
-async function probeRegions() {
-  for (const b of document.querySelectorAll('[data-region]')) {
-    const region = b.dataset.region;
-    let found = false;
-    for (const url of pakUrls(region)) {
-      try {
-        const r = await fetch(url, { method: 'HEAD' });
-        if (r.ok) { found = true; break; }
-      } catch (e) { /* try the next */ }
-    }
-    const label = b.parentElement;
-    if (!found) {
-      b.disabled = true;
-      b.checked = false;
-      label.style.opacity = '.45';
-      label.title = 'No sprite bundle exists for this region yet. See web/README.md.';
-      label.append(' \u2014 not published yet');
-    } else if (PAKS && PAKS[region]) {
-      // The size comes from the index, never from the markup. Typed by hand it
-      // had already drifted: Alola read "~24 MB" against a 27.5 MB pack.
-      label.append(` (${MB(PAKS[region].bytes)})`);
-    }
-  }
-}
-
-// CRC32, the same polynomial zlib uses, so tools/pack_bundle.py's checksum and
-// this one are the same number. A 40 MB download over a flaky link that only
-// half-arrives is otherwise indistinguishable from a good one until sprites
-// start missing on the board.
-const CRC_TABLE = (() => {
-  const t = new Uint32Array(256);
-  for (let i = 0; i < 256; i++) {
-    let c = i;
-    for (let b = 0; b < 8; b++) c = (c >>> 1) ^ (0xEDB88320 & -(c & 1));
-    t[i] = c >>> 0;
-  }
-  return t;
-})();
-function crc32(bytes) {
-  let c = 0xFFFFFFFF;
-  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
-  return ((c ^ 0xFFFFFFFF) >>> 0).toString(16).padStart(8, '0');
-}
-
-// What each pack should weigh and hash. Written by pack_bundle.py beside the
-// packs themselves, so it can never describe a pack that was not built.
-let PAKS = null;
-async function loadIndex() {
-  try {
-    const r = await fetch('paks.json');
-    if (r.ok) PAKS = (await r.json()).regions || null;
-  } catch (e) { /* fall back to no verification, see verifyPak */ }
-}
-
-function verifyPak(region, buf) {
-  const meta = PAKS && PAKS[region];
-  if (!meta) return;            // no index published: structure checks still apply
-  if (buf.byteLength !== meta.bytes)
-    throw new Error(`expected ${meta.bytes} B, got ${buf.byteLength} B (download incomplete?)`);
-  const got = crc32(new Uint8Array(buf));
-  if (got !== meta.crc32)
-    throw new Error(`checksum ${got} does not match ${meta.crc32} (corrupt download)`);
-}
-
-const MB = (n) => (n / 1048576).toFixed(1) + ' MB';
-function picked() {
-  return [...document.querySelectorAll('#regions input:checked')].map(c => c.dataset.region);
-}
-function refreshTotal() {
-  const sel = picked();
-  const btn = document.getElementById('install');
-  const bytes = PAKS ? sel.reduce((n, r) => n + ((PAKS[r] && PAKS[r].bytes) || 0), 0) : 0;
-  btn.disabled = !writer || !sel.length;
-  document.getElementById('total').textContent = !sel.length
-    ? 'Pick one or more regions.'
-    : `${sel.length} region${sel.length > 1 ? 's' : ''}` +
-      (bytes ? ` -- ${MB(bytes)}, roughly ${Math.round(bytes / 1048576 / 3)} min over USB.` : '.');
-}
-
-async function loadRegion(region) {
-  log(`Downloading ${region} (this is the slow part)...`);
-  let items;
-  try {
-    const buf = await fetchPak(region);
-    verifyPak(region, buf);
-    items = parsePak(buf);
-  } catch (e) {
-    log(`${region}: ${e.message}`);
-    return false;
-  }
-  log(`${items.length} ${region} sprites verified. Sending over USB...`);
-  const fail = await sendAll(items);
-  if (fail) {
-    // Loud, and it stops the queue. A partial sprite install is not a smaller
-    // success: every missing file is a species that draws as a dex number, and
-    // the old code printed "Done (302/303)" and moved on.
-    log(`*** ${region} INCOMPLETE: ${fail} of ${items.length} file(s) failed after retries.`);
-    log(`*** Re-run ${region} before using it. Do not trust the gallery until you do.`);
-    return false;
-  }
-  log(`${region} complete (${items.length}/${items.length}).`);
-  return true;
-}
-
-document.getElementById('install').onclick = async () => {
-  const sel = picked();
-  if (!writer) { log('Connect the board first.'); return; }
-  if (!sel.length) return;
-  const btn = document.getElementById('install');
-  btn.disabled = true;
-  let ok = 0;
-  for (const region of sel) {
-    if (await loadRegion(region)) ok++;
-    else { log('Stopping here so the failure is not buried by the next region.'); break; }
-  }
-  log(ok === sel.length
-    ? `All ${ok} region(s) done. Restart the board (PWR button).`
-    : `Finished ${ok} of ${sel.length} region(s) -- see above.`);
-  btn.disabled = false;
-};
-
-document.getElementById('all').onchange = (ev) => {
-  for (const c of document.querySelectorAll('#regions input:not(:disabled)')) c.checked = ev.target.checked;
-  refreshTotal();
-};
-for (const c of document.querySelectorAll('#regions input')) c.onchange = refreshTotal;
-
-document.getElementById('files').onchange = async (ev) => {
-  const files = [...ev.target.files];
-  const items = [];
-  for (const f of files) items.push({ name: 'mons/' + f.name, data: new Uint8Array(await f.arrayBuffer()) });
-  log(`${items.length} files. Sending...`);
-  const fail = await sendAll(items);
-  log(fail ? `*** ${fail} of ${items.length} file(s) FAILED after retries.`
-           : `All ${items.length} file(s) sent. Restart the board (PWR button).`);
-};
-
-loadIndex().then(refreshTotal);
-</script>
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js"></script>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
+  <script type="module" src="installer.js"></script>
 </body>
 </html>

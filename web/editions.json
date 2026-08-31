@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "editions": [
+    {
+      "id": "standard",
+      "name": "Standard",
+      "channel": "Stable",
+      "manifest": "manifest.json",
+      "description": "All game systems and languages. Region artwork is installed separately to microSD.",
+      "recommended": true
+    }
+  ]
+}

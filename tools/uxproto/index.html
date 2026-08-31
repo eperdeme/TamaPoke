@@ -260,7 +260,7 @@ function nowBox() {
 }
 
 // ================================================================ A - TILES
-const TILES = ['GYM', 'PARTY', 'PET', 'DEX', 'PLAYER'];
+const TILES = ['PLAYER', 'PARTY', 'PET', 'EXPLORE', 'GYM', 'DEX'];
 
 function drawA() {
   ctx.fillStyle = C.bg; ctx.fillRect(0, 0, 466, 466);
@@ -289,8 +289,9 @@ function drawA() {
 }
 
 function tileBody(i) {
-  if (i === 0) tileGym(); else if (i === 1) tileParty();
-  else if (i === 2) tilePet(); else if (i === 3) tileDex(); else tilePlayer();
+  if (i === 0) tilePlayer(); else if (i === 1) tileParty();
+  else if (i === 2) tilePet(); else if (i === 3) tileExplore();
+  else if (i === 4) tileGym(); else tileDex();
 }
 
 function tilePet() {
@@ -316,6 +317,20 @@ function tilePet() {
     icon(n, x, y, 28, i === 2 ? '#39414f' : C.cream);
     hitC(x, y, 47, n.toUpperCase());
   });
+  T('< PARTY', CX - 62, 414, 12, C.ink);
+  T('EXPLORE >', CX + 62, 414, 12, C.ink);
+}
+
+function tileExplore() {
+  T('EXPLORE', CX, 58, 24, C.ink);
+  icon('party', CX, 145, 52, C.cream);
+  rrect(CX - 92, 202, 184, 30, 10, '#111823', C.line, 2);
+  T('KANTO', CX, 217, 13, C.ink);
+  rrect(CX - 70, 246, 140, 44, 12, C.cream, C.line, 2);
+  T('EASY', CX, 268, 14, C.bg);
+  rrect(CX - 155, 306, 310, 72, 16, C.teal, C.ink, 2);
+  T('EXPLORE', CX, 342, 22, C.bg);
+  hitR(CX - 155, 295, 310, 94, 'START EXPLORING');
 }
 
 function tileGym() {
@@ -654,11 +669,11 @@ const PROTOS = {
     label: 'A - TILES', views: [],
     legend: 'Drag / arrows. Horizontal = siblings (bumps at the ends). Up = detail, down = back.',
     notes: `<h2>A - Watch face + tiles</h2>
-    <p>Five peer tiles on one horizontal axis, the pet in the middle. The axis is <b>always drawn</b>
-    as the dot row at 6 o'clock, so the navigation documents itself - the thing today's four hidden
-    swipes cannot do.</p>
+    <p>Six peer tiles on one horizontal axis, with EXPLORE promoted out of the gym ladder. The axis
+    is <b>always drawn</b> as the dot row at 6 o'clock, and the pet names PARTY and EXPLORE beside
+    it so the navigation is visible before somebody already knows to swipe.</p>
     <ul>
-      <li><b>Horizontal bumps, never exits.</b> Try swiping past GYM or PLAYER. This removes
+      <li><b>Horizontal bumps, never exits.</b> Try swiping past PLAYER or DEX. This removes
       "page off the end to close", which is the same gesture meaning two things today.</li>
       <li><b>Vertical is depth, and only depth.</b> Up opens detail on whatever tile is in front of
       you, down closes it. One gesture, one meaning, every screen.</li>

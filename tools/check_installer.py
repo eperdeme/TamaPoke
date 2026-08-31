@@ -24,7 +24,8 @@ Both are checked here because fixing either one alone still loses the save.
 The partition table is read out of the build itself rather than hardcoded, so a
 partition scheme change moves the check with it.
 
-    python3 tools/check_installer.py            # checks web/manifest.json
+    python3 tools/check_installer.py                    # checks web/manifest.json
+    python3 tools/check_installer.py web/beta/manifest.json
 
 Run by build_web.sh on every build, so neither cause can come back.
 """
@@ -53,7 +54,9 @@ def partitions(path):
 
 
 def main():
-    manifest_path = os.path.join(WEB, "manifest.json")
+    manifest_path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(WEB, "manifest.json")
+    manifest_path = os.path.abspath(manifest_path)
+    manifest_dir = os.path.dirname(manifest_path)
     manifest = json.load(open(manifest_path))
 
     parts = []
@@ -64,7 +67,7 @@ def main():
             # otherwise this guard reports MISSING for a file that is right there
             # and the build fails for the wrong reason.
             rel = p["path"].split("?", 1)[0]
-            path = os.path.join(WEB, rel)
+            path = os.path.join(manifest_dir, rel)
             if not os.path.exists(path):
                 print("MISSING: %s (named by the manifest)" % rel)
                 return 1
@@ -79,13 +82,13 @@ def main():
     table = None
     for path, off, _ in parts:
         if off == 0x8000:
-            table = partitions(os.path.join(WEB, path))
+            table = partitions(os.path.join(manifest_dir, path))
     if table is None:
         # a single merged image carries the table inside it at 0x8000
         for path, off, size in parts:
             if off == 0 and size > 0x9000:
-                blob = open(os.path.join(WEB, path), "rb").read()
-                tmp = os.path.join(WEB, ".ptable.tmp")
+                blob = open(os.path.join(manifest_dir, path), "rb").read()
+                tmp = os.path.join(manifest_dir, ".ptable.tmp")
                 open(tmp, "wb").write(blob[0x8000:0x9000])
                 table = partitions(tmp)
                 os.remove(tmp)

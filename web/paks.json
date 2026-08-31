@@ -2,36 +2,43 @@
   "schema": 1,
   "regions": {
     "kanto": {
+      "index": 0,
       "bytes": 42440298,
       "crc32": "4c625d85",
       "sprites": 303
     },
     "johto": {
+      "index": 1,
       "bytes": 28989371,
       "crc32": "b89e10d2",
       "sprites": 201
     },
     "hoenn": {
+      "index": 2,
       "bytes": 40490974,
       "crc32": "0cd83ee2",
       "sprites": 271
     },
     "sinnoh": {
+      "index": 3,
       "bytes": 34919634,
       "crc32": "22ffc9a6",
       "sprites": 215
     },
     "unova": {
+      "index": 4,
       "bytes": 42050748,
       "crc32": "ed0d42b0",
       "sprites": 286
     },
     "kalos": {
+      "index": 5,
       "bytes": 22043168,
       "crc32": "9c0d2b13",
       "sprites": 143
     },
     "alola": {
+      "index": 6,
       "bytes": 28884786,
       "crc32": "2978d379",
       "sprites": 167

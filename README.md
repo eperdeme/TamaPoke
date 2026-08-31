@@ -3,7 +3,7 @@
 [![Flash in browser](https://img.shields.io/badge/flash-in%20browser-FF6B00?logo=googlechrome&logoColor=white)](https://dylanpdao.github.io/TamaPoke/web/)
 [![MakerWorld](https://img.shields.io/badge/MakerWorld-3D%20case-00AE42?logo=bambulab&logoColor=white)](https://makerworld.com/es/models/2937822-tamapoke-a-pokemon-pokeball-tamagotchi)
 ![Board](https://img.shields.io/badge/board-ESP32--S3%20round%20AMOLED-E7352C?logo=espressif&logoColor=white)
-![Firmware](https://img.shields.io/badge/firmware-v3.14-8A2BE2)
+![Firmware](https://img.shields.io/badge/firmware-v3.13-8A2BE2)
 ![Code](https://img.shields.io/badge/code-MIT-blue)
 ![Languages](https://img.shields.io/badge/languages-6-FFCB05)
 [![Stars](https://img.shields.io/github/stars/DylanPDao/TamaPoke?style=flat&logo=github&color=yellow)](https://github.com/DylanPDao/TamaPoke/stargazers)
@@ -571,13 +571,12 @@ it to the rim is what frees the horizontal axis to mean one thing.
 - Long press (3 s) on the creature = **release** dialog. Gated to the main
   screen only, so it can never fire on a party slot.
 
-The four care stats are **arcs on the rim** rather than bars: orange = food,
-rose = joy, teal = energy, blue = hygiene; length is the value and a red label
-means it is low, so colour is never the only signal. The arcs stay outside the
-Pokemon-name band. That freed the bottom for home buttons which DRAW at 72 px
-but HIT as 94 px (9 mm) discs — the compact-button pattern recommended by Wear
-OS. The old `UI_TAP_MIN` copied Apple's 44 pt guidance as 44 raw pixels, only
-4.2 mm on this 266 ppi panel.
+The four care stats are **arcs on the rim** rather than bars: colour is severity,
+exactly as the bars were, and the label says which stat. That is what freed the
+bottom of the panel for home icons a finger can actually hit — they went from
+60 px (5.7 mm) to 80 px (7.6 mm), and `hit_test` now holds every new control to
+`UI_TAP_FINGER` (94 px = 9 mm) rather than the old `UI_TAP_MIN` of 44, which was
+44 *points* borrowed as pixels.
 
 **Physical PWR button:** short = screen on/off · long (4 s) = full power-off
 (the RTC stays alive, so time passes even while it's off).

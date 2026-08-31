@@ -1358,53 +1358,6 @@ either has the chrome or visibly does not.
 
 ### Round-panel geometry: ask, never guess
 
-**The governing sources, reviewed 2026-08-31:**
-
-- [Wear OS design principles](https://developer.android.com/training/wearables/design):
-  focus on one or two critical tasks; a wrist task should complete in seconds.
-- [Material 3 Expressive for Wear OS](https://developer.android.com/design/ui/wear/guides/get-started):
-  embrace the round canvas, spatially connect navigation, and give colours
-  specific roles rather than treating one accent as the whole system.
-- [Wear OS buttons](https://developer.android.com/design/ui/wear/guides/m2-5/components/buttons):
-  the visible compact button may be small, but its tap target stays at least
-  48 dp; use fill hierarchy for emphasis, not arbitrary size changes.
-- [Wear OS design kits](https://developer.android.com/design/ui/wear/guides/get-started/design-kits):
-  Google's current app and tile component/layout kits, openable in Figma. The
-  older downloadable `.fig` kits are linked from the official
-  [downloads page](https://developer.android.com/design/ui/wear/guides/m2-5/foundations/download).
-- [Apple: Designing for watchOS](https://developer.apple.com/design/human-interface-guidelines/designing-for-watchos):
-  quick, glanceable, single-screen interactions; simple gesture or two;
-  minimize navigation depth; colour may convey useful supporting information.
-- [Apple: Buttons](https://developer.apple.com/design/human-interface-guidelines/buttons):
-  at least 44x44 pt hit regions, one or two prominent actions per view, style
-  rather than size for hierarchy, and never make a destructive action primary.
-- [WCAG 2.2 contrast](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html)
-  and [non-text contrast](https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html):
-  4.5:1 for this UI's small text, 3:1 for meaningful controls and graphics.
-  `palette_test` checks the RGB565 values the panel actually receives.
-
-**The local contract derived from those sources:**
-
-1. A care action is one tap from the pet. Core information is one swipe away.
-   New navigation should not add depth to a task that fits on an existing tile.
-2. Draw for the circle through `uiSafeHalfWidth*`; never pick one width for
-   rows at different y positions.
-3. A visible control may be smaller than its target. Keep graphics visually
-   subordinate, then register a finger-sized hit area around them. This is the
-   Wear compact-button pattern, and is now how the 72 px home icons get a 94 px
-   hit disc.
-4. One colour token has one job: `UI_TRACK` is a neutral control surface,
-   `UI_GROOVE_*` is measurable progress, `UI_INK_SOFT` is secondary text, and
-   `UI_CARE_*` identifies a stat. Never use a fill token for text again.
-5. Every text/background pair clears 4.5:1 and every meaningful graphic pair
-   clears 3:1 after RGB565 quantization. Add the pair to `palette_test`.
-6. Colour is never the only state signal: labels identify care stats, length
-   carries values, and red labels mark low values. Destructive actions stay
-   spatially separate and visually secondary until confirmation.
-7. Reserve the title band. `hit_test` asks the real care-arc and title geometry
-   and requires a 12 px gap; a screenshot alone did not prevent JOY/ENE from
-   running behind the Pokemon's name.
-
 `uiSafeHalfWidth(y)` is the half-chord at row y, and `uiSafeHalfWidthFor(y0,y1)`
 the narrower of two -- a rounded box is widest at its middle but its CORNERS are
 what leave the circle. Every full-width layout asks these. The gym ladder used
@@ -1412,18 +1365,18 @@ to draw five identical 326 px rows over y 110..374 where the real chord runs
 448 down to 372: wasting 66 px in the middle AND hanging the end rows' corners
 off the glass, both at once.
 
-**`UI_TAP_MIN` is 44 and is a HARD FLOOR, not a target.** The original code
-copied 44 from Apple's guidance as if points were raw panel pixels; on this
-466 px / 1.75 in / 266 ppi panel, 44 px is 4.2 mm. Wear OS's 48 dp likewise
-means a logical target, not 48 hardware pixels. This project uses the stricter
-physical floor `UI_TAP_FINGER` (94 px = 9 mm), chosen after repeated board
-reports, and `hit_test` measures the registered hit areas against it.
+**`UI_TAP_MIN` is 44 and is a HARD FLOOR, not a target.** It is 44 *points*
+borrowed as pixels: this panel is 466 px over 1.75 in = 266 ppi, so a pixel is
+0.095 mm and 44 px is 4.2 mm -- under half a fingertip. It survives only because
+several laid-out screens cannot grow without being redesigned. **New work uses
+`UI_TAP_FINGER` (94 px = 9 mm)**, and `hit_test` holds `uiButtonHeights()` to it.
 
 That single mis-scaled constant is behind all three "hard to hit" reports. The
-home icons were 60 px (5.7 mm) with a 6 px gap. They now DRAW at 72 px but HIT
-as 94 px discs -- exactly the compact-button pattern in the official Wear OS
-guidance. The four care bars moving to the rim made enough room for their hit
-discs to sit tangent rather than overlap.
+home icons were 60 px (5.7 mm) with a 6 px gap; they are 80 px now, which is
+only possible because the four care bars moved to the rim as arcs and gave the
+bottom of the panel back. Four `UI_TAP_FINGER` targets in one row would reach
+radius 222 of 233 -- so a finger-safe home row on this panel is three icons, not
+four, and 80 px is the honest compromise that keeps all four.
 
 **The party and box are a RING of six, not a 2x3 grid** (`partySlotPos`,
 `partySlotAt`, `partyHubAt`). A grid on a circle spends its corners on glass

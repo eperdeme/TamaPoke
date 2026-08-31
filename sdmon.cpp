@@ -241,8 +241,39 @@ void SdMon::unload() {
 // Protocolo de carga por USB (para llenar la SD sin sacarla de la placa):
 //   PUT <ruta> <bytes>\n  + datos crudos   -> "OK" ... "DONE"
 //   LS\n                                   -> listado de /mons
+//   PACKS\n                                -> report each pack's state/version
+//   PACK BEGIN <region>\n                  -> invalidate before copying
+//   PACK COMMIT <region> <crc32>\n         -> record version after copying
 // Usar con tools/send_sd.py
 // ---------------------------------------------------------------------------
+
+static void packMarkerPath(uint8_t region, char *path, size_t cap) {
+  snprintf(path, cap, "/mons/.pack-%u", (unsigned)region);
+}
+
+static bool validPackRegion(int region) {
+  return region >= 0 && region < REGION_COUNT && region != REGION_ALL;
+}
+
+static void invalidatePackMarker(uint8_t region) {
+  if (!validPackRegion(region)) return;
+  char marker[28];
+  packMarkerPath(region, marker, sizeof(marker));
+  SD_MMC.remove(marker);
+}
+
+static void invalidatePackForPath(const String &path) {
+  const char *base = strrchr(path.c_str(), '/');
+  base = base ? base + 1 : path.c_str();
+  if (!strcmp(base, "thumbs.bin")) {
+    for (uint8_t r = 0; r < REGION_COUNT; r++) invalidatePackMarker(r);
+    return;
+  }
+  if (*base == 'p') base += base[1] == 's' ? 2 : 1;
+  int dex = 0;
+  if (sscanf(base, "%4d", &dex) == 1 && dex > 0)
+    invalidatePackMarker(regionOfDex((int16_t)dex));
+}
 
 bool sdSerialCommand(const String &line) {
   if (line.startsWith("PUT ")) {
@@ -254,6 +285,7 @@ bool sdSerialCommand(const String &line) {
       return true;
     }
     if (!path.startsWith("/")) path = "/" + path;
+    invalidatePackForPath(path);
     File f = SD_MMC.open(path, FILE_WRITE);
     if (!f) {
       Serial.println("ERR");
@@ -267,7 +299,7 @@ bool sdSerialCommand(const String &line) {
       size_t want = remaining > sizeof(buf) ? sizeof(buf) : remaining;
       size_t n = Serial.readBytes(buf, want);
       if (n == 0) break;  // timeout
-      f.write(buf, n);
+      if (f.write(buf, n) != n) break;
       remaining -= n;
       Serial.println("#");  // ack: listo para el siguiente bloque
     }
@@ -280,6 +312,66 @@ bool sdSerialCommand(const String &line) {
     // that. loop() picks it up.
     if (remaining == 0) sdArtDirty = true;
     Serial.println(remaining == 0 ? "DONE" : "ERR");
+    return true;
+  } else if (line == "PACKS") {
+    if (!sdReady) {
+      Serial.println("ERR");
+      return true;
+    }
+    sdScanRegionArt(false);
+    for (uint8_t r = 0; r < REGION_COUNT; r++) {
+      if (r == REGION_ALL) continue;
+      char path[28], crc[9] = {0};
+      packMarkerPath(r, path, sizeof(path));
+      File f = SD_MMC.open(path, FILE_READ);
+      bool marked = f && f.size() == 8 && f.read((uint8_t *)crc, 8) == 8;
+      if (f) f.close();
+      const char *state = marked ? crc : ((gRegionArt & (1u << r)) ? "legacy" : "missing");
+      Serial.printf("PACK %u %s\n", (unsigned)r, state);
+    }
+    Serial.println("DONE");
+    return true;
+  } else if (line.startsWith("PACK BEGIN ")) {
+    int region = line.substring(11).toInt();
+    if (!sdReady || !validPackRegion(region)) {
+      Serial.println("ERR");
+      return true;
+    }
+    char path[28];
+    packMarkerPath((uint8_t)region, path, sizeof(path));
+    if (SD_MMC.exists(path) && !SD_MMC.remove(path)) {
+      Serial.println("ERR");
+      return true;
+    }
+    Serial.println("DONE");
+    return true;
+  } else if (line.startsWith("PACK COMMIT ")) {
+    int region = -1;
+    char crc[9] = {0}, extra = 0;
+    int fields = sscanf(line.c_str() + 12, "%d %8s %c", &region, crc, &extra);
+    bool validCrc = fields == 2 && strlen(crc) == 8;
+    for (int i = 0; i < 8 && validCrc; i++) {
+      char c = crc[i];
+      validCrc = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+                 (c >= 'A' && c <= 'F');
+      if (c >= 'A' && c <= 'F') crc[i] = (char)(c - 'A' + 'a');
+    }
+    if (!sdReady || !validPackRegion(region) || !validCrc) {
+      Serial.println("ERR");
+      return true;
+    }
+    sdScanRegionArt(false);
+    if (!(gRegionArt & (1u << region))) {
+      Serial.println("ERR");
+      return true;
+    }
+    char path[28];
+    packMarkerPath((uint8_t)region, path, sizeof(path));
+    SD_MMC.remove(path);
+    File f = SD_MMC.open(path, FILE_WRITE);
+    bool written = f && f.write((const uint8_t *)crc, 8) == 8;
+    if (f) f.close();
+    Serial.println(written ? "DONE" : "ERR");
     return true;
   } else if (line == "LS") {
     File dir = SD_MMC.open("/mons");
