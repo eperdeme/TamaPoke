@@ -226,7 +226,7 @@ bool battleOpen = false;
 enum : uint8_t {
   SCR_STARTER = 0, SCR_REGION, SCR_GALLERY, SCR_DEXPICK, SCR_MOVEPICK, SCR_BOX,
   SCR_PARTY, SCR_KEYBOARD, SCR_CARD, SCR_PLAYER, SCR_CLOCK, SCR_GYM, SCR_GYMPICK,
-  SCR_LAN, SCR_PICK, SCR_BATTLE, SCR_WIN, SCR_LEARN, SCR_TRAIN, SCR_MENU,
+  SCR_EXPLORE, SCR_LAN, SCR_PICK, SCR_BATTLE, SCR_WIN, SCR_LEARN, SCR_TRAIN, SCR_MENU,
   SCR_BAGSCR, SCR_GAME, SCR_MAIN, SCR_COUNT
 };
 extern const char *const SCREEN_NAME[SCR_COUNT];   // const is internal linkage in C++
@@ -272,7 +272,7 @@ void drawConfirmPanel(const char *q, const char *sub1, const char *sub2,
 const char *const SCREEN_NAME[SCR_COUNT] = {
   "starter", "region", "gallery", "dexpick", "movepick", "box",
   "party", "keyboard", "card", "player", "clock", "gym", "gympick",
-  "lan", "pick", "battle", "win", "learn", "train", "menu",
+  "explore", "lan", "pick", "battle", "win", "learn", "train", "menu",
   "bag", "minigame", "main"
 };
 
@@ -492,13 +492,12 @@ uint8_t gymPage = 0;
 #define GYM_ROW_INSET 18   // how far a row stops short of the glass, so the
                            // arc scrollbar at RIM_BAR_R has its own lane
 void gymRowRect(int i, int *x, int *y, int *w, int *h);
-// The gym screen's two extra battle buttons: LAN on the left, EXPLORE on the
-// right. At y 380..412 the round panel gives a half-width of 180, so the pair
-// spanning 68..398 sits comfortably on glass.
+// LAN remains attached to the trainer ladder; Explore is a peer destination on
+// the tile axis and no longer hides behind GYMS.
 #define GYMBTN_Y 380
-#define GYMBTN_W 160
-#define GYMBTN_H 32
-#define GYMBTN_X(i) (68 + (i) * 170)
+#define GYMBTN_W 190
+#define GYMBTN_H UI_TAP_MIN
+#define GYMBTN_X (CX - GYMBTN_W / 2)
 int8_t btlTrainer = -1;      // index into TRAINERS, -1 = a one-off fight
 bool btlHard = false;
 Combatant btlSquad[TRAINER_TEAM_MAX + 1];
@@ -507,6 +506,15 @@ uint8_t btlFoeAt = 0;
 
 // ---------------------------------------------------------------------------
 // The bag, and wild encounters.
+bool exploreOpen = false;
+bool exploreHard = false;
+#define EXPLORE_DIF_Y 232
+#define EXPLORE_DIF_H UI_TAP_MIN
+#define EXPLORE_BTN_X 78
+#define EXPLORE_BTN_Y 298
+#define EXPLORE_BTN_W 310
+#define EXPLORE_BTN_H 72
+#define EXPLORE_BTN_PAD 11
 bool bagOpen = false;
 uint8_t bagPage = 0;
 #define BAG_PER_PAGE 5
@@ -560,9 +568,10 @@ uint8_t btlMenu = 0;
 char btlMsg[6][40];
 uint8_t btlMsgCount = 0;   // queued lines; a tap shows the next
 #define BTL_CELL_W 160
-#define BTL_CELL_H 44
+#define BTL_CELL_H 54
 #define BTL_GRID_X 69
-#define BTL_GRID_Y 274
+#define BTL_GRID_Y 270
+#define BTL_GRID_H (BTL_CELL_H * 2 + 8)
 #define BTL_CELL_X(i) (BTL_GRID_X + ((i) % 2) * (BTL_CELL_W + 8))
 #define BTL_CELL_Y(i) (BTL_GRID_Y + ((i) / 2) * (BTL_CELL_H + 8))
 
@@ -590,7 +599,7 @@ uint8_t btlMsgCount = 0;   // queued lines; a tap shows the next
 #define BTL_BACK_W 190
 #define BTL_BACK_H UI_TAP_MIN
 #define BTL_BACK_X (233 - BTL_BACK_W / 2)
-#define BTL_BACK_Y 384
+#define BTL_BACK_Y 396
 #define BTL_HIT_X0(i) (BTL_CELL_X(i) - BTL_HIT_PAD)
 // The far edges stop one pixel short so the four boxes TILE: the gap between
 // two cells is split down the middle with no pixel left over and none shared.
@@ -667,7 +676,7 @@ void uiArc(int cx, int cy, int r, int a0, int a1, int w, uint16_t col) {
 
 // The gesture model. Its tables and handlers live down beside uiCurrentScreen(),
 // but handleTouch() and onSwipe() sit ~1000 lines above them.
-#define TILE_COUNT 5   // GYM . PARTY . [PET] . DEX . PLAYER
+#define TILE_COUNT 6   // PLAYER . PARTY . [PET] . EXPLORE . GYM . DEX
 #define TILE_PET 2
 #define RIM_R0 186     // a drag starting outside this radius pages, not swipes
 #define RIM_STEP 20    // degrees of arc per page
@@ -1435,6 +1444,8 @@ void onSwipeV(int dir) {
   if (kbOpen || pet.ceremony) return;
   if (clockOpen) { if (back) clockOpen = false; return; }
 
+  if (exploreOpen) { if (back) uiTileGo(TILE_PET); return; }
+
   // The two multi-region tiles are two levels deep: chooser, then ladder/grid.
   // DOWN walks back out of them one step at a time; UP keeps the region
   // shortcut, which is now a convenience rather than the only way in.
@@ -1602,7 +1613,8 @@ void uiButtonHeights(int *out, int max, int *n) {
   // What a control is worth is what you can HIT, not what it draws: the home
   // icons are a 72 px graphic inside a 94 px disc.
   const int h[] = { PSLOT_HUB_R * 2, PSLOT_R * 2, PARTYCLOSE_H, LANBTN_H,
-                    BTL_CELL_H + BTL_HIT_PAD * 2, BTN_HIT * 2 };
+                    BTL_CELL_H + BTL_HIT_PAD * 2,
+                    EXPLORE_BTN_H + EXPLORE_BTN_PAD * 2, BTN_HIT * 2 };
   int c = (int)(sizeof(h) / sizeof(h[0]));
   if (c > max) c = max;
   for (int i = 0; i < c; i++) out[i] = h[i];
@@ -1876,6 +1888,22 @@ void onTap(int16_t x, int16_t y) {
     battleTap(x, y);
     return;
   }
+  if (exploreOpen) {
+    if (y >= EXPLORE_DIF_Y && y <= EXPLORE_DIF_Y + EXPLORE_DIF_H) {
+      exploreHard = !exploreHard;
+      sfxPlay(SFX_TAP);
+      return;
+    }
+    if (x >= EXPLORE_BTN_X - EXPLORE_BTN_PAD &&
+        x <= EXPLORE_BTN_X + EXPLORE_BTN_W + EXPLORE_BTN_PAD &&
+        y >= EXPLORE_BTN_Y - EXPLORE_BTN_PAD &&
+        y <= EXPLORE_BTN_Y + EXPLORE_BTN_H + EXPLORE_BTN_PAD) {
+      if (!startWildBattle(exploreHard)) { sfxPlay(SFX_DENY); return; }
+      exploreOpen = false;
+      sfxPlay(SFX_TAP);
+    }
+    return;
+  }
   if (bagOpen) {
     bagTap(x, y);
     return;
@@ -1930,23 +1958,13 @@ void onTap(int16_t x, int16_t y) {
       sfxPlay(SFX_TAP);
       return;
     }
-    if (y >= GYMBTN_Y && y <= GYMBTN_Y + GYMBTN_H) {
-      if (x >= GYMBTN_X(0) && x <= GYMBTN_X(0) + GYMBTN_W) {   // LAN battle
-        gymOpen = false;
-        lan.state = LINK_OFF;
-        lanOpen = true;
-        sfxPlay(SFX_TAP);
-        return;
-      }
-      if (x >= GYMBTN_X(1) && x <= GYMBTN_X(1) + GYMBTN_W) {   // a wild encounter
-        // startWildBattle() decides: draw and tap must never disagree about
-        // whether a button works, which is what uiButtonDisabled() exists for
-        // on the home row.
-        if (!startWildBattle(gymHard)) { sfxPlay(SFX_DENY); return; }
-        gymOpen = false;
-        sfxPlay(SFX_TAP);
-        return;
-      }
+    if (x >= GYMBTN_X && x <= GYMBTN_X + GYMBTN_W &&
+        y >= GYMBTN_Y && y <= GYMBTN_Y + GYMBTN_H) {
+      gymOpen = false;
+      lan.state = LINK_OFF;
+      lanOpen = true;
+      sfxPlay(SFX_TAP);
+      return;
     }
     for (int i = 0; i < GYM_ROWS; i++) {
       uint8_t idx = gymPage * GYM_ROWS + i;
@@ -2379,6 +2397,7 @@ uint8_t uiCurrentScreen() {
   if (battleOpen) return SCR_BATTLE;
   if (pickOpen) return SCR_PICK;
   if (lanOpen) return SCR_LAN;
+  if (exploreOpen) return SCR_EXPLORE;
   if (gymOpen) return gymPick ? SCR_GYMPICK : SCR_GYM;
   if (pet.hasLearnOffer()) return SCR_LEARN;
   if (gameOpen || sackOpen || spdOpen) return SCR_GAME;
@@ -2394,7 +2413,7 @@ uint8_t uiCurrentScreen() {
 // onSwipe(), and between them they close the bug this project shipped FOUR
 // times -- a paged screen that CLOSED instead of paging:
 //
-//   HORIZONTAL is the tile axis. Five peer screens with the pet in the middle,
+//   HORIZONTAL is the tile axis. Six peer screens with the pet near the middle,
 //   and it BUMPS at the ends. It can no longer close anything, so the gesture
 //   that means "next page" and the gesture that means "exit" are different
 //   gestures, which they never were before.
@@ -2410,14 +2429,14 @@ uint8_t uiCurrentScreen() {
 // and Pokedex tiles until a region is picked. One table, so uiTileIndex() and
 // uiTileGo() cannot end up with different ideas of what is on the axis.
 //
-// PLAYER . PARTY . [PET] . GYM . DEX -- yours on the left, the world on the
-// right. The order is not arbitrary: it keeps the two bindings that already
-// existed, swipe left for the gym ladder and swipe right for the party, so the
-// axis extends muscle memory instead of contradicting it.
+// PLAYER . PARTY . [PET] . EXPLORE . GYM . DEX -- yours on the left, the world
+// on the right. Exploration is a primary loop, not a gym action, so it gets the
+// first world-facing stop and the main screen can name it directly.
 struct TileDef { uint8_t scr, alt; };
 static const TileDef TILE[TILE_COUNT] = {
   { SCR_PLAYER, SCR_PLAYER }, { SCR_PARTY, SCR_PARTY }, { SCR_MAIN, SCR_MAIN },
-  { SCR_GYM, SCR_GYMPICK }, { SCR_GALLERY, SCR_DEXPICK },
+  { SCR_EXPLORE, SCR_EXPLORE }, { SCR_GYM, SCR_GYMPICK },
+  { SCR_GALLERY, SCR_DEXPICK },
 };
 
 int uiTileIndex() {
@@ -2432,7 +2451,7 @@ int uiTileIndex() {
 void uiTileGo(int i) {
   if (i < 0) i = 0;
   if (i >= TILE_COUNT) i = TILE_COUNT - 1;
-  gymOpen = partyOpen = galleryOpen = playerOpen = false;
+  exploreOpen = gymOpen = partyOpen = galleryOpen = playerOpen = false;
   boxOpen = false;
   boxDetail = partyDetail = 0;
   galleryDetail = 0;
@@ -2441,6 +2460,7 @@ void uiTileGo(int i) {
     // region was last set. Opening straight into it is how Johto and Hoenn came
     // to be built, reachable, and completely invisible.
     case SCR_GYM: gymOpen = true; gymPick = true; gymPage = 0; rpickPage = 0; break;
+    case SCR_EXPLORE: exploreOpen = true; break;
     case SCR_PARTY: partyOpen = true; break;
     case SCR_GALLERY:
       galleryOpen = true; galleryPick = true; galleryPage = 0; rpickPage = 0;
@@ -2531,7 +2551,7 @@ static inline uint16_t uiChromeInk() {
   return uiCurrentScreen() == SCR_MAIN ? inkColor() : UI_INK;
 }
 
-// The tile axis, drawn on every screen that is on it. Five bound gestures that
+// The tile axis, drawn on every screen that is on it. Six bound gestures that
 // nothing on the panel mentions is precisely how Johto and Hoenn came to be
 // built, reachable and completely invisible; an axis nobody can see is that
 // same mistake one level up.
@@ -2539,6 +2559,17 @@ void uiDrawTileDots() {
   int t = uiTileIndex();
   if (t < 0) return;
   uint16_t ink = uiChromeInk();
+  if (t == TILE_PET) {
+    char left[28], right[24];
+    snprintf(left, sizeof(left), "< %s", T(S_PARTY));
+    snprintf(right, sizeof(right), "%s >", T(S_EXPLORE));
+    gfx->setTextColor(ink);
+    gfx->setTextSize(2);
+    gfx->setCursor(CX - 8 - (int)strlen(left) * 12, 408);
+    gfx->print(left);
+    gfx->setCursor(CX + 8, 408);
+    gfx->print(right);
+  }
   for (int i = 0; i < TILE_COUNT; i++) {
     int x = CX - (TILE_COUNT - 1) * 13 + i * 26;
     if (i == t) gfx->fillRoundRect(x - 9, TILE_DOT_Y - 3, 18, 7, 3, ink);
@@ -2568,6 +2599,49 @@ void uiDrawRimBar() {
 void uiChrome() {
   uiDrawTileDots();
   uiDrawRimBar();
+}
+
+void renderExplore() {
+  int h = sceneHour();
+  gNight = pet.sleeping || h < 6 || h >= 20;
+  drawScene(pet.isEgg() ? 0 : DEX_TBL[pet.speciesId].biome, millis(), gNight);
+
+  gfx->fillRoundRect(78, 28, 310, 54, 14, UI_BG_DAY);
+  gfx->drawRoundRect(78, 28, 310, 54, 14, UI_INK);
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(3);
+  gfx->setCursor(CX - (int)strlen(T(S_EXPLORE)) * 9, 44);
+  gfx->print(T(S_EXPLORE));
+
+  drawMap(SPR_ICON_PLAY, 16, CX - 48, 108, 6, false);
+  const char *region = pet.regionName();
+  gfx->fillRoundRect(CX - 92, 204, 184, 26, 9, UI_BG_DAY);
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - (int)strlen(region) * 6, 210);
+  gfx->print(region);
+
+  const char *dif = T(exploreHard ? S_HARD : S_EASY);
+  int dw = (int)strlen(dif) * 12 + 48;
+  if (dw < 140) dw = 140;
+  gfx->fillRoundRect(CX - dw / 2, EXPLORE_DIF_Y, dw, EXPLORE_DIF_H, 12,
+                     exploreHard ? UI_BAR_BAD : UI_TRACK);
+  gfx->setTextColor(exploreHard ? UI_BG_DAY : UI_INK);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - (int)strlen(dif) * 6, EXPLORE_DIF_Y + 14);
+  gfx->print(dif);
+
+  bool live = !pet.isEgg() && pet.ceremony == CER_NONE;
+  gfx->fillRoundRect(EXPLORE_BTN_X, EXPLORE_BTN_Y, EXPLORE_BTN_W, EXPLORE_BTN_H,
+                     16, live ? UI_BAR_OK : UI_TRACK);
+  gfx->drawRoundRect(EXPLORE_BTN_X, EXPLORE_BTN_Y, EXPLORE_BTN_W, EXPLORE_BTN_H,
+                     16, live ? UI_INK : UI_INK_SOFT);
+  gfx->setTextColor(live ? UI_WHITE : UI_INK_SOFT);
+  gfx->setTextSize(3);
+  gfx->setCursor(CX - (int)strlen(T(S_EXPLORE)) * 9, EXPLORE_BTN_Y + 24);
+  gfx->print(T(S_EXPLORE));
+  uiChrome();
+  gfx->flush();
 }
 
 static void crumbDrop() {
@@ -2672,6 +2746,10 @@ void render() {
   }
   if (lanOpen) {
     renderLan();
+    return;
+  }
+  if (exploreOpen) {
+    renderExplore();
     return;
   }
   if (gymOpen) {
@@ -4398,24 +4476,43 @@ void renderBattle() {
                  (btlLinkHost ? (btlMyAct && !lan.hasPeerAct())
                               : (lan.state == LINK_WAITING));
   if (lanWait && !btlMsgCount) {
-    gfx->fillRoundRect(BTL_GRID_X, BTL_GRID_Y, 328, BTL_CELL_H * 2 + 8, 12, UI_WHITE);
-    gfx->drawRoundRect(BTL_GRID_X, BTL_GRID_Y, 328, BTL_CELL_H * 2 + 8, 12, UI_INK);
+    gfx->fillRoundRect(BTL_GRID_X, BTL_GRID_Y, 328, BTL_GRID_H, 12, UI_WHITE);
+    gfx->drawRoundRect(BTL_GRID_X, BTL_GRID_Y, 328, BTL_GRID_H, 12, UI_INK);
     gfx->setTextColor(UI_INK_SOFT);
-    gfx->setTextSize(1);
+    gfx->setTextSize(2);
     const char *w = T(S_LAN_WAITFOE);
-    gfx->setCursor(CX - (int)strlen(w) * 3, BTL_GRID_Y + 40);
+    gfx->setCursor(CX - (int)strlen(w) * 6, BTL_GRID_Y + 48);
     gfx->print(w);
   } else if (btlMsgCount) {            // narration takes over the menu area
-    gfx->fillRoundRect(BTL_GRID_X, BTL_GRID_Y, 328, BTL_CELL_H * 2 + 8, 12, UI_WHITE);
-    gfx->drawRoundRect(BTL_GRID_X, BTL_GRID_Y, 328, BTL_CELL_H * 2 + 8, 12, UI_INK);
+    gfx->fillRoundRect(BTL_GRID_X, BTL_GRID_Y, 328, BTL_GRID_H, 12, UI_WHITE);
+    gfx->drawRoundRect(BTL_GRID_X, BTL_GRID_Y, 328, BTL_GRID_H, 12, UI_INK);
     gfx->setTextColor(UI_INK);
-    gfx->setTextSize(1);
-    for (uint8_t i = 0; i < btlMsgCount && i < 4; i++) {
-      gfx->setCursor(CX - (int)strlen(btlMsg[i]) * 3, BTL_GRID_Y + 14 + i * 18);
-      gfx->print(btlMsg[i]);
+    gfx->setTextSize(2);
+    char lines[3][25] = {{0}};
+    const char *p = btlMsg[0];
+    uint8_t lineCount = 0;
+    while (*p && lineCount < 3) {
+      while (*p == ' ') p++;
+      int take = (int)strlen(p);
+      if (take > 24) take = 24;
+      if (p[take] && p[take] != ' ') {
+        int word = take;
+        while (word > 0 && p[word] != ' ') word--;
+        if (word > 0) take = word;
+      }
+      memcpy(lines[lineCount], p, take);
+      lines[lineCount][take] = 0;
+      p += take;
+      lineCount++;
+    }
+    int firstY = BTL_GRID_Y + 18 + (3 - lineCount) * 10;
+    for (uint8_t i = 0; i < lineCount; i++) {
+      gfx->setCursor(CX - (int)strlen(lines[i]) * 6, firstY + i * 24);
+      gfx->print(lines[i]);
     }
     gfx->setTextColor(UI_INK_SOFT);
-    gfx->setCursor(CX - 30, BTL_GRID_Y + 84);
+    gfx->setTextSize(1);
+    gfx->setCursor(CX - 18, BTL_GRID_Y + BTL_GRID_H - 14);
     gfx->print("tap...");
   } else if (btlMenu == 0) {
     // Four options on the 2x2 grid: FIGHT and BAG on top, POKEMON and RUN
@@ -4432,7 +4529,7 @@ void renderBattle() {
       gfx->drawRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, live ? UI_INK : 0x8410);
       gfx->setTextColor(live ? UI_INK : UI_INK_SOFT);
       gfx->setTextSize(2);
-      gfx->setCursor(x + (BTL_CELL_W - (int)strlen(opt[i]) * 12) / 2, y + 14);
+      gfx->setCursor(x + (BTL_CELL_W - (int)strlen(opt[i]) * 12) / 2, y + 19);
       gfx->print(opt[i]);
     }
   } else if (btlMenu == 3) {
@@ -4452,9 +4549,10 @@ void renderBattle() {
       gfx->fillRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, live ? UI_BG_DAY : UI_TRACK);
       gfx->drawRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, live ? UI_INK : 0x8410);
       gfx->setTextColor(live ? UI_INK : UI_INK_SOFT);
-      gfx->setTextSize(1);
-      gfx->setCursor(x + 10, y + 12);
+      gfx->setTextSize(strlen(itemEntry(k).name) <= 11 ? 2 : 1);
+      gfx->setCursor(x + 10, y + 8);
       gfx->print(itemEntry(k).name);
+      gfx->setTextSize(1);
       char cnt[8];
       snprintf(cnt, sizeof(cnt), "x%u", bag.count(k));
       gfx->setCursor(x + 10, y + 28);
@@ -4477,9 +4575,10 @@ void renderBattle() {
       gfx->fillRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, usable ? UI_BG_DAY : UI_TRACK);
       gfx->drawRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, usable ? UI_INK : 0x8410);
       gfx->setTextColor(usable ? UI_INK : UI_INK_SOFT);
-      gfx->setTextSize(1);
-      gfx->setCursor(x + 10, y + 10);
+      gfx->setTextSize(strlen(m.name) <= 11 ? 2 : 1);
+      gfx->setCursor(x + 10, y + 8);
       gfx->print(m.name);
+      gfx->setTextSize(1);
       char hp[20];
       snprintf(hp, sizeof(hp), "%u/%u", m.hp, m.maxHp);
       gfx->setCursor(x + 10, y + 28);
@@ -4494,17 +4593,17 @@ void renderBattle() {
       gfx->drawRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, UI_INK);
       if (!mv) continue;
       gfx->setTextColor(UI_INK);
-      gfx->setTextSize(1);
-      gfx->setCursor(x + 10, y + 12);
+      gfx->setTextSize(strlen(MOVE_TBL[mv].name) <= 11 ? 2 : 1);
+      gfx->setCursor(x + 10, y + 7);
       gfx->print(MOVE_TBL[mv].name);
       // Same chip as the move list: in a fight the type IS the decision, and
       // grey 6px text was the least visible thing on the busiest screen.
-      int cw = drawTypeChip(x + 10, y + 26, MOVE_TBL[mv].type);
+      int cw = drawTypeChip(x + 10, y + 34, MOVE_TBL[mv].type);
       if (hasStab(btlYou.dex, MOVE_TBL[mv].type) &&
           MOVE_TBL[mv].cat != MC_STATUS) {
         gfx->setTextSize(1);
         gfx->setTextColor(DEX_TBL[btlYou.dex].accent);
-        gfx->setCursor(x + 10 + cw + 4, y + 30);
+        gfx->setCursor(x + 10 + cw + 4, y + 38);
         gfx->print("+");
       }
     }
@@ -4637,8 +4736,11 @@ void battleTap(int16_t x, int16_t y) {
     if (btlLink) { btlLink = false; lanOpen = true; }
     return;
   }
-  if (btlMsgCount) {          // a tap clears the narration and returns the menu
-    btlMsgCount = 0;
+  if (btlMsgCount) {          // one readable event per tap; never skip queued text
+    for (uint8_t i = 1; i < btlMsgCount; i++)
+      memcpy(btlMsg[i - 1], btlMsg[i], sizeof(btlMsg[0]));
+    btlMsgCount--;
+    if (btlMsgCount) return;
     if (btlOver) {
       btlFreeSprites();
       battleOpen = false;
@@ -5380,23 +5482,13 @@ void renderGyms() {
       gfx->print("*");
     }
   }
-  // The two other kinds of battle live here too. This screen is the battle hub
-  // -- swipe left reaches it -- and wild encounters had nowhere else to go:
-  // every gesture from the main screen is already spoken for.
-  const char *other[2] = { T(S_LAN), T(S_EXPLORE) };
-  for (int i = 0; i < 2; i++) {
-    int bx = GYMBTN_X(i);
-    // EXPLORE is dead while there is nothing to send out. Stated as what is
-    // ALLOWED rather than as a list of exclusions -- a guard written the other
-    // way rots every time a state is added.
-    bool live = (i == 0) || (!pet.isEgg() && pet.ceremony == CER_NONE);
-    gfx->fillRoundRect(bx, GYMBTN_Y, GYMBTN_W, GYMBTN_H, 9, live ? UI_BG_DAY : UI_TRACK);
-    gfx->drawRoundRect(bx, GYMBTN_Y, GYMBTN_W, GYMBTN_H, 9, live ? UI_INK : 0x8410);
-    gfx->setTextColor(live ? UI_INK : UI_INK_SOFT);
-    gfx->setTextSize(2);
-    gfx->setCursor(bx + (GYMBTN_W - (int)strlen(other[i]) * 12) / 2, GYMBTN_Y + 8);
-    gfx->print(other[i]);
-  }
+  gfx->fillRoundRect(GYMBTN_X, GYMBTN_Y, GYMBTN_W, GYMBTN_H, 11, UI_BG_DAY);
+  gfx->drawRoundRect(GYMBTN_X, GYMBTN_Y, GYMBTN_W, GYMBTN_H, 11, UI_INK);
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(2);
+  gfx->setCursor(GYMBTN_X + (GYMBTN_W - (int)strlen(T(S_LAN)) * 12) / 2,
+                 GYMBTN_Y + 14);
+  gfx->print(T(S_LAN));
   uiChrome();
   gfx->flush();
 }

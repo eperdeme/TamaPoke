@@ -112,8 +112,13 @@ int main(){
   // rectangles here -- a test that copies the geometry drifts from it.
   ck(btlCellIndexAt(232, 300) == 0 && btlCellIndexAt(233, 300) == 1,
      "the column seam belongs to exactly one side");
-  ck(btlCellIndexAt(200, 321) == 0 && btlCellIndexAt(200, 322) == 2,
-     "and so does the row seam");
+  int rowEdge = -1;
+  for (int y = 270; y < 400; y++)
+    if (btlCellIndexAt(200, y) == 0 && btlCellIndexAt(200, y + 1) == 2) {
+      rowEdge = y;
+      break;
+    }
+  ck(rowEdge >= 0, "and so does the row seam");
 
   // finally, drive a real tap low in the bottom-left cell through battleTap
   startBattle(9, 50);

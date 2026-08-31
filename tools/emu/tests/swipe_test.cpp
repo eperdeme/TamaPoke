@@ -20,12 +20,15 @@ void FakeESP::restart(){exit(0);}
 int FakeSerial::available(){return 0;}
 String FakeSerial::readStringUntil(char){return String("");}
 void setup(); void render(); void onSwipe(int dir); void onSwipeV(int dir);
+void onTap(int16_t x, int16_t y);
 void onRim(int dir);
 int uiTileIndex(); void uiTileGo(int i);
 uint8_t uiCurrentScreen(); uint8_t uiRimPages(); uint8_t uiRimPage();
 extern Pet pet;
 extern bool cardOpen, galleryOpen, clockOpen, kbOpen, menuOpen, partyOpen, partyPick;
 extern bool trainOpen, movePickOpen, battleOpen, gymOpen, playerOpen, boxOpen, pickOpen;
+extern bool exploreOpen;
+extern bool btlWild;
 extern uint8_t cardPage, gymPage, playerPage, movePickPage, boxPage, pickPage, partyDetail;
 extern uint8_t galleryPage; extern bool galleryDirty; extern uint8_t galleryDetail;
 extern uint8_t galleryRegion;
@@ -53,6 +56,7 @@ static void clearAll(){
   gymPick=galleryPick=false;
   cardOpen=galleryOpen=clockOpen=kbOpen=menuOpen=partyOpen=partyPick=false;
   trainOpen=movePickOpen=battleOpen=gymOpen=playerOpen=boxOpen=pickOpen=false;
+  exploreOpen=false;
   bagOpen=false;
   partyDetail=0; boxSel=boxSwapFrom=0;
 }
@@ -213,7 +217,16 @@ int main(){
   // built, reachable only by an invisible gesture, and so looks absent.
   {
     clearAll();
-    onSwipe(-1);                       // swipe left from the main screen
+    onSwipe(-1);                       // the first world-facing stop is Explore
+    if (!exploreOpen) { printf("FAIL  explore    is not beside the main screen\n"); bad++; }
+    else printf("PASS  %-10s is beside the main screen\n", "explore");
+    onTap(233, 334);                    // the large Explore action
+    if (!battleOpen || !btlWild || exploreOpen) {
+      printf("FAIL  explore    its primary action does not start a wild battle\n"); bad++;
+    } else printf("PASS  %-10s starts a wild battle from its primary action\n", "explore");
+    clearAll();
+    onSwipe(-1);
+    onSwipe(-1);                       // Gyms follows Explore
     if (!gymOpen || !gymPick) { printf("FAIL  gyms       does not open on the region chooser\n"); bad++; }
     else printf("PASS  %-10s opens on the region chooser\n", "gyms");
     // and a swipe DOWN out of a ladder returns to it -- one step of depth, not

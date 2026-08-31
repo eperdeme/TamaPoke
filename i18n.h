@@ -59,6 +59,7 @@ enum StrId : uint8_t {
   // menu overlay (tap the name on the main screen) and the party
   S_MENU_TITLE, S_SETTINGS, S_CLOSE,
   S_PARTY_FMT,      // "PARTY %u/6"
+  S_PARTY,          // short navigation label
   S_PARTY_EMPTY,    // empty slot marker
   S_PARTY_JOINED,   // "%s joined the party!"
   S_PARTY_FULL,     // prompt: pick someone to replace

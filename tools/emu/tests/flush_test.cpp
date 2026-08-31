@@ -22,6 +22,7 @@ extern Arduino_Canvas *gfx;
 extern Pet pet;
 extern bool cardOpen, galleryOpen, clockOpen, kbOpen, menuOpen, partyOpen, partyPick;
 extern bool trainOpen, movePickOpen, battleOpen, gymOpen, playerOpen;
+extern bool exploreOpen;
 extern uint8_t cardPage;
 extern uint8_t partyDetail, boxDetail;
 extern bool boxOpen, releaseConfirm;
@@ -33,6 +34,7 @@ static int bad = 0;
 static void clearAll(){
   cardOpen=galleryOpen=clockOpen=kbOpen=menuOpen=partyOpen=partyPick=false;
   trainOpen=movePickOpen=battleOpen=gymOpen=playerOpen=false;
+  exploreOpen=false;
   boxOpen=releaseConfirm=false;
   bagOpen=false;
   partyDetail=boxDetail=0;
@@ -66,6 +68,7 @@ int main(){
   clearAll(); check("main");
   clearAll(); trainOpen=true;    check("train");
   clearAll(); movePickOpen=true; check("movepick");
+  clearAll(); exploreOpen=true;  check("explore");
   clearAll(); gymOpen=true;      check("gyms");
   clearAll(); playerOpen=true;   check("player");
   clearAll(); menuOpen=true;     check("menu");
@@ -92,6 +95,7 @@ int main(){
   clearAll(); trainOpen=true;       crumbIs("train");
   clearAll(); menuOpen=true;        crumbIs("menu");
   clearAll(); partyOpen=true;       crumbIs("party");
+  clearAll(); exploreOpen=true;     crumbIs("explore");
   clearAll(); gymOpen=true;         crumbIs("gym");
   clearAll(); playerOpen=true;      crumbIs("player");
   clearAll(); movePickOpen=true;    crumbIs("movepick");

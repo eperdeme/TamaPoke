@@ -141,8 +141,9 @@ extern Combatant btlYou, btlFoe;
 extern uint32_t btlLungeUntil[2], btlHitUntil[2];
 extern uint8_t btlMenu;
 void startTrainerBattle(uint8_t idx, bool hard);
+bool startWildBattle(bool hard);
 void onTap(int16_t x, int16_t y);   // the first-boot shots tap their way in
-extern bool gymOpen, playerOpen;
+extern bool exploreOpen, gymOpen, playerOpen;
 extern bool galleryDirty;
 extern uint8_t galleryRegion;
 extern uint8_t gymRegion;
@@ -251,6 +252,7 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
   else if (!strcmp(screen, "moves"))   { cardOpen = true; cardPage = 2; }
   else if (!strcmp(screen, "movepick")) { movePickOpen = true; }
   else if (!strcmp(screen, "battle2")) { startBattle(9, 50); }
+  else if (!strcmp(screen, "wild")) { startWildBattle(false); }
   else if (!strcmp(screen, "btlmenu")) { startTrainerBattle(3, false); }
   else if (!strcmp(screen, "btlswitch")) { startTrainerBattle(3, false); btlMenu = 2; }
   else if (!strcmp(screen, "btlmoves")) { startTrainerBattle(3, false); btlMenu = 1; }
@@ -260,6 +262,7 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
     btlLungeUntil[0] = millis() + 130; // you mid-lunge
     btlHitUntil[1] = millis() + 300;   // foe flinching
   }
+  else if (!strcmp(screen, "explore")) exploreOpen = true;
   else if (!strcmp(screen, "gyms")) { gymOpen = true; }
   else if (!strcmp(screen, "gympick")) { gymOpen = true; gymPick = true; }
   else if (!strcmp(screen, "dexpick")) {

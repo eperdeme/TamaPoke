@@ -1325,7 +1325,7 @@ is recorded here as fact so nobody redesigns it from the old notes.
 
 | Gesture | Means | Where |
 |---|---|---|
-| Horizontal | move along the TILE AXIS | `PLAYER . PARTY . [PET] . GYM . DEX` |
+| Horizontal | move along the TILE AXIS | `PLAYER . PARTY . [PET] . EXPLORE . GYM . DEX` |
 | Up | deeper (the pet's card, a sheet) | everywhere |
 | Down | BACK, one level | everywhere |
 | Rim drag | PAGE the current screen | every paged screen |
@@ -1342,10 +1342,11 @@ the page and how many there are. The arc scrollbar, the rim drag and
 and its coverage from one edit. Adding a screen to `onSwipe` instead is the old
 mistake wearing new clothes.
 
-**The tile order is not arbitrary.** `PLAYER . PARTY . [PET] . GYM . DEX` keeps
-the two bindings that already existed -- swipe left for the gym ladder, swipe
-right for the party -- so the axis extends muscle memory rather than fighting
-it. Yours on the left, the world on the right.
+**The tile order is not arbitrary.** `PLAYER . PARTY . [PET] . EXPLORE . GYM .
+DEX` keeps yours on the left and the world on the right. Explore is beside the
+pet because it is a primary loop, not an action owned by the gym ladder. The pet
+screen names both neighboring destinations so the horizontal axis is visible
+before somebody already knows to swipe.
 
 **Both multi-region tiles still open on their CHOOSER**, and `swipe_test` still
 asserts it. Down backs out of a ladder to the chooser and out of the chooser to

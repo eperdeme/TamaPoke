@@ -238,9 +238,9 @@ brings ELECTIVIRE, MAGMORTAR and RHYPERIOR waiting on exactly the same thing.
 
 ### Wild encounters, catching and the bag
 
-**EXPLORE**, on the gym screen next to LAN BATTLE. That screen is the battle hub
-(swipe left), and it is where wild encounters had to live: every gesture from the
-main screen is already spoken for.
+**EXPLORE** is its own stop immediately beside the pet on the horizontal axis.
+The screen shows the current region, normal/hard difficulty and one large action;
+wild encounters no longer hide at the bottom of the gym ladder.
 
 The encounter rolls a rarity tier, then a species of that tier that is **in an
 installed region pack and has art** — a caught creature is kept forever, so one
@@ -556,7 +556,7 @@ direction means exactly one thing everywhere:
 
 | Gesture | Means |
 |---|---|
-| **Horizontal swipe** | move along the **tile axis**: `PLAYER · PARTY · [PET] · GYM · POKÉDEX`. It **bumps** at both ends and never closes anything. The five dots at 6 o'clock show where you are. |
+| **Horizontal swipe** | move along the **tile axis**: `PLAYER · PARTY · [PET] · EXPLORE · GYM · POKÉDEX`. It **bumps** at both ends and never closes anything. The six dots show position; the pet screen also names the neighboring `PARTY` and `EXPLORE` destinations. |
 | **Swipe up** | go **deeper** — from the pet, its stat card (4 pages) |
 | **Swipe down** | go **back**, one level, from anywhere |
 | **Drag the rim** | **page** whatever is in front of you. The arc at 2–5 o'clock is the scrollbar; it shows position *and* extent, which a row of dots cannot. |
