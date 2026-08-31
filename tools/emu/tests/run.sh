@@ -20,6 +20,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 EMU="$(cd "$HERE/.." && pwd)"
 ROOT="$(cd "$EMU/../.." && pwd)"
 FILTER="${1:-}"
+SPRITE_DIR="$ROOT/tools/sdcard/mons"
 
 command -v sdl2-config >/dev/null || { echo "SDL2 not found (brew install sdl2)" >&2; exit 1; }
 
@@ -47,7 +48,7 @@ fi
 # arrays, not a string: the sprite dir has to reach the compiler still quoted,
 # and passing these through eval silently strips them
 CORE=("$ROOT/gbsynth.cpp" "$ROOT/pet.cpp" "$ROOT/i18n.cpp" "$ROOT/party.cpp" "$ROOT/battle.cpp" "$ROOT/link.cpp" "$ROOT/save.cpp" "$ROOT/inventory.cpp" "$ROOT/wild.cpp")
-FLAGS=(-std=c++17 -O1 -w -I"$EMU" -I"$ROOT" -DSPRITE_DIR="\"$ROOT/tools/sdcard/mons\"")
+FLAGS=(-std=c++17 -O1 -w -I"$EMU" -I"$ROOT" -DSPRITE_DIR="\"$SPRITE_DIR\"")
 
 # these drive setup()/loop()/render(), so they need the sketch itself
 needs_sketch() { case "$1" in touch_test|flush_test|joy_test|anim_test|swipe_test|lan_test|console_test|hit_test|starter_test|release_test|focus_test) return 0;; *) return 1;; esac; }
@@ -55,16 +56,21 @@ needs_sketch() { case "$1" in touch_test|flush_test|joy_test|anim_test|swipe_tes
 # and these are standalone: gbsynth.cpp has no Arduino dependency at all, which
 # is the point of it -- linking the game core in would only demand stubs for
 # symbols the test never calls.
-standalone() { case "$1" in synth_test) return 0;; *) return 1;; esac; }
+standalone() { case "$1" in synth_test|palette_test) return 0;; *) return 1;; esac; }
 
 # sprite_test drives PmdMon straight off the sprite directory, so it needs the
 # host's SD stubs but none of the sketch
 needs_host() { case "$1" in sprite_test) return 0;; *) return 1;; esac; }
 
-pass=0; fail=0
+pass=0; fail=0; skip=0
 for src in "$HERE"/*_test.cpp; do
   name="$(basename "$src" .cpp)"
   [ -n "$FILTER" ] && [[ "$name" != *"$FILTER"* ]] && continue
+  if [ "$name" = sprite_test ] && [ ! -d "$SPRITE_DIR" ]; then
+    echo "=== sprite_test: SKIPPED (generate tools/sdcard/mons with tools/pack_pmd.py)"
+    skip=$((skip+1))
+    continue
+  fi
   extra=()
   needs_sketch "$name" && extra=("$EMU/sketch.cpp" "$EMU/host_impl.cpp" "$EMU/font.cpp" "$EMU/clock.cpp")
   needs_host "$name" && extra=("$EMU/host_impl.cpp" "$EMU/font.cpp")
@@ -87,5 +93,5 @@ for src in "$HERE"/*_test.cpp; do
 done
 
 echo
-echo "suites passed: $pass, failed: $fail"
+echo "suites passed: $pass, failed: $fail, skipped: $skip"
 [ "$fail" -eq 0 ]

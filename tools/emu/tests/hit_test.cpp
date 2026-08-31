@@ -42,6 +42,9 @@ void uiConfirmRects(int *b1Top, int *b1Bot, int *b2Top, int *b2Bot);
 // The round-panel geometry, asked of the firmware rather than restated here.
 int uiSafeHalfWidth(int y);
 int uiTapFinger();
+int uiButtonHitR();
+int uiCareArcTop(int i);
+int uiHeaderNameBottom();
 void partySlotPos(int i, int *cx, int *cy);
 int partySlotAt(int16_t x, int16_t y);
 bool partyHubAt(int16_t x, int16_t y);
@@ -212,11 +215,11 @@ int main(){
   // firmware through uiTapFinger(), because a test that retypes the threshold
   // it is enforcing proves nothing.
   //
-  // FOUR controls are still under it and CANNOT grow where they are: the party
-  // CLOSE bar and the LAN button have no room below a full screen, the battle
-  // grid cell would push the grid off the panel, and a fourth home icon at 94
-  // reaches radius 236 of 233 -- a finger-safe home row here is three icons,
-  // not four. The count is asserted so a FIFTH cannot appear quietly.
+  // THREE controls are still under it and cannot grow where they are: the party
+  // CLOSE bar and the LAN button have no room below a full screen, and the
+  // battle grid cell would push the grid off the panel. The home icons DO reach
+  // it -- they draw at 72 px inside a 94 px hit disc, which is the usual answer
+  // here. The count is asserted so a FOURTH cannot appear quietly.
   {
     const int FINGER = uiTapFinger();
     const double PPMM = 466.0 / 1.75 / 25.4;
@@ -231,19 +234,28 @@ int main(){
       if (h[i] < 44) tiny++;
     }
     ck(tiny == 0, "no control is below the hard floor");
-    ck(under <= 4, "and no FIFTH control has dropped below the finger floor");
+    ck(under <= 3, "and no FOURTH control has dropped below the finger floor");
 
-    // The home icons are round-cornered and their hit area is a DISC, so the
-    // honest question is whether their bounding circle clears the bezel --
-    // a square bound would fail them for corners that are not drawn.
+    // The home icons are round and their hit area is a DISC that is bigger than
+    // the graphic, so the honest question is whether THAT clears the bezel.
     int offGlass = 0;
     for (int i = 0; i < 4; i++) {
       int bx, by, bh;
       uiButtonAt(i, &bx, &by, &bh);
       double d = sqrt((double)(bx - 233) * (bx - 233) + (double)(by - 233) * (by - 233));
-      if (d + bh > 233) offGlass++;
+      if (d + uiButtonHitR() > 233) offGlass++;
     }
-    ck(offGlass == 0, "every home icon is fully on the glass");
+    ck(offGlass == 0, "every home icon's hit disc is fully on the glass");
+  }
+
+  // The two upper care arcs once ran behind the Pokemon's name. Ask both
+  // renderers for their real bounds: copying either y here would only prove a
+  // transcription. Twelve pixels leaves a visible gap at the bitmap font's
+  // actual size rather than merely avoiding a shared pixel.
+  {
+    int clear = 0, bottom = uiHeaderNameBottom();
+    for (int i = 0; i < 4; i++) if (uiCareArcTop(i) >= bottom + 12) clear++;
+    ck(clear == 4, "every care arc clears the Pokemon name band");
   }
 
   // The party ring. Its radius is MEASURED off partySlotAt() rather than read

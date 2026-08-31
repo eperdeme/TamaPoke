@@ -39,7 +39,7 @@
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
-#define FW_VERSION "3.13"
+#define FW_VERSION "3.14"
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
   LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -372,13 +372,12 @@ uint8_t btlMyAct = 0;        // host: our own action, latched until theirs lands
 // battle grid's bottom row, the party screen's BOX, and the LAN button -- were
 // all the same mistake: a control sized to fit its label rather than a finger.
 //
-// 44 is the number everyone quotes, but it is 44 POINTS. This panel is 466 px
-// across 1.75 in = 266 ppi, so a pixel is 0.095 mm and 44 px is 4.2 mm, under
-// half a fingertip. It survives as the HARD FLOOR because several laid-out
-// screens cannot grow without being redesigned, but nothing new may use it.
+// The original 44 came from Apple's logical-point guidance but was treated as
+// raw panel pixels: only 4.2 mm here. It survives as the hard floor because
+// several old screens cannot grow without redesigning them.
 #define UI_TAP_MIN 44
-// 9 mm -- what watchOS and Wear OS both land on -- in this panel's pixels.
-// Every control laid out from here on is held to THIS by hit_test.
+// The local 9 mm floor, chosen after repeated board reports. Wear OS explicitly
+// allows a smaller visible compact button inside its full-size tap target.
 #define UI_TAP_FINGER 94
 
 // The LAN battle button on the gym region chooser.
@@ -628,6 +627,8 @@ int flashIdxForDex(int16_t dex) {
 #define CX 233  // centro de la pantalla redonda
 #define CY 233
 #define UI_R 233   // the glass is a CIRCLE, and every full-width layout must ask
+#define HEADER_NAME_Y 52
+#define HEADER_NAME_H 24
 #define PET_CY 202  // centro vertical del sprite
 
 // Half the usable width at row y: the chord of the panel at that height.
@@ -705,10 +706,8 @@ struct Btn {
 // trainer and moved into the training menu -- at which point tapping it just
 // opened the same menu the dumbbell does, two icons for one destination.
 //
-// They sit on the panel's curve: y = 372 - dx^2/1100, the outer pair lifted so
-// the row stays on glass. At 80 px and 88 px apart the outermost reaches radius
-// 220 of 233 -- the row cannot grow again without losing an icon, because four
-// UI_TAP_FINGER targets need 392 px of chord and reach radius 222.
+// They sit on the panel's curve, with 94 px between centres. Their hit discs
+// are tangent and stay on glass; the visible buttons are smaller inside them.
 #define BTN_COUNT 4
 // Referred to by NAME, never by literal index. Removing the ball icon shifted
 // every index by one and drawButtons() still had `i != 2` meaning LIGHT -- which
@@ -718,16 +717,18 @@ struct Btn {
 #define BTN_BATH  2
 #define BTN_TRAIN 3
 Btn buttons[BTN_COUNT] = {
-  { 101, 356, SPR_ICON_FOOD },   // comer
-  { 189, 370, SPR_ICON_LIGHT },  // luz
-  { 277, 370, SPR_ICON_CLEAN },  // bano
-  { 365, 356, SPR_ICON_TRAIN },  // entrenar
+  {  92, 352, SPR_ICON_FOOD },   // comer
+  { 186, 370, SPR_ICON_LIGHT },  // luz
+  { 280, 370, SPR_ICON_CLEAN },  // bano
+  { 374, 352, SPR_ICON_TRAIN },  // entrenar
 };
-// 80x80. It was 60, which is 5.7 mm on a 266 ppi panel -- well under the 9 mm
-// a fingertip needs, and the reason three separate controls were reported as
-// hard to press. The care bars moved to the rim to make room for this.
-#define BTN_HALF 40
-#define BTN_HIT 46   // radio tactil (un poco mas generoso)
+// The GRAPHIC is 72 px and the HIT AREA is 94. They were the same 80 px, which
+// looked heavy without actually reaching the finger floor -- the usual answer
+// here is a target bigger than the thing it draws, which is what the battle
+// grid and the egg pill already do. At a 94 px pitch the four hit discs are
+// exactly tangent: no overlap to make a tap ambiguous, no gap to swallow one.
+#define BTN_HALF 36
+#define BTN_HIT 47
 
 // grietas del huevo (pixeles 'k' sobre el sprite)
 static const uint8_t CRACK1[][2] = { {15,8},{16,9},{15,10} };
@@ -1503,7 +1504,7 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
   char ty[24];
   if (d.type2 == T_NONE) snprintf(ty, sizeof(ty), "%s", typeName(d.type1));
   else snprintf(ty, sizeof(ty), "%s/%s", typeName(d.type1), typeName(d.type2));
-  gfx->setTextColor(UI_TRACK);
+  gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(1);
   gfx->setCursor(CX - (int)strlen(ty) * 3, 64);
   gfx->print(ty);
@@ -1533,7 +1534,7 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
   gfx->fillRoundRect(PDET_L_X, PDET_BTN_Y, PDET_L_W, PDET_BTN_H, 10,
                      leftOk ? UI_BAR_OK : UI_TRACK);
   gfx->drawRoundRect(PDET_L_X, PDET_BTN_Y, PDET_L_W, PDET_BTN_H, 10, UI_INK);
-  gfx->setTextColor(leftOk ? UI_BG_DAY : 0x8410);
+  gfx->setTextColor(leftOk ? UI_BG_DAY : UI_INK_SOFT);
   gfx->setTextSize(2);
   gfx->setCursor(PDET_L_X + PDET_L_W / 2 - (int)strlen(leftLbl) * 6,
                  PDET_BTN_Y + PDET_BTN_H / 2 - 8);
@@ -1548,12 +1549,12 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
   gfx->print(T(S_RELEASE_BTN));
 
   if (!leftOk && !fromBox) {
-    gfx->setTextColor(UI_TRACK);
+    gfx->setTextColor(UI_INK_SOFT);
     gfx->setTextSize(1);
     gfx->setCursor(CX - (int)strlen(T(S_FOCUS_NOW)) * 3, PDET_BTN_Y + PDET_BTN_H + 4);
     gfx->print(T(S_FOCUS_NOW));
   }
-  gfx->setTextColor(UI_TRACK);
+  gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(2);
   gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 404);
   gfx->print(T(S_BACK));
@@ -1598,8 +1599,10 @@ void renderBoxDetail() {
 // Every primary button's height, so a test can hold them all to UI_TAP_MIN
 // instead of waiting for somebody to report the next one by hand.
 void uiButtonHeights(int *out, int max, int *n) {
+  // What a control is worth is what you can HIT, not what it draws: the home
+  // icons are a 72 px graphic inside a 94 px disc.
   const int h[] = { PSLOT_HUB_R * 2, PSLOT_R * 2, PARTYCLOSE_H, LANBTN_H,
-                    BTL_CELL_H + BTL_HIT_PAD * 2, BTN_HALF * 2 };
+                    BTL_CELL_H + BTL_HIT_PAD * 2, BTN_HIT * 2 };
   int c = (int)(sizeof(h) / sizeof(h[0]));
   if (c > max) c = max;
   for (int i = 0; i < c; i++) out[i] = h[i];
@@ -1710,6 +1713,9 @@ bool partyHubAt(int16_t x, int16_t y) {
 // Exposed so hit_test can hold every control to the finger floor without
 // keeping its own copy of the number it is enforcing.
 int uiTapFinger() { return UI_TAP_FINGER; }
+
+// The home icons' TAP radius, which is larger than the graphic they draw.
+int uiButtonHitR() { return BTN_HIT; }
 
 void partyTap(int16_t x, int16_t y) {
   if (boxOpen) { boxTap(x, y); return; }
@@ -2192,6 +2198,19 @@ void onTap(int16_t x, int16_t y) {
 
 bool gNight = false;  // noche real (por hora) o durmiendo: lo fija render()
 uint16_t inkColor() { return gNight ? UI_INK_NIGHT : UI_INK; }
+uint16_t grooveColor() {
+  return uiCurrentScreen() == SCR_MAIN && gNight ? UI_GROOVE_NIGHT : UI_GROOVE_DAY;
+}
+uint16_t scrollTrackColor() {
+  return uiCurrentScreen() == SCR_MAIN && gNight ? UI_SCROLL_NIGHT : UI_SCROLL_DAY;
+}
+static bool uiNightContent() {
+  uint8_t screen = uiCurrentScreen();
+  return gNight && (screen == SCR_MAIN || screen == SCR_GAME);
+}
+uint16_t uiTextOk() { return uiNightContent() ? UI_BAR_OK : UI_TEXT_OK; }
+uint16_t uiTextWarn() { return uiNightContent() ? UI_BAR_WARN : UI_TEXT_WARN; }
+uint16_t uiTextBad() { return uiNightContent() ? UI_BAR_BAD : UI_TEXT_BAD; }
 
 // ---------- escena de fondo: bioma del tipo + hora real del RTC ----------
 
@@ -2523,7 +2542,7 @@ void uiDrawTileDots() {
   for (int i = 0; i < TILE_COUNT; i++) {
     int x = CX - (TILE_COUNT - 1) * 13 + i * 26;
     if (i == t) gfx->fillRoundRect(x - 9, TILE_DOT_Y - 3, 18, 7, 3, ink);
-    else gfx->fillCircle(x, TILE_DOT_Y, 3, UI_TRACK);
+    else gfx->fillCircle(x, TILE_DOT_Y, 3, scrollTrackColor());
   }
 }
 
@@ -2540,7 +2559,7 @@ void uiDrawRimBar() {
   int thumb = span / n;
   if (thumb < 9) thumb = 9;
   int a0 = RIM_BAR_A0 + (span - thumb) * (int)p / (int)(n - 1);
-  uiArc(CX, CY, RIM_BAR_R, RIM_BAR_A0, RIM_BAR_A1, 7, UI_TRACK);
+  uiArc(CX, CY, RIM_BAR_R, RIM_BAR_A0, RIM_BAR_A1, 7, scrollTrackColor());
   uiArc(CX, CY, RIM_BAR_R, a0, a0 + thumb, 7, uiChromeInk());
 }
 
@@ -2699,7 +2718,7 @@ void render() {
       for (auto &c : CRACK2) gfx->fillRect(x + c[0] * s, y + c[1] * s, s, s, INK_K);
     if (pet.eggRarity() >= R_RARO) {
       const char *rar = (pet.eggRarity() == R_LEGENDARIO) ? T(S_EGG_LEGEND) : T(S_EGG_RARE);
-      gfx->setTextColor(pet.eggRarity() == R_LEGENDARIO ? UI_BAR_WARN : 0x4C98);
+      gfx->setTextColor(pet.eggRarity() == R_LEGENDARIO ? uiTextWarn() : uiTextOk());
       gfx->setTextSize(2);
       gfx->setCursor(CX - strlen(rar) * 6, 316);
       gfx->print(rar);
@@ -2959,13 +2978,13 @@ void renderSack() {
     gfx->print(b);
     char g[18];
     snprintf(g, sizeof(g), T(S_STR_GAIN_FMT), sackGain);
-    gfx->setTextColor(UI_BAR_BAD);
+    gfx->setTextColor(uiTextBad());
     gfx->setTextSize(3);
     gfx->setCursor(CX - strlen(g) * 9, 210);
     gfx->print(g);
     gfx->setTextSize(2);
     if (sackNewHi && sackHits > 0) {
-      gfx->setTextColor(UI_BAR_WARN);
+      gfx->setTextColor(uiTextWarn());
       gfx->setCursor(CX - strlen(T(S_NEW_RECORD)) * 6, 256);
       gfx->print(T(S_NEW_RECORD));
     } else {
@@ -3015,8 +3034,11 @@ void renderSack() {
   // barra de tiempo
   uint32_t left = sackUntil - now;
   int bw = 280, fw = (int)((uint32_t)bw * left / 10000);
-  gfx->fillRoundRect(CX - bw / 2, 350, bw, 16, 5, UI_TRACK);
-  if (fw > 2) gfx->fillRoundRect(CX - bw / 2, 350, fw, 16, 5, UI_BAR_OK);
+  gfx->fillRoundRect(CX - bw / 2, 350, bw, 16, 5, grooveColor());
+  if (fw > 4) {
+    gfx->fillRoundRect(CX - bw / 2, 350, fw, 16, 5, UI_INK);
+    gfx->fillRoundRect(CX - bw / 2 + 2, 352, fw - 4, 12, 3, UI_BAR_OK);
+  }
 
   gfx->flush();
 }
@@ -3025,6 +3047,7 @@ void renderSack() {
 void drawGameScene() {
   int hh = sceneHour();
   bool night = hh < 6 || hh >= 20;
+  gNight = night;
   uint16_t top, bot;
   if (night)       { top = C565(0x0c, 0x12, 0x24); bot = C565(0x1e, 0x26, 0x46); }
   else if (hh < 8) { top = C565(0xd1, 0x6a, 0x86); bot = C565(0xf3, 0xb8, 0x7c); }
@@ -3062,7 +3085,7 @@ void renderGame() {
     gfx->print(buf);
     gfx->setTextSize(2);
     if (gameNewHi && gameScore > 0) {
-      gfx->setTextColor(UI_BAR_WARN);
+      gfx->setTextColor(uiTextWarn());
       gfx->setCursor(CX - strlen(T(S_NEW_RECORD)) * 6, 214);
       gfx->print(T(S_NEW_RECORD));
     } else {
@@ -3097,7 +3120,7 @@ void renderGame() {
   gfx->print(rec);
   for (int i = 0; i < 3; i++) {
     if (i < 3 - gameMisses) gfx->fillCircle(180 + i * 28, 104, 6, UI_BAR_BAD);
-    else gfx->drawCircle(180 + i * 28, 104, 6, UI_TRACK);
+    else gfx->drawCircle(180 + i * 28, 104, 6, UI_GROOVE_DAY);
   }
   // The clock, drawn like the bag's and the reaction test's so all three games
   // read the same way. Thin and near the rim: the middle belongs to the ball.
@@ -3105,10 +3128,12 @@ void renderGame() {
     uint32_t now2 = millis();
     uint32_t left = (gameUntil > now2) ? gameUntil - now2 : 0;
     int bw = 200, fw = (int)((uint32_t)bw * left / GAME_MS);
-    gfx->fillRoundRect(CX - bw / 2, 124, bw, 10, 4, UI_TRACK);
-    if (fw > 2)
-      gfx->fillRoundRect(CX - bw / 2, 124, fw, 10, 4,
+    gfx->fillRoundRect(CX - bw / 2, 124, bw, 10, 4, grooveColor());
+    if (fw > 4) {
+      gfx->fillRoundRect(CX - bw / 2, 124, fw, 10, 4, UI_INK);
+      gfx->fillRoundRect(CX - bw / 2 + 2, 126, fw - 4, 6, 2,
                          left < 5000 ? UI_BAR_WARN : UI_BAR_OK);
+    }
   }
 
   if (pmd.loaded) {
@@ -3164,7 +3189,7 @@ void drawCardStat(int y, const char *label, uint16_t val, uint16_t maxBar,
   int bw = 130;
   int fw = (int)val * bw / maxBar;
   if (fw > bw) fw = bw;
-  gfx->fillRoundRect(132, y + 2, bw, 11, 3, UI_TRACK);
+  gfx->fillRoundRect(132, y + 2, bw, 11, 3, UI_GROOVE_DAY);
   if (fw > 2) gfx->fillRoundRect(132, y + 2, fw, 11, 3, color);
   char num[8];
   snprintf(num, sizeof(num), "%u", val);
@@ -3174,7 +3199,7 @@ void drawCardStat(int y, const char *label, uint16_t val, uint16_t maxBar,
     char b[10];
     snprintf(b, sizeof(b), T(S_IV_FMT), iv);
     // un IV perfecto se resalta: es el golpe de suerte que el jugador busca
-    gfx->setTextColor(iv >= 31 ? UI_BAR_WARN : UI_TRACK);
+    gfx->setTextColor(iv >= 31 ? UI_TEXT_WARN : UI_INK_SOFT);
     gfx->setCursor(344, y);
     gfx->print(b);
   }
@@ -3239,7 +3264,7 @@ void renderClock() {
   drawClockBtn(252, 190, "-");  // min -
   drawClockBtn(318, 190, "+");  // min +
   gfx->setTextSize(2);
-  gfx->setTextColor(UI_TRACK);
+  gfx->setTextColor(UI_INK_SOFT);
   gfx->setCursor(120, 256);
   gfx->print(T(S_HOUR));
   gfx->setCursor(276, 256);
@@ -3265,19 +3290,19 @@ void renderClock() {
       gfx->fillRoundRect(bx, LANG_PILL_Y, VOL_BTN_W, LANG_PILL_H, 8,
                          live ? UI_WHITE : UI_TRACK);
       gfx->drawRoundRect(bx, LANG_PILL_Y, VOL_BTN_W, LANG_PILL_H, 8, UI_INK);
-      gfx->setTextColor(live ? UI_INK : 0x8410);
+      gfx->setTextColor(live ? UI_INK : UI_INK_SOFT);
       gfx->setTextSize(2);
       gfx->setCursor(bx + VOL_BTN_W / 2 - 6, LANG_PILL_Y + 8);
       gfx->print(i ? "+" : "-");
     }
     char vl[12];
     snprintf(vl, sizeof(vl), T(S_VOL_FMT), v);
-    gfx->setTextColor(v ? UI_INK : UI_TRACK);
+    gfx->setTextColor(v ? UI_INK : UI_INK_SOFT);
     gfx->setTextSize(1);
     gfx->setCursor(210 + (56 - (int)strlen(vl) * 6) / 2, LANG_PILL_Y + 4);
     gfx->print(vl);
     // a small bar under the number, so the level reads at a glance
-    gfx->fillRoundRect(210, LANG_PILL_Y + 18, 56, 8, 3, UI_TRACK);
+    gfx->fillRoundRect(210, LANG_PILL_Y + 18, 56, 8, 3, UI_GROOVE_DAY);
     if (v) gfx->fillRoundRect(210, LANG_PILL_Y + 18, 56 * v / 10, 8, 3, UI_BAR_OK);
   }
 
@@ -3297,7 +3322,7 @@ void renderClock() {
   gfx->setCursor(CX - 18, 352);
   gfx->print("OK");
 
-  gfx->setTextColor(UI_TRACK);
+  gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(2);
   gfx->setCursor(CX - strlen(T(S_CLOCK_CANCEL)) * 6, 410);
   gfx->print(T(S_CLOCK_CANCEL));
@@ -3409,7 +3434,7 @@ void renderCardProfile() {
   gfx->setCursor(CX - hlen * (hts == 3 ? 9 : 6), hts == 3 ? 34 : 40);
   gfx->print(head);
   if (pet.nick[0]) {  // especie real bajo el apodo
-    gfx->setTextColor(UI_TRACK);
+    gfx->setTextColor(UI_INK_SOFT);
     gfx->setTextSize(2);
     gfx->setCursor(CX - (strlen(d.name) + 2) * 6, 64);
     gfx->printf("(%s)", d.name);
@@ -3443,7 +3468,7 @@ void renderCardProfile() {
   gfx->setCursor(CX - strlen(info) * 6, 296);
   gfx->print(info);
 
-  gfx->setTextColor(UI_TRACK);
+  gfx->setTextColor(UI_INK_SOFT);
   gfx->setCursor(CX - strlen(T(S_RENAME_HINT)) * 6, 332);
   gfx->print(T(S_RENAME_HINT));
 }
@@ -3496,7 +3521,7 @@ void drawMoveRow(int y, uint8_t mv, bool highlight, int16_t dex) {
   gfx->fillRoundRect(70, y, 326, 50, 12, highlight ? UI_BAR_WARN : UI_BG_DAY);
   gfx->drawRoundRect(70, y, 326, 50, 12, UI_INK);
   if (!mv) {
-    gfx->setTextColor(UI_TRACK);
+    gfx->setTextColor(UI_INK_SOFT);
     gfx->setTextSize(2);
     gfx->setCursor(CX - (int)strlen(T(S_MOVE_EMPTY)) * 6, y + 17);
     gfx->print(T(S_MOVE_EMPTY));
@@ -3538,7 +3563,7 @@ void renderCardMoves() {
   gfx->setCursor(CX - strlen(T(S_MOVES)) * 9, 44);
   gfx->print(T(S_MOVES));
   for (int i = 0; i < MOVE_SLOTS; i++) drawMoveRow(MOVE_ROW_Y(i), pet.moves[i], false, pet.speciesId);
-  gfx->setTextColor(UI_TRACK);
+  gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(1);
   gfx->setCursor(CX - (int)strlen(T(S_MOVE_TAP)) * 3, 340);
   gfx->print(T(S_MOVE_TAP));
@@ -3605,7 +3630,7 @@ void renderMovePick() {
     if (i == movePickPage) gfx->fillCircle(CX - (pages - 1) * 13 + i * 26, 380, 5, UI_INK);
     else gfx->drawCircle(CX - (pages - 1) * 13 + i * 26, 380, 4, UI_INK);
   }
-  gfx->setTextColor(UI_TRACK);
+  gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(2);
   gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 402);
   gfx->print(T(S_BACK));
@@ -4172,7 +4197,7 @@ static void btlHpBar(int x, int y, int w, const Combatant &c, uint16_t shown) {
   int fw = c.maxHp ? (w - 4) * shown / c.maxHp : 0;
   uint16_t col = (shown * 2 > c.maxHp) ? UI_BAR_OK
                  : (shown * 4 > c.maxHp) ? UI_BAR_WARN : UI_BAR_BAD;
-  gfx->fillRoundRect(x, y, w, 14, 4, UI_TRACK);
+  gfx->fillRoundRect(x, y, w, 14, 4, UI_GROOVE_DAY);
   if (fw > 0) gfx->fillRoundRect(x + 2, y + 2, fw, 10, 3, col);
   gfx->drawRoundRect(x, y, w, 14, 4, UI_INK);
 }
@@ -4189,7 +4214,7 @@ static void btlSide(int tx, int ty, int sx, int sy, const Combatant &c, uint8_t 
   gfx->setTextSize(1);
   gfx->setCursor(tx, ty);
   gfx->print(l);
-  gfx->setTextColor(UI_BAR_WARN);
+  gfx->setTextColor(UI_TEXT_WARN);
   gfx->setCursor(tx, ty + 14);
   gfx->print("HP");
   btlHpBar(tx + 18, ty + 12, 122, c, btlHpShown[who]);
@@ -4203,7 +4228,7 @@ static void btlSide(int tx, int ty, int sx, int sy, const Combatant &c, uint8_t 
   if (c.ailment != AIL_NONE) {   // a status is the thing you most need to see
     static const StrId AIL_STR[] = { S_AIL_PARA, S_AIL_PARA, S_AIL_BURN, S_AIL_POISON,
                                      S_AIL_SLEEP, S_AIL_FREEZE, S_AIL_CONFUSE };
-    gfx->setTextColor(UI_BAR_BAD);
+    gfx->setTextColor(UI_TEXT_BAD);
     gfx->setCursor(tx + 18, ty + 28);
     gfx->print(T(AIL_STR[c.ailment]));
   }
@@ -4275,7 +4300,7 @@ void renderWin() {
   gfx->fillScreen(RGB565_BLACK);
   gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
 
-  gfx->setTextColor(UI_BAR_WARN);
+  gfx->setTextColor(UI_TEXT_WARN);
   gfx->setTextSize(3);
   gfx->setCursor(CX - strlen(T(S_BTL_WIN)) * 9, 54);
   gfx->print(T(S_BTL_WIN));
@@ -4317,7 +4342,7 @@ void renderWin() {
       gfx->print(n);
     }
     if (btlNewBadge) {
-      gfx->setTextColor(UI_BAR_OK);
+      gfx->setTextColor(UI_TEXT_OK);
       gfx->setTextSize(2);
       gfx->setCursor(CX - strlen(T(S_BTL_NEWBADGE)) * 6, 286);
       gfx->print(T(S_BTL_NEWBADGE));
@@ -4334,18 +4359,18 @@ void renderWin() {
     static const StrId NAMES[3] = { S_TR_ATK, S_TR_DEF, S_TR_SPE };
     snprintf(l, sizeof(l), T(S_WIN_TRAIN_FMT),
              T(NAMES[btlTrainWhich % 3]), btlTrainGain);
-    gfx->setTextColor(UI_BAR_OK);
+    gfx->setTextColor(UI_TEXT_OK);
     gfx->setTextSize(2);
     gfx->setCursor(CX - (int)strlen(l) * 6, 344);
     gfx->print(l);
   } else if (btlPetIn && btlTrainer >= 0) {
-    gfx->setTextColor(UI_TRACK);
+    gfx->setTextColor(UI_INK_SOFT);
     gfx->setTextSize(1);
     gfx->setCursor(CX - (int)strlen(T(S_WIN_MAXED)) * 3, 348);
     gfx->print(T(S_WIN_MAXED));
   }
 
-  gfx->setTextColor(UI_TRACK);
+  gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(2);
   gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 380);
   gfx->print(T(S_BACK));
@@ -4375,7 +4400,7 @@ void renderBattle() {
   if (lanWait && !btlMsgCount) {
     gfx->fillRoundRect(BTL_GRID_X, BTL_GRID_Y, 328, BTL_CELL_H * 2 + 8, 12, UI_WHITE);
     gfx->drawRoundRect(BTL_GRID_X, BTL_GRID_Y, 328, BTL_CELL_H * 2 + 8, 12, UI_INK);
-    gfx->setTextColor(UI_TRACK);
+    gfx->setTextColor(UI_INK_SOFT);
     gfx->setTextSize(1);
     const char *w = T(S_LAN_WAITFOE);
     gfx->setCursor(CX - (int)strlen(w) * 3, BTL_GRID_Y + 40);
@@ -4389,7 +4414,7 @@ void renderBattle() {
       gfx->setCursor(CX - (int)strlen(btlMsg[i]) * 3, BTL_GRID_Y + 14 + i * 18);
       gfx->print(btlMsg[i]);
     }
-    gfx->setTextColor(UI_TRACK);
+    gfx->setTextColor(UI_INK_SOFT);
     gfx->setCursor(CX - 30, BTL_GRID_Y + 84);
     gfx->print("tap...");
   } else if (btlMenu == 0) {
@@ -4405,7 +4430,7 @@ void renderBattle() {
       bool live = !(i == 1 && btlLink);
       gfx->fillRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, live ? UI_BG_DAY : UI_TRACK);
       gfx->drawRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, live ? UI_INK : 0x8410);
-      gfx->setTextColor(live ? UI_INK : 0x8410);
+      gfx->setTextColor(live ? UI_INK : UI_INK_SOFT);
       gfx->setTextSize(2);
       gfx->setCursor(x + (BTL_CELL_W - (int)strlen(opt[i]) * 12) / 2, y + 14);
       gfx->print(opt[i]);
@@ -4426,7 +4451,7 @@ void renderBattle() {
       bool live = !itemIsBall(k) || btlWild;   // a ball needs a wild target
       gfx->fillRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, live ? UI_BG_DAY : UI_TRACK);
       gfx->drawRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, live ? UI_INK : 0x8410);
-      gfx->setTextColor(live ? UI_INK : 0x8410);
+      gfx->setTextColor(live ? UI_INK : UI_INK_SOFT);
       gfx->setTextSize(1);
       gfx->setCursor(x + 10, y + 12);
       gfx->print(itemEntry(k).name);
@@ -4437,7 +4462,7 @@ void renderBattle() {
       shown++;
     }
     if (!shown) {
-      gfx->setTextColor(UI_TRACK);
+      gfx->setTextColor(UI_INK_SOFT);
       gfx->setTextSize(1);
       gfx->setCursor(CX - (int)strlen(T(S_BAG_EMPTY)) * 3, BTL_GRID_Y + 40);
       gfx->print(T(S_BAG_EMPTY));
@@ -4451,7 +4476,7 @@ void renderBattle() {
       bool usable = (i != btlSquadAt) && !m.fainted();
       gfx->fillRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, usable ? UI_BG_DAY : UI_TRACK);
       gfx->drawRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, usable ? UI_INK : 0x8410);
-      gfx->setTextColor(usable ? UI_INK : 0x8410);
+      gfx->setTextColor(usable ? UI_INK : UI_INK_SOFT);
       gfx->setTextSize(1);
       gfx->setCursor(x + 10, y + 10);
       gfx->print(m.name);
@@ -4748,7 +4773,7 @@ static void renderPlayerBadges() {
     gfx->setTextSize(1);
     gfx->setCursor(CX - (int)strlen(an) * 3, 143);
     gfx->print(an);
-    gfx->setTextColor(UI_TRACK);
+    gfx->setTextColor(UI_INK_SOFT);
     gfx->setCursor(CX - (int)strlen(T(S_AVATAR_HINT)) * 3, 154);
     gfx->print(T(S_AVATAR_HINT));
   }
@@ -4827,7 +4852,7 @@ static void renderPlayerMedals() {
   }
   char tot[28];
   snprintf(tot, sizeof(tot), T(S_MEDALS_TOTAL_FMT), pet.totalMedals);
-  gfx->setTextColor(UI_TRACK);
+  gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(1);
   gfx->setCursor(CX - (int)strlen(tot) * 3, 344);
   gfx->print(tot);
@@ -4839,7 +4864,7 @@ void renderPlayer() {
   if (playerPage < GYM_REGIONS) renderPlayerBadges();
   else renderPlayerMedals();
 
-  gfx->setTextColor(UI_TRACK);
+  gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(2);
   gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 392);
   gfx->print(T(S_BACK));
@@ -4911,13 +4936,13 @@ void renderSpeed() {
     gfx->print(b);
     char g[20];
     snprintf(g, sizeof(g), T(S_SPD_GAIN_FMT), spdGain);
-    gfx->setTextColor(UI_BAR_WARN);
+    gfx->setTextColor(uiTextWarn());
     gfx->setTextSize(3);
     gfx->setCursor(CX - strlen(g) * 9, 210);
     gfx->print(g);
     gfx->setTextSize(2);
     if (spdNewHi && spdHits > 0) {
-      gfx->setTextColor(UI_BAR_WARN);
+      gfx->setTextColor(uiTextWarn());
       gfx->setCursor(CX - strlen(T(S_NEW_RECORD)) * 6, 256);
       gfx->print(T(S_NEW_RECORD));
     } else {
@@ -5019,7 +5044,7 @@ static void drawPickCell(uint8_t n, int x, int y, uint8_t capLvl) {
   gfx->drawRoundRect(x, y, PICK_CELL_W, PICK_CELL_H, 10, on ? UI_INK : 0x8410);
   const uint8_t *th = thumbs.get(dex);
   if (th) drawThumb(th, x - 12, y - 6, 2, !on);
-  gfx->setTextColor(on ? UI_INK : 0x8410);
+  gfx->setTextColor(on ? UI_INK : UI_INK_SOFT);
   gfx->setTextSize(1);
   gfx->setCursor(x + 54, y + 14);
   gfx->print(nm);
@@ -5029,7 +5054,7 @@ static void drawPickCell(uint8_t n, int x, int y, uint8_t capLvl) {
   gfx->print(l);
   // its typing is the whole reason you are on this screen
   const DexEntry &d = DEX_TBL[dex];
-  gfx->setTextColor(on ? d.accent : 0x8410);
+  gfx->setTextColor(on ? d.accent : UI_INK_SOFT);
   gfx->setCursor(x + 54, y + 48);
   gfx->print(typeName(d.type1));
   if (d.type2 != T_NONE) {
@@ -5066,7 +5091,7 @@ void renderPick() {
   char sub[28];
   snprintf(sub, sizeof(sub), T(S_PICK_FMT), pickChosen(), cap);
   gfx->setTextSize(1);
-  gfx->setTextColor(pickChosen() > cap ? UI_BAR_BAD : UI_TRACK);
+  gfx->setTextColor(pickChosen() > cap ? UI_TEXT_BAD : UI_INK_SOFT);
   gfx->setCursor(CX - (int)strlen(sub) * 3, 68);
   gfx->print(sub);
 
@@ -5097,7 +5122,7 @@ void renderPick() {
   gfx->fillRoundRect(PICK_GO_X, PICK_GO_Y, PICK_BTN_W, PICK_BTN_H, 12,
                      ok ? UI_BAR_OK : UI_TRACK);
   gfx->drawRoundRect(PICK_GO_X, PICK_GO_Y, PICK_BTN_W, PICK_BTN_H, 12, UI_INK);
-  gfx->setTextColor(ok ? UI_BG_DAY : 0x8410);
+  gfx->setTextColor(ok ? UI_BG_DAY : UI_INK_SOFT);
   gfx->setTextSize(2);
   gfx->setCursor(PICK_GO_X + (PICK_BTN_W - (int)strlen(T(S_FIGHT)) * 12) / 2,
                  PICK_GO_Y + 14);
@@ -5221,7 +5246,7 @@ void renderLan() {
     gfx->setCursor(CX - strlen(T(S_LAN_REMATCH)) * 6, 240);
     gfx->print(T(S_LAN_REMATCH));
   }
-  gfx->setTextColor(UI_TRACK);
+  gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(2);
   gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 392);
   gfx->print(T(S_BACK));
@@ -5332,12 +5357,12 @@ void renderGyms() {
     bool open_ = gymUnlocked(idx, gymHard);
     gfx->fillRoundRect(rx, y, rw, rh, 10, done ? UI_TRACK : UI_BG_DAY);
     gfx->drawRoundRect(rx, y, rw, rh, 10, open_ ? UI_INK : UI_TRACK);
-    gfx->setTextColor(open_ ? UI_INK : UI_TRACK);
+    gfx->setTextColor(open_ ? UI_INK : UI_INK_SOFT);
     gfx->setTextSize(2);
     gfx->setCursor(rx + 14, y + 8);
     gfx->print(t.name);
     gfx->setTextSize(1);
-    gfx->setTextColor(UI_TRACK);
+    gfx->setTextColor(UI_INK_SOFT);
     gfx->setCursor(rx + 14, y + 28);
     gfx->print(open_ ? t.place : T(S_LOCKED));
     // the level of the strongest creature: the honest measure of the wall
@@ -5346,11 +5371,11 @@ void renderGyms() {
       if (t.team[k].level > top) top = t.team[k].level;
     char lv[16];
     snprintf(lv, sizeof(lv), "Lv.%u x%u", top, t.count);
-    gfx->setTextColor(done ? UI_BAR_OK : (open_ ? UI_INK : UI_TRACK));
+    gfx->setTextColor(done ? UI_TEXT_OK : (open_ ? UI_INK : UI_INK_SOFT));
     gfx->setCursor(rx + rw - 12 - (int)strlen(lv) * 6, y + 28);
     gfx->print(lv);
     if (done) {
-      gfx->setTextColor(UI_BAR_OK);
+      gfx->setTextColor(UI_TEXT_OK);
       gfx->setCursor(rx + rw - 26, y + 8);
       gfx->print("*");
     }
@@ -5367,7 +5392,7 @@ void renderGyms() {
     bool live = (i == 0) || (!pet.isEgg() && pet.ceremony == CER_NONE);
     gfx->fillRoundRect(bx, GYMBTN_Y, GYMBTN_W, GYMBTN_H, 9, live ? UI_BG_DAY : UI_TRACK);
     gfx->drawRoundRect(bx, GYMBTN_Y, GYMBTN_W, GYMBTN_H, 9, live ? UI_INK : 0x8410);
-    gfx->setTextColor(live ? UI_INK : 0x8410);
+    gfx->setTextColor(live ? UI_INK : UI_INK_SOFT);
     gfx->setTextSize(2);
     gfx->setCursor(bx + (GYMBTN_W - (int)strlen(other[i]) * 12) / 2, GYMBTN_Y + 8);
     gfx->print(other[i]);
@@ -5404,7 +5429,7 @@ static void drawEggRegion() {
   gfx->setTextSize(2);
   gfx->setCursor(EGGREG_X + (EGGREG_W - (int)strlen(l) * 12) / 2, EGGREG_Y + 9);
   gfx->print(l);
-  gfx->setTextColor(UI_TRACK);
+  gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(1);
   gfx->setCursor(CX - (int)strlen(T(S_EGG_REGION)) * 3, EGGREG_Y + EGGREG_H + 6);
   gfx->print(T(S_EGG_REGION));
@@ -5536,7 +5561,7 @@ static void renderRegionPick(uint8_t mode) {
     gfx->fillRoundRect(RPICK_X, y, RPICK_W, RPICK_H, 12, open ? UI_WHITE : UI_BG_DAY);
     gfx->drawRoundRect(RPICK_X, y, RPICK_W, RPICK_H, 12, open ? UI_INK : UI_TRACK);
     const char *nm = forGyms ? TRAINER_SETS[i].region : REGIONS[i].name;
-    gfx->setTextColor(open ? UI_INK : UI_TRACK);
+    gfx->setTextColor(open ? UI_INK : UI_INK_SOFT);
     gfx->setTextSize(3);
     gfx->setCursor(RPICK_X + 18, y + 12);
     gfx->print(nm);
@@ -5554,7 +5579,7 @@ static void renderRegionPick(uint8_t mode) {
                pet.registeredCountIn(REGIONS[i].lo, REGIONS[i].hi),
                (unsigned)(REGIONS[i].hi - REGIONS[i].lo + 1));
     if (sub[0]) {
-      gfx->setTextColor(UI_TRACK);
+      gfx->setTextColor(UI_INK_SOFT);
       gfx->setTextSize(2);
       gfx->setCursor(RPICK_X + RPICK_W - 18 - (int)strlen(sub) * 12, y + 22);
       gfx->print(sub);
@@ -5577,7 +5602,7 @@ static void renderRegionPick(uint8_t mode) {
     }
   }
   if (mode != RPICK_FOR_START) {          // first boot has nowhere to go back to
-    gfx->setTextColor(UI_TRACK);
+    gfx->setTextColor(UI_INK_SOFT);
     gfx->setTextSize(2);
     gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 392);
     gfx->print(T(S_BACK));
@@ -5653,12 +5678,12 @@ void renderCardMedals() {
     gfx->fillRoundRect(x, y, 196, 44, 10, g ? UI_BAR_OK : UI_TRACK);
     if (g) {  // marca de conseguida
       gfx->fillCircle(x + 22, y + 22, 11, UI_BG_DAY);
-      gfx->setTextColor(UI_BAR_OK);
+      gfx->setTextColor(UI_TEXT_OK);
       gfx->setTextSize(2);
       gfx->setCursor(x + 16, y + 13);
       gfx->print("v");
     }
-    gfx->setTextColor(g ? UI_BG_DAY : 0x8410);
+    gfx->setTextColor(g ? UI_BG_DAY : UI_INK_SOFT);
     gfx->setTextSize(2);
     gfx->setCursor(x + 44, y + 14);
     gfx->print(medalDesc(i));
@@ -5684,7 +5709,7 @@ void renderCardProgress() {
   // barra de progreso al siguiente nivel (1 nivel = 60 min de juego)
   uint8_t into = pet.ageMinutes % MINUTES_PER_LEVEL;
   int bx = 93, bw = 280, by = 158, bh = 22;
-  gfx->fillRoundRect(bx, by, bw, bh, 6, UI_TRACK);
+  gfx->fillRoundRect(bx, by, bw, bh, 6, UI_GROOVE_DAY);
   int fw = (bw - 4) * into / MINUTES_PER_LEVEL;
   if (fw > 0) gfx->fillRoundRect(bx + 2, by + 2, fw, bh - 4, 5, UI_BAR_OK);
   char nx[26];
@@ -5695,7 +5720,7 @@ void renderCardProgress() {
   gfx->print(nx);
 
   // estado de evolucion
-  gfx->setTextColor(UI_TRACK);
+  gfx->setTextColor(UI_INK_SOFT);
   gfx->setCursor(CX - strlen(T(S_EVO_LABEL)) * 6, 230);
   gfx->print(T(S_EVO_LABEL));
   char evoBuf[28];
@@ -5724,7 +5749,7 @@ void renderCardProgress() {
   // creature simply evolves late and the player has no way to know why
   if (pet.evoPenalty()) {
     gfx->setTextSize(1);
-    gfx->setTextColor(UI_BAR_WARN);
+    gfx->setTextColor(UI_TEXT_WARN);
     gfx->setCursor(CX - (int)strlen(T(S_EVO_SLOW)) * 3, 286);
     gfx->print(T(S_EVO_SLOW));
     gfx->setTextSize(2);
@@ -5733,7 +5758,7 @@ void renderCardProgress() {
   // descuidos (retrasan la evolucion)
   char ms[24];
   snprintf(ms, sizeof(ms), T(S_MISTAKES_FMT), pet.careMistakes);
-  gfx->setTextColor(pet.careMistakes > 0 ? UI_BAR_BAD : UI_INK);
+  gfx->setTextColor(pet.careMistakes > 0 ? UI_TEXT_BAD : UI_INK);
   gfx->setCursor(CX - strlen(ms) * 6, 312);
   gfx->print(ms);
 }
@@ -5752,7 +5777,7 @@ void renderCard() {
     if (i == cardPage) gfx->fillCircle(dx, 374, 5, UI_INK);
     else gfx->drawCircle(dx, 374, 4, UI_INK);
   }
-  gfx->setTextColor(UI_TRACK);
+  gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(2);
   gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 398);
   gfx->print(T(S_BACK));
@@ -5886,7 +5911,7 @@ void renderBag() {
   uint8_t pages = bagPages();
   if (bagPage >= pages) bagPage = 0;
   if (!n) {
-    gfx->setTextColor(UI_TRACK);
+    gfx->setTextColor(UI_INK_SOFT);
     gfx->setCursor(CX - (int)strlen(T(S_BAG_EMPTY)) * 6, CY - 8);
     gfx->print(T(S_BAG_EMPTY));
   }
@@ -5898,7 +5923,7 @@ void renderBag() {
     bool usable = itemUsableInField(k);
     gfx->fillRoundRect(76, y, 314, 50, 10, usable ? UI_WHITE : UI_TRACK);
     gfx->drawRoundRect(76, y, 314, 50, 10, UI_INK);
-    gfx->setTextColor(usable ? UI_INK : 0x8410);
+    gfx->setTextColor(usable ? UI_INK : UI_INK_SOFT);
     gfx->setTextSize(2);
     gfx->setCursor(92, y + 17);
     gfx->print(itemEntry(k).name);
@@ -5925,7 +5950,7 @@ void renderBag() {
     gfx->setCursor(CX - (int)strlen(bagMsg) * 6, CY - 8);
     gfx->print(bagMsg);
   }
-  gfx->setTextColor(UI_TRACK);
+  gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(2);
   gfx->setCursor(CX - (int)strlen(T(S_BACK)) * 6, 414);
   gfx->print(T(S_BACK));
@@ -6081,7 +6106,7 @@ void renderTrain() {
 
     uint8_t pct = trainPct(cur[i], cap[i]);
     int bx = TRAIN_X + 32, bw = TRAIN_W - 64, bh = 12, by = y + 34;
-    gfx->fillRoundRect(bx, by, bw, bh, 4, UI_TRACK);
+    gfx->fillRoundRect(bx, by, bw, bh, 4, UI_GROOVE_DAY);
     int fw = (bw - 4) * pct / 100;
     if (fw > 0)
       gfx->fillRoundRect(bx + 2, by + 2, fw, bh - 4, 3, pct >= 100 ? UI_BAR_OK : UI_BAR_WARN);
@@ -6112,7 +6137,7 @@ void renderBox() {
     char sub[40];
     snprintf(sub, sizeof(sub), T(S_BOX_SWAP),
              p.empty() ? "-" : (p.nick[0] ? p.nick : DEX_TBL[p.dex].name));
-    gfx->setTextColor(UI_BAR_WARN);
+    gfx->setTextColor(UI_INK);
     gfx->setTextSize(1);
     gfx->setCursor(CX - (int)strlen(sub) * 3, PSLOT_PROMPT_Y);
     gfx->print(sub);
@@ -6128,7 +6153,7 @@ void renderBox() {
              (unsigned)(BOX_SLOTS / BOX_PER_PAGE));
     drawPartyHub(pg, T(S_BOX_BTN), boxSwapFrom != 0);
   }
-  gfx->setTextColor(UI_TRACK);
+  gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(2);
   gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 392);
   gfx->print(T(S_BACK));
@@ -6204,7 +6229,7 @@ void drawPartySlot(int i, const PartyMon &m) {
   gfx->drawCircle(cx, cy, PSLOT_R, UI_INK);
   gfx->drawCircle(cx, cy, PSLOT_R - 1, UI_INK);
   if (m.empty()) {
-    gfx->setTextColor(0x8410);
+    gfx->setTextColor(UI_INK_SOFT);
     gfx->setTextSize(2);
     gfx->setCursor(cx - (int)strlen(T(S_PARTY_EMPTY)) * 6, cy - 8);
     gfx->print(T(S_PARTY_EMPTY));
@@ -6219,7 +6244,7 @@ void drawPartySlot(int i, const PartyMon &m) {
   gfx->setCursor(cx - (int)strlen(nm) * 3, cy + 8);
   gfx->print(nm);
   if (m.shiny) {
-    gfx->setTextColor(UI_BAR_WARN);
+    gfx->setTextColor(UI_TEXT_WARN);
     gfx->setCursor(cx + (int)strlen(nm) * 3 + 3, cy + 8);
     gfx->print("*");
   }
@@ -6271,15 +6296,17 @@ void renderParty() {
     char sw[44];
     snprintf(sw, sizeof(sw), T(S_BOX_SWAP),
              b.nick[0] ? b.nick : DEX_TBL[b.dex].name);
-    gfx->setTextColor(UI_BAR_WARN);
+    gfx->setTextColor(UI_INK);
     gfx->setTextSize(1);
     gfx->setCursor(CX - (int)strlen(sw) * 3, PSLOT_PROMPT_Y);
     gfx->print(sw);
   }
 
-  // when a newcomer is waiting, say so instead of the usual hint
+  // when a newcomer is waiting, say so instead of the usual hint. The urgency
+  // is carried by the red CLOSE button below, not by tinting the sentence:
+  // UI_BAR_BAD as small text on cream is 3.2:1.
   if (partyPick) {
-    gfx->setTextColor(UI_BAR_BAD);
+    gfx->setTextColor(UI_INK);
     gfx->setTextSize(1);
     gfx->setCursor(CX - (int)strlen(T(S_PARTY_FULL)) * 3, PSLOT_PROMPT_Y);
     gfx->print(T(S_PARTY_FULL));
@@ -6450,7 +6477,7 @@ void renderGallery() {
       if (t) {
         drawThumb(t, x, y, 2, !pet.isRegistered(dex));
         if (pet.isShinyRegistered(dex)) {
-          gfx->setTextColor(UI_BAR_WARN);
+          gfx->setTextColor(UI_TEXT_WARN);
           gfx->setTextSize(2);
           gfx->setCursor(x + 62, y + 4);
           gfx->print("*");
@@ -6458,7 +6485,7 @@ void renderGallery() {
       } else {
         char num[6];
         snprintf(num, sizeof(num), "%d", dex);
-        gfx->setTextColor(UI_TRACK);
+        gfx->setTextColor(UI_INK_SOFT);
         gfx->setTextSize(2);
         gfx->setCursor(x + 24, y + 32);
         gfx->print(num);
@@ -6470,7 +6497,7 @@ void renderGallery() {
   // them to find where you are is worse than reading the number.
   char pg[12];
   snprintf(pg, sizeof(pg), "%d/%d", galleryPage + 1, (int)GAL_PAGES);
-  gfx->setTextColor(UI_TRACK);
+  gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(2);
   gfx->setCursor(CX - (int)strlen(pg) * 6, 410);
   gfx->print(pg);
@@ -6525,7 +6552,7 @@ void drawHeader(const char *name, uint16_t nameColor, const char *msg) {
   drawBattery();
   gfx->setTextColor(nameColor);
   gfx->setTextSize(3);
-  gfx->setCursor(CX - strlen(name) * 9, 52);
+  gfx->setCursor(CX - strlen(name) * 9, HEADER_NAME_Y);
   gfx->print(name);
   gfx->setTextColor(inkColor());
   gfx->setTextSize(2);
@@ -7051,18 +7078,41 @@ void drawPoops() {
 #define CARE_W 12         // and its thickness
 #define CARE_LBL_R 190    // labels hug the track rather than floating mid-field
 static const int16_t CARE_ARC[4][2] = {
-  { -104, -70 }, { -66, -32 }, { 32, 66 }, { 70, 104 },
+  { -108, -82 }, { -78, -52 }, { 52, 78 }, { 82, 108 },
 };
+// One hue each. Four arcs in the same colour are four arcs you have to read the
+// labels of; and the severity colours they used to share were 1.64:1 against
+// their own groove, so the filled part barely differed from the empty part.
+static const uint16_t CARE_COL[4] = {
+  UI_CARE_FOOD, UI_CARE_JOY, UI_CARE_ENE, UI_CARE_HYG,
+};
+#define CARE_LOW 25       // below this the LABEL carries the warning
+
+int uiCareArcTop(int i) {
+  if (i < 0 || i >= 4) return -1;
+  int top = 466;
+  for (int a = CARE_ARC[i][0]; a <= CARE_ARC[i][1]; a++) {
+    float rad = ((float)a - 90.0f) * 0.01745329f;
+    int y = CY + (int)(sinf(rad) * CARE_R) - (CARE_W + 4) / 2;
+    if (y < top) top = y;
+  }
+  return top;
+}
+
+int uiHeaderNameBottom() { return HEADER_NAME_Y + HEADER_NAME_H; }
 
 static void drawCareArc(int i, const char *label, uint8_t val) {
   int a0 = CARE_ARC[i][0], a1 = CARE_ARC[i][1];
-  uint16_t fill = (val >= 50) ? UI_BAR_OK : (val >= 25) ? UI_BAR_WARN : UI_BAR_BAD;
-  uiArc(CX, CY, CARE_R, a0, a1, CARE_W, UI_TRACK);
-  if (val) uiArc(CX, CY, CARE_R, a0, a0 + (a1 - a0) * val / 100, CARE_W, fill);
+  uiArc(CX, CY, CARE_R, a0, a1, CARE_W, grooveColor());
+  if (val) {
+    int af = a0 + (a1 - a0) * val / 100;
+    uiArc(CX, CY, CARE_R, a0, af, CARE_W + 4, UI_INK);
+    uiArc(CX, CY, CARE_R, a0, af, CARE_W - 4, CARE_COL[i]);
+  }
   float mid = ((float)(a0 + a1) / 2.0f - 90.0f) * 0.01745329f;
   int lx = CX + (int)(cosf(mid) * CARE_LBL_R);
   int ly = CY + (int)(sinf(mid) * CARE_LBL_R);
-  gfx->setTextColor(inkColor());
+  gfx->setTextColor(val < CARE_LOW ? uiTextBad() : inkColor());
   gfx->setTextSize(2);
   gfx->setCursor(lx - (int)strlen(label) * 6, ly - 8);
   gfx->print(label);
@@ -7079,9 +7129,9 @@ void drawButtons() {
   for (int i = 0; i < BTN_COUNT; i++) {
     bool off = uiButtonDisabled(i);   // durmiendo solo funciona LUZ
     int bx = buttons[i].cx - BTN_HALF, by = buttons[i].cy - BTN_HALF;
-    if (!pet.sleeping) gfx->fillRoundRect(bx, by, 2 * BTN_HALF, 2 * BTN_HALF, 18, UI_WHITE);
-    gfx->drawRoundRect(bx, by, 2 * BTN_HALF, 2 * BTN_HALF, 18, inkColor());
-    if (!off) drawMap(buttons[i].icon, 16, buttons[i].cx - 24, buttons[i].cy - 24, 3, false);
+    if (!pet.sleeping) gfx->fillRoundRect(bx, by, 2 * BTN_HALF, 2 * BTN_HALF, 16, UI_WHITE);
+    gfx->drawRoundRect(bx, by, 2 * BTN_HALF, 2 * BTN_HALF, 16, inkColor());
+    if (!off) drawMap(buttons[i].icon, 16, buttons[i].cx - 16, buttons[i].cy - 16, 2, false);
   }
 }
 

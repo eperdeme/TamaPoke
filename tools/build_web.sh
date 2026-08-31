@@ -95,4 +95,12 @@ echo "Checking the installer cannot erase a save..."
 python3 tools/check_installer.py || { echo "installer would wipe saves -- refusing"; exit 1; }
 
 echo "Empaquetando sprites..."
-python3 tools/pack_bundle.py
+if compgen -G "tools/sdcard/mons/*.bin" >/dev/null; then
+    python3 tools/pack_bundle.py
+else
+    echo "Sin fuentes de sprites; conservando los .pak y regenerando su indice..."
+    python3 - <<'PYEOF'
+from tools.pack_bundle import write_index
+write_index()
+PYEOF
+fi

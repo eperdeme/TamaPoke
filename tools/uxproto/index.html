@@ -308,11 +308,12 @@ function tilePet() {
   T(p.name, CX, 118, 24, C.ink);
   T('LV.' + p.lvl + '  ' + p.species, CX, 142, 12, C.dim);
   mon(CX, 252, 0.88);
-  // home row at y~352: four 94 px targets need 392 px of chord, and only 361 exists at y=406
+  // Compact-button pattern: 72 px graphic inside a 94 px hit disc.
+  const home = [[92, 352], [186, 370], [280, 370], [374, 352]];
   ['food', 'light', 'bath', 'train'].forEach((n, i) => {
-    const dx = (i - 1.5) * 98, x = CX + dx, y = 352 - dx * dx / 900;
-    disc(x, y, 47, '#111823', C.line, 2);
-    icon(n, x, y, 34, i === 2 ? '#39414f' : C.cream);
+    const [x, y] = home[i];
+    disc(x, y, 36, '#111823', C.line, 2);
+    icon(n, x, y, 28, i === 2 ? '#39414f' : C.cream);
     hitC(x, y, 47, n.toUpperCase());
   });
 }
@@ -663,16 +664,15 @@ const PROTOS = {
       you, down closes it. One gesture, one meaning, every screen.</li>
       <li><b>Care stats become rim arcs.</b> Four bars stacked in the middle waste the widest part of
       the circle; arcs live in the part no rectangular layout can use, and read at a glance.</li>
-      <li><b>The home row moved up to y=352.</b> Four 94 px targets need 392 px of chord; at the
-      current y=406 only 361 px exists. This is why the icons are 60 px today - the old position
-      could not fit finger-sized ones.</li>
+      <li><b>The home row moved up and separated graphic from target.</b> Four visible 72 px
+      buttons sit inside tangent 94 px hit discs. Wear OS explicitly uses this compact-button
+      pattern: a smaller graphic does not require a smaller touch target.</li>
       <li><b>Party is a ring of six</b> around a BOX hub: 112 px targets, no wasted corners.</li>
     </ul>
     <p>Depth never exceeds 2, because tiles are peers rather than a hierarchy.</p>
-    <p><b>One honest finding this mock produced:</b> four 94 px targets in one row reach radius 222,
-    outside the 0.85R (198 px) interactive ring. Three would fit comfortably. So a finger-safe home
-    row on this panel is <i>three</i> actions, not four - which is the strongest argument for B,
-    where a ring of eight is all inside 213.</p>`
+    <p>The first pass made the visible buttons as large as their hit areas, which looked heavy.
+    The implementation now follows Wear OS compact buttons: 72 px graphics inside 94 px targets.
+    <code>hit_test</code> checks the target discs remain tangent, distinct and fully on glass.</p>`,
   },
   b: {
     label: 'B - RADIAL HUB', views: [],
