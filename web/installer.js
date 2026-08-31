@@ -16,6 +16,12 @@ let packProtocol = false;
 let sdAvailable = true;
 let busy = false;
 const installedPacks = new Map();
+const REQUIRED_FLASH_PARTS = new Map([
+  [0, 'firmware/bootloader.bin'],
+  [0x8000, 'firmware/partitions.bin'],
+  [0xe000, 'firmware/boot_app0.bin'],
+  [0x10000, 'firmware/app.bin'],
+]);
 
 const logElement = byId('log');
 function log(message) {
@@ -28,54 +34,140 @@ function refreshIcons() {
   if (window.lucide) window.lucide.createIcons();
 }
 
-async function loadJson(path) {
-  const response = await fetch(path, { cache: 'no-cache' });
+async function loadJson(path, options = {}) {
+  const response = await fetch(path, { cache: 'no-cache', ...options });
   if (!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
   return response.json();
 }
 
+const normalizeVersion = (value) => String(value || '').trim().replace(/^v/i, '');
+
+function validateReleaseManifest(manifest, tag) {
+  if (normalizeVersion(manifest.version) !== normalizeVersion(tag)) return false;
+  if (manifest.new_install_prompt_erase !== true) return false;
+  const build = (manifest.builds || []).find((item) => item.chipFamily === 'ESP32-S3');
+  if (!build || !Array.isArray(build.parts) || build.parts.length !== REQUIRED_FLASH_PARTS.size) return false;
+  return build.parts.every((part) => {
+    const expectedPath = REQUIRED_FLASH_PARTS.get(Number(part.offset));
+    const path = typeof part.path === 'string' ? part.path.split('?', 1)[0] : '';
+    return path === expectedPath;
+  });
+}
+
+function releaseManifestUrl(repository, tag) {
+  const [owner, name] = repository.split('/');
+  return `https://raw.githubusercontent.com/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/${encodeURIComponent(tag)}/web/manifest.json`;
+}
+
+async function loadReleaseVersions(config) {
+  if (!config.repository) return [];
+  const [owner, name] = config.repository.split('/');
+  if (!owner || !name) throw new Error('editions.json repository must be owner/name');
+  const count = Math.max(1, Math.min(Number(config.maxReleases) || 8, 20));
+  const api = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/releases?per_page=${count}`;
+  const releases = await loadJson(api, { headers: { Accept: 'application/vnd.github+json' } });
+  const checked = await Promise.all(releases.filter((release) => !release.draft).map(async (release) => {
+    const manifestUrl = releaseManifestUrl(config.repository, release.tag_name);
+    try {
+      const manifest = await loadJson(manifestUrl);
+      if (!validateReleaseManifest(manifest, release.tag_name)) {
+        log(`Skipped release ${release.tag_name}: its tag and safe flash manifest do not agree.`);
+        return null;
+      }
+      const date = release.published_at ? new Date(release.published_at) : null;
+      return {
+        id: `release-${release.id}`,
+        name: release.name || `TamaPoke ${release.tag_name}`,
+        channel: release.prerelease ? 'Preview' : 'Release',
+        manifest: manifestUrl,
+        version: normalizeVersion(manifest.version),
+        description: date && !Number.isNaN(date.valueOf())
+          ? `Published ${date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}.`
+          : 'Published on GitHub Releases.',
+        notes: release.body && release.body.trim() ? release.body.trim() : 'No changelog was provided for this release.',
+        releaseUrl: release.html_url,
+        prerelease: release.prerelease,
+      };
+    } catch (error) {
+      log(`Skipped release ${release.tag_name}: ${error.message}`);
+      return null;
+    }
+  }));
+  return checked.filter(Boolean);
+}
+
+function appendEditionCard(host, edition, selected) {
+  const option = document.createElement('div');
+  option.className = `edition-option${selected ? ' selected' : ''}`;
+  const label = document.createElement('label');
+  const input = document.createElement('input');
+  input.type = 'radio';
+  input.name = 'edition';
+  input.value = edition.id;
+  input.checked = selected;
+  input.addEventListener('change', () => selectEdition(edition.id));
+
+  const control = document.createElement('span');
+  control.className = 'choice-control';
+  control.setAttribute('aria-hidden', 'true');
+  const copy = document.createElement('span');
+  copy.className = 'option-copy';
+  const title = document.createElement('span');
+  title.className = 'option-title';
+  const name = document.createElement('span');
+  name.textContent = edition.name;
+  const channel = document.createElement('span');
+  channel.className = 'tag';
+  channel.textContent = edition.channel || 'Build';
+  const description = document.createElement('p');
+  description.textContent = edition.description;
+  const version = document.createElement('span');
+  version.className = 'pack-version';
+  version.textContent = `v${edition.version}`;
+  title.append(name, channel);
+  copy.append(title, description, version);
+  label.append(input, control, copy);
+  option.append(label);
+  host.append(option);
+}
+
 async function loadEditions() {
+  let config;
   try {
-    const catalogue = await loadJson('editions.json');
-    editions = catalogue.editions || [];
+    config = await loadJson('editions.json');
   } catch (error) {
-    editions = [{
-      id: 'standard', name: 'Standard', channel: 'Stable', manifest: 'manifest.json',
-      description: 'All game systems and languages, with region artwork on microSD.', recommended: true,
-    }];
+    config = { current: {} };
     log(`Firmware catalogue fallback: ${error.message}`);
   }
 
-  const versions = await Promise.all(editions.map(async (edition) => {
-    try {
-      const manifest = await loadJson(edition.manifest);
-      return manifest.version || 'unknown';
-    } catch (_error) {
-      return 'unavailable';
-    }
-  }));
+  const currentConfig = config.current || {};
+  const currentManifestPath = currentConfig.manifest || 'manifest.json';
+  let currentManifest = { version: 'unknown' };
+  try { currentManifest = await loadJson(currentManifestPath); }
+  catch (error) { log(`Current firmware manifest unavailable: ${error.message}`); }
+  const current = {
+    id: 'current',
+    name: currentConfig.name || 'Current Pages build',
+    channel: currentConfig.channel || 'Unreleased',
+    manifest: currentManifestPath,
+    version: normalizeVersion(currentManifest.version) || 'unknown',
+    description: currentConfig.description || 'The build currently hosted by this GitHub Pages site.',
+    notes: currentConfig.notes || 'This build has not been published as an immutable GitHub Release yet.',
+    releaseUrl: `https://github.com/${config.repository || 'eperdeme/TamaPoke'}/releases`,
+  };
+
+  let released = [];
+  try { released = await loadReleaseVersions(config); }
+  catch (error) { log(`GitHub Releases unavailable; showing the current build only: ${error.message}`); }
+  const hasCurrentRelease = released.some((edition) => edition.version === current.version);
+  editions = hasCurrentRelease ? released : [...released, current];
+  const recommended = editions.find((edition) => !edition.prerelease) || editions[0] || current;
 
   const host = byId('editions');
   host.textContent = '';
   host.classList.toggle('single', editions.length === 1);
-  editions.forEach((edition, index) => {
-    const option = document.createElement('div');
-    option.className = `edition-option${edition.recommended || index === 0 ? ' selected' : ''}`;
-    option.innerHTML = `
-      <label>
-        <input type="radio" name="edition" value="${edition.id}" ${edition.recommended || index === 0 ? 'checked' : ''}>
-        <span class="choice-control" aria-hidden="true"></span>
-        <span class="option-copy">
-          <span class="option-title"><span>${edition.name}</span><span class="tag">${edition.channel || 'Build'}</span></span>
-          <p>${edition.description}</p>
-          <span class="pack-version">v${versions[index]}</span>
-        </span>
-      </label>`;
-    option.querySelector('input').addEventListener('change', () => selectEdition(edition.id));
-    host.append(option);
-  });
-  const selected = editions.find((edition) => edition.recommended) || editions[0];
-  if (selected) selectEdition(selected.id);
+  for (const edition of editions) appendEditionCard(host, edition, edition.id === recommended.id);
+  selectEdition(recommended.id);
 }
 
 function selectEdition(id) {
@@ -84,8 +176,18 @@ function selectEdition(id) {
   for (const option of document.querySelectorAll('.edition-option')) {
     option.classList.toggle('selected', option.querySelector('input').value === id);
   }
-  byId('flash-button').setAttribute('manifest', edition.manifest);
+  const flashButton = byId('flash-button');
+  flashButton.manifest = edition.manifest;
+  flashButton.setAttribute('manifest', edition.manifest);
   byId('edition-summary').textContent = edition.description;
+  const versionLabel = `v${edition.version}`;
+  byId('release-notes-title').textContent = edition.name.toLowerCase().includes(versionLabel.toLowerCase())
+    ? edition.name
+    : `${edition.name} - ${versionLabel}`;
+  byId('release-notes-body').textContent = edition.notes;
+  const releaseLink = byId('release-link');
+  releaseLink.href = edition.releaseUrl;
+  releaseLink.textContent = edition.id === 'current' ? 'All releases' : 'View on GitHub';
 }
 
 async function loadPacks() {

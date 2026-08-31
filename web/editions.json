@@ -1,13 +1,12 @@
 {
-  "schema": 1,
-  "editions": [
-    {
-      "id": "standard",
-      "name": "Standard",
-      "channel": "Stable",
-      "manifest": "manifest.json",
-      "description": "All game systems and languages. Region artwork is installed separately to microSD.",
-      "recommended": true
-    }
-  ]
+  "schema": 2,
+  "repository": "eperdeme/TamaPoke",
+  "maxReleases": 8,
+  "current": {
+    "name": "Current Pages build",
+    "channel": "Unreleased",
+    "manifest": "manifest.json",
+    "description": "Built from current main. Released versions remain available for rollback.",
+    "notes": "This build is newer than the published Releases. Its final changelog will be generated when its version tag is released."
+  }
 }

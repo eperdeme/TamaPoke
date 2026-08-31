@@ -220,6 +220,26 @@ h3 { margin-bottom: 6px; font-size: 17px; letter-spacing: 0; }
 .flash-row { margin-top: 18px; }
 .action-copy, .connect-strip p { margin: 0; color: var(--ink-soft); font-size: 14px; }
 
+.release-notes {
+  margin-top: 26px;
+  padding: 20px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.release-notes header { display: flex; align-items: end; justify-content: space-between; gap: 20px; }
+.release-notes h3 { margin: 0; font-size: 18px; }
+.release-notes header a { flex: 0 0 auto; font-size: 13px; font-weight: 700; }
+.release-notes pre {
+  max-height: 260px;
+  margin: 14px 0 0;
+  padding: 0 18px 0 0;
+  overflow: auto;
+  color: var(--ink-soft);
+  background: transparent;
+  font: 14px/1.65 "DM Sans", sans-serif;
+  white-space: pre-wrap;
+}
+
 .button, .icon-button {
   min-height: 44px;
   border: 1px solid var(--ink);
@@ -325,6 +345,7 @@ footer a:last-child { margin-left: auto; }
   .save-layout p { min-height: auto; }
   .toolbar-actions { align-self: stretch; }
   .toolbar-actions .button { flex: 1; }
+  .release-notes header { align-items: flex-start; flex-direction: column; gap: 8px; }
   .deploy-bar .button, .connect-strip .button, .flash-row esp-web-install-button, .flash-row .button { width: 100%; }
   .custom-pack { align-items: flex-start; flex-wrap: wrap; }
   footer { align-items: flex-start; flex-direction: column; }

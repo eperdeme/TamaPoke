@@ -11,9 +11,8 @@ same one as `tools/send_sd.py`).
 - `index.html` — the installer and board-manager shell.
 - `style.css` / `installer.js` — responsive UI, Web Serial transport, pack
    reconciliation, and save backup/restore.
-- `editions.json` — firmware choices shown by the page. Each entry points to an
-   ESP Web Tools manifest, so another edition does not require changing HTML or
-   JavaScript.
+- `editions.json` — the GitHub repository queried for Releases plus the fallback
+   description for the current Pages build.
 - `manifest.json` — the Standard edition's ESP Web Tools config.
 - `paks.json` — generated region sizes, CRC32s, file counts, and firmware region
    indices.
@@ -50,7 +49,7 @@ python3 -m http.server 8000
 
 ## End-user flow
 
-1. Pick a firmware edition and **Install firmware**. Pick the USB port; only
+1. Pick a released firmware version and **Install firmware**. Pick the USB port; only
    tick "Erase device" for a fresh board.
 2. **Connect board**. The page compares the installed SD marker for every region
    against the CRC in `paks.json` and labels it Current, Update available,
@@ -67,21 +66,42 @@ The custom-file option lets advanced users send their own `.bin`. Because those
 files did not come from a known bundle, firmware invalidates the affected pack
 marker and the page reports it as unversioned on the next refresh.
 
-## Firmware editions
+## Firmware versions and GitHub Releases
 
-The page does not hard-code a single install button. It builds the edition
-selector from `editions.json`; the repository currently publishes one real
-edition, Standard. To publish another:
+The version selector queries the public GitHub Releases API for the repository
+named in `editions.json`. A Release supplies the version name, date, channel,
+link, and changelog body. The bytes do not come from Release attachments:
+GitHub's attachment downloads have no browser CORS header. Instead, each option
+uses the immutable `web/manifest.json` and four firmware parts committed at that
+Release's tag through `raw.githubusercontent.com`, which does allow browser
+fetches.
 
-1. Put that edition's four firmware parts under its own directory and create an
-   ESP Web Tools manifest that points to them at `0x0`, `0x8000`, `0xe000`, and
-   `0x10000`. Never span the NVS partition at `0x9000`.
-2. Add an entry with a unique `id`, display `name`, `channel`, `manifest`, and
-   `description` to `editions.json`.
-3. Run `python3 tools/check_installer.py path/to/manifest.json` before publishing.
+The page validates a release before showing it. Its tag must match the manifest
+version, `new_install_prompt_erase` must be true, and the ESP32-S3 build must
+contain exactly the four safe offsets. Drafts and invalid tags stay invisible.
+If GitHub is unavailable, or no releases exist yet, the current Pages manifest
+remains available as an Unreleased fallback.
 
-Do not list an edition until its actual binaries and manifest exist. The
-selector intentionally shows only installable builds.
+To publish a version:
+
+1. Set `FW_VERSION` in `TamaPoke.ino` and the README firmware badge to the same
+   version.
+2. Run `bash tools/build_web.sh`; this compiles the exact firmware, updates the
+   manifest version and cache hashes, and checks that NVS is outside the write
+   ranges.
+3. Run `python3 tools/check_release.py vX.Y`. It also rejects stale firmware
+   hashes or any disagreement among the tag, source, README, and manifest.
+4. Commit and push those files, then create and push the tag:
+
+   ```bash
+   git tag -a vX.Y -m "TamaPoke vX.Y"
+   git push origin main vX.Y
+   ```
+
+The `publish-release.yml` action validates the tag again, creates the GitHub
+Release, and generates its changelog from commits and pull requests. The Pages
+selector discovers it automatically; no HTML or catalogue edit is needed for
+later releases.
 
 ## Installed pack identity
 

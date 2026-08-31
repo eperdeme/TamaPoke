@@ -1,0 +1,23 @@
+name: Publish firmware release
+
+on:
+  push:
+    tags:
+      - "v[0-9]*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate tagged firmware
+        run: python3 tools/check_release.py "$GITHUB_REF_NAME"
+
+      - name: Publish GitHub Release and changelog
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "TamaPoke $GITHUB_REF_NAME"
