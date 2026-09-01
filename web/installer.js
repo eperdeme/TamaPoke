@@ -3,6 +3,8 @@ const enc = new TextEncoder();
 const MB = (bytes) => `${(bytes / 1048576).toFixed(1)} MB`;
 const titleCase = (value) => value.charAt(0).toUpperCase() + value.slice(1);
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const PACK_QUERY_TIMEOUT_MS = 20000;
+const PACK_COMMIT_TIMEOUT_MS = 30000;
 
 let editions = [];
 let packs = {};
@@ -393,10 +395,10 @@ function refreshSelection() {
 async function queryInstalledPacks() {
   installedPacks.clear();
   sdAvailable = true;
-  const result = await commandLines('PACKS', 2500);
+  const result = await commandLines('PACKS', PACK_QUERY_TIMEOUT_MS);
   if (result.outcome === null) {
     packProtocol = false;
-    log('This firmware cannot report pack versions. Flash the current edition to enable SD comparison.');
+    log('The board did not answer PACKS within 20 seconds. Restart it, reconnect, and try Refresh.');
   } else {
     packProtocol = true;
     sdAvailable = result.outcome !== 'ERR';
@@ -521,7 +523,7 @@ async function loadRegion(region, meta) {
   }
   if (!await sendAll(items, region)) return false;
   if (packProtocol) {
-    if (!await expectDone(`PACK COMMIT ${meta.index} ${meta.crc32}`, 10000)) {
+    if (!await expectDone(`PACK COMMIT ${meta.index} ${meta.crc32}`, PACK_COMMIT_TIMEOUT_MS)) {
       throw new Error(`files arrived but the board could not validate the ${region} pack`);
     }
     installedPacks.set(meta.index, meta.crc32.toLowerCase());
