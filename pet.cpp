@@ -482,6 +482,21 @@ uint8_t regionOfDex(int16_t d) {
   return REGION_ALL;
 }
 
+int16_t regionArtProbe(uint8_t region, uint8_t slot) {
+  if (region >= REGION_COUNT || region == REGION_ALL || slot > 2) return 0;
+  const RegionInfo &info = REGIONS[region];
+  int16_t target = slot == 0 ? info.lo : slot == 1 ? (int16_t)((info.lo + info.hi) / 2)
+                                                   : info.hi;
+  int16_t span = info.hi - info.lo;
+  for (int16_t distance = 0; distance <= span; distance++) {
+    int16_t lower = target - distance;
+    if (lower >= info.lo && speciesHasArt(lower)) return lower;
+    int16_t upper = target + distance;
+    if (distance && upper <= info.hi && speciesHasArt(upper)) return upper;
+  }
+  return 0;
+}
+
 uint8_t nextAvailableRegion(uint8_t from) {
   for (uint8_t i = 1; i <= REGION_COUNT; i++) {
     uint8_t r = (uint8_t)((from + i) % REGION_COUNT);

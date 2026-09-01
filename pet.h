@@ -76,6 +76,10 @@ bool regionAvailable(uint8_t r);
 // lookup rather than a judgement.
 uint8_t regionOfDex(int16_t d);
 
+// A drawable start/middle/end species for checking whether a region pack is
+// present. Returns 0 for REGION_ALL or invalid input.
+int16_t regionArtProbe(uint8_t region, uint8_t slot);
+
 // The next region the player can actually choose, skipping any whose sprite
 // pack is missing. The egg pill cycles with this rather than (region + 1) %
 // REGION_COUNT, which would land on a locked region and silently do nothing.

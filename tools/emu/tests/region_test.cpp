@@ -32,6 +32,25 @@ static void seed(Pet &p, int upto=60){
 }
 
 int main(){
+  // SD pack checks must never demand a file that cannot exist. Alola's literal
+  // midpoint is 765 ORANGURU, which is in noart.h; using lo/mid/hi directly
+  // made every complete Alola upload fail PACK COMMIT after nine minutes.
+  {
+    bool valid = true;
+    for (uint8_t region = 0; region < REGION_COUNT; region++) {
+      if (region == REGION_ALL) continue;
+      for (uint8_t slot = 0; slot < 3; slot++) {
+        int16_t probe = regionArtProbe(region, slot);
+        valid = valid && probe >= REGIONS[region].lo && probe <= REGIONS[region].hi &&
+                speciesHasArt(probe);
+      }
+    }
+    ck(valid, "every SD region probe names a drawable species in that region");
+    ck(regionArtProbe(6, 1) != 765, "Alola does not probe its art-less midpoint");
+    ck(regionArtProbe(REGION_ALL, 0) == 0 && regionArtProbe(REGION_COUNT, 0) == 0,
+       "derived and invalid regions have no SD probe");
+  }
+
   // --- the lottery stays inside the chosen region
   {
     Pet p; seed(p);

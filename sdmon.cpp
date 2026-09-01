@@ -136,11 +136,12 @@ void sdScanRegionArt(bool verbose) {
   for (uint8_t r = 0; r < REGION_COUNT; r++) {
     if (r == REGION_ALL) continue;      // derived from the others, never probed
     const RegionInfo &rg = REGIONS[r];
-    const int16_t probe[3] = { rg.lo, (int16_t)((rg.lo + rg.hi) / 2), rg.hi };
     bool all = true;
     for (int i = 0; i < 3 && all; i++) {
+      int16_t probe = regionArtProbe(r, (uint8_t)i);
+      if (!probe) { all = false; break; }
       char path[28];
-      snprintf(path, sizeof(path), "/mons/p%03u.bin", (unsigned)probe[i]);
+      snprintf(path, sizeof(path), "/mons/p%03u.bin", (unsigned)probe);
       File f = SD_MMC.open(path, FILE_READ);
       if (!f) all = false; else f.close();
     }
