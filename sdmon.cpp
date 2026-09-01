@@ -256,6 +256,8 @@ static bool validPackRegion(int region) {
   return region >= 0 && region < REGION_COUNT && region != REGION_ALL;
 }
 
+static int8_t activePackRegion = -1;
+
 static void invalidatePackMarker(uint8_t region) {
   if (!validPackRegion(region)) return;
   char marker[28];
@@ -267,7 +269,11 @@ static void invalidatePackForPath(const String &path) {
   const char *base = strrchr(path.c_str(), '/');
   base = base ? base + 1 : path.c_str();
   if (!strcmp(base, "thumbs.bin")) {
-    for (uint8_t r = 0; r < REGION_COUNT; r++) invalidatePackMarker(r);
+    if (validPackRegion(activePackRegion)) {
+      invalidatePackMarker((uint8_t)activePackRegion);
+    } else {
+      for (uint8_t r = 0; r < REGION_COUNT; r++) invalidatePackMarker(r);
+    }
     return;
   }
   if (*base == 'p') base += base[1] == 's' ? 2 : 1;
@@ -315,6 +321,7 @@ bool sdSerialCommand(const String &line) {
     Serial.println(remaining == 0 ? "DONE" : "ERR");
     return true;
   } else if (line == "PACKS") {
+    activePackRegion = -1;
     if (!sdReady) {
       Serial.println("ERR");
       return true;
@@ -344,6 +351,7 @@ bool sdSerialCommand(const String &line) {
       Serial.println("ERR");
       return true;
     }
+    activePackRegion = (int8_t)region;
     Serial.println("DONE");
     return true;
   } else if (line.startsWith("PACK COMMIT ")) {
@@ -357,12 +365,13 @@ bool sdSerialCommand(const String &line) {
                  (c >= 'A' && c <= 'F');
       if (c >= 'A' && c <= 'F') crc[i] = (char)(c - 'A' + 'a');
     }
-    if (!sdReady || !validPackRegion(region) || !validCrc) {
+    if (!sdReady || !validPackRegion(region) || !validCrc || activePackRegion != region) {
       Serial.println("ERR");
       return true;
     }
     sdScanRegionArt(false);
     if (!(gRegionArt & (1u << region))) {
+      activePackRegion = -1;
       Serial.println("ERR");
       return true;
     }
@@ -372,6 +381,7 @@ bool sdSerialCommand(const String &line) {
     File f = SD_MMC.open(path, FILE_WRITE);
     bool written = f && f.write((const uint8_t *)crc, 8) == 8;
     if (f) f.close();
+    activePackRegion = -1;
     Serial.println(written ? "DONE" : "ERR");
     return true;
   } else if (line == "LS") {

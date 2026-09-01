@@ -121,6 +121,13 @@ Current status behind. Cards populated before this protocol are detected by the
 existing start/middle/end probes and shown as Installed / unversioned once;
 reinstalling writes the exact version marker.
 
+Every regional bundle includes the same shared `thumbs.bin`. During a managed
+`PACK BEGIN` transaction, replacing that file invalidates only the region being
+installed; a standalone custom upload still invalidates all markers. The page
+also remembers exact hashes it verified during the current session and repairs
+those markers after a successful batch, which preserves correct status when
+installing several regions through older v3.16 firmware.
+
 ## Hosting the sprites
 
 **The `.pak` files ARE committed, and that is deliberate.** They have to be

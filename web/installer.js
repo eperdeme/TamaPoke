@@ -24,6 +24,7 @@ const REQUIRED_FLASH_PARTS = new Map([
   [0xe000, 'firmware/boot_app0.bin'],
   [0x10000, 'firmware/app.bin'],
 ]);
+const verifiedPacks = new Map();
 
 const logElement = byId('log');
 function log(message) {
@@ -406,6 +407,10 @@ async function queryInstalledPacks() {
       const match = /^PACK (\d+) (missing|legacy|[0-9a-fA-F]{8})$/.exec(line);
       if (match) installedPacks.set(Number(match[1]), match[2].toLowerCase());
     }
+    for (const [, meta] of sortedPacks()) {
+      if (installedPacks.get(meta.index) === meta.crc32.toLowerCase())
+        verifiedPacks.set(meta.index, meta.crc32.toLowerCase());
+    }
     if (sdAvailable) {
       const current = sortedPacks().filter((entry) => installedPacks.get(entry[1].index) === entry[1].crc32.toLowerCase()).length;
       log(`SD inspected: ${current} of ${Object.keys(packs).length} published packs are current.`);
@@ -527,9 +532,25 @@ async function loadRegion(region, meta) {
       throw new Error(`files arrived but the board could not validate the ${region} pack`);
     }
     installedPacks.set(meta.index, meta.crc32.toLowerCase());
+    verifiedPacks.set(meta.index, meta.crc32.toLowerCase());
   }
   log(`${titleCase(region)} is installed and verified.`);
   return true;
+}
+
+async function restoreVerifiedPackMarkers() {
+  const missing = [...verifiedPacks].filter(([index, crc]) => installedPacks.get(index) !== crc);
+  if (!missing.length) return 0;
+  log(`Restoring ${missing.length} verified pack marker${missing.length === 1 ? '' : 's'}...`);
+  for (const [index, crc] of missing) {
+    if (!await expectDone(`PACK BEGIN ${index}`) ||
+        !await expectDone(`PACK COMMIT ${index} ${crc}`, PACK_COMMIT_TIMEOUT_MS)) {
+      throw new Error(`could not restore the version marker for region ${index}`);
+    }
+    installedPacks.set(index, crc);
+  }
+  log(`Restored ${missing.length} verified pack marker${missing.length === 1 ? '' : 's'}.`);
+  return missing.length;
 }
 
 function downloadText(name, text) {
@@ -673,6 +694,10 @@ byId('install').addEventListener('click', async () => {
     for (const [region, meta] of selected) {
       if (!await loadRegion(region, meta)) break;
       completed++;
+    }
+    if (packProtocol && completed === selected.length) {
+      await queryInstalledPacks();
+      if (await restoreVerifiedPackMarkers()) await queryInstalledPacks();
     }
     log(completed === selected.length
       ? `All ${completed} selected regions are ready. Restart the board to reload thumbnails.`
