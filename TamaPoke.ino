@@ -39,7 +39,7 @@
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
-#define FW_VERSION "3.18"
+#define FW_VERSION "3.19"
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
   LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -263,7 +263,7 @@ void renderBox();
 void renderBag();
 void bagTap(int16_t x, int16_t y);
 uint8_t bagPages();
-bool startWildBattle(bool hard);
+bool startWildBattle(uint8_t region, bool hard);
 PartyMon wildToPartyMon();
 void focusSwap(uint8_t slot);
 void drawConfirmPanel(const char *q, const char *sub1, const char *sub2,
@@ -509,10 +509,16 @@ uint8_t btlFoeAt = 0;
 // The bag, and wild encounters.
 bool exploreOpen = false;
 bool exploreHard = false;
-#define EXPLORE_DIF_Y 232
+uint8_t exploreRegion = 0xFF;
+#define EXPLORE_REGION_X 78
+#define EXPLORE_REGION_Y 170
+#define EXPLORE_REGION_W 310
+#define EXPLORE_REGION_H UI_TAP_FINGER
+#define EXPLORE_REGION_ARROW_W UI_TAP_FINGER
+#define EXPLORE_DIF_Y 272
 #define EXPLORE_DIF_H UI_TAP_MIN
 #define EXPLORE_BTN_X 78
-#define EXPLORE_BTN_Y 298
+#define EXPLORE_BTN_Y 326
 #define EXPLORE_BTN_W 310
 #define EXPLORE_BTN_H 72
 #define EXPLORE_BTN_PAD 11
@@ -1146,7 +1152,7 @@ void handleSerial() {
     Serial.println("DONE");
   } else if (line == "WILD" || line == "WILD HARD") {
     bool hard = (line == "WILD HARD");
-    if (startWildBattle(hard))
+    if (startWildBattle(currentExploreRegion(), hard))
       Serial.printf("wild %s Lv.%u%s iv=%u/%u/%u/%u\n", DEX_TBL[wildDex].name,
                     wildLvl, wildShiny ? " *SHINY*" : "",
                     wildIv[0], wildIv[1], wildIv[2], wildIv[3]);
@@ -1894,6 +1900,12 @@ void onTap(int16_t x, int16_t y) {
     return;
   }
   if (exploreOpen) {
+    int8_t regionStep = exploreRegionHit(x, y);
+    if (regionStep) {
+      exploreStepRegion(regionStep);
+      sfxPlay(SFX_TAP);
+      return;
+    }
     if (y >= EXPLORE_DIF_Y && y <= EXPLORE_DIF_Y + EXPLORE_DIF_H) {
       exploreHard = !exploreHard;
       sfxPlay(SFX_TAP);
@@ -1903,7 +1915,7 @@ void onTap(int16_t x, int16_t y) {
       x <= EXPLORE_BTN_X + EXPLORE_BTN_W + EXPLORE_BTN_PAD &&
       y >= EXPLORE_BTN_Y - EXPLORE_BTN_PAD &&
       y <= EXPLORE_BTN_Y + EXPLORE_BTN_H + EXPLORE_BTN_PAD) {
-      if (!startWildBattle(exploreHard)) { sfxPlay(SFX_DENY); return; }
+      if (!startWildBattle(currentExploreRegion(), exploreHard)) { sfxPlay(SFX_DENY); return; }
       exploreOpen = false;
       sfxPlay(SFX_TAP);
     }
@@ -2593,6 +2605,34 @@ void uiChrome() {
   uiDrawRimBar();
 }
 
+uint8_t currentExploreRegion() {
+  if (exploreRegion < REGION_COUNT && regionAvailable(exploreRegion)) return exploreRegion;
+  uint8_t base = pet.region % REGION_COUNT;
+  exploreRegion = regionAvailable(base) ? base : nextAvailableRegion(base);
+  return exploreRegion;
+}
+
+int8_t exploreRegionHit(int16_t x, int16_t y) {
+  if (y < EXPLORE_REGION_Y || y > EXPLORE_REGION_Y + EXPLORE_REGION_H ||
+      x < EXPLORE_REGION_X || x > EXPLORE_REGION_X + EXPLORE_REGION_W) return 0;
+  if (x <= EXPLORE_REGION_X + EXPLORE_REGION_ARROW_W) return -1;
+  if (x >= EXPLORE_REGION_X + EXPLORE_REGION_W - EXPLORE_REGION_ARROW_W) return 1;
+  return 0;
+}
+
+void exploreStepRegion(int8_t step) {
+  int region = currentExploreRegion();
+  for (uint8_t i = 0; i < REGION_COUNT; i++) {
+    region += step < 0 ? -1 : 1;
+    if (region < 0) region = REGION_COUNT - 1;
+    else if (region >= REGION_COUNT) region = 0;
+    if (regionAvailable((uint8_t)region)) {
+      exploreRegion = (uint8_t)region;
+      return;
+    }
+  }
+}
+
 void renderExplore() {
   int h = sceneHour();
   gNight = pet.sleeping || h < 6 || h >= 20;
@@ -2605,12 +2645,22 @@ void renderExplore() {
   gfx->setCursor(CX - (int)strlen(T(S_EXPLORE)) * 9, 44);
   gfx->print(T(S_EXPLORE));
 
-  drawMap(SPR_ICON_PLAY, 16, CX - 48, 108, 6, false);
-  const char *region = pet.regionName();
-  gfx->fillRoundRect(CX - 92, 204, 184, 26, 9, UI_BG_DAY);
+  drawMap(SPR_ICON_PLAY, 16, CX - 40, 88, 5, false);
+  const char *region = REGIONS[currentExploreRegion()].name;
+  gfx->fillRoundRect(EXPLORE_REGION_X, EXPLORE_REGION_Y, EXPLORE_REGION_W,
+                     EXPLORE_REGION_H, 16, UI_BG_DAY);
+  gfx->drawRoundRect(EXPLORE_REGION_X, EXPLORE_REGION_Y, EXPLORE_REGION_W,
+                     EXPLORE_REGION_H, 16, UI_INK);
   gfx->setTextColor(UI_INK);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(region) * 6, 210);
+  gfx->setTextSize(3);
+  gfx->setCursor(EXPLORE_REGION_X + 38, EXPLORE_REGION_Y + 29);
+  gfx->print("<");
+  gfx->setCursor(EXPLORE_REGION_X + EXPLORE_REGION_W - 56, EXPLORE_REGION_Y + 29);
+  gfx->print(">");
+  gfx->setTextSize(strlen(region) <= 10 ? 3 : 2);
+  int regionCharHalf = strlen(region) <= 10 ? 9 : 6;
+  gfx->setCursor(CX - (int)strlen(region) * regionCharHalf,
+                 EXPLORE_REGION_Y + (strlen(region) <= 10 ? 29 : 35));
   gfx->print(region);
 
   const char *dif = T(exploreHard ? S_HARD : S_EASY);
@@ -3592,10 +3642,11 @@ void drawMoveRow(int y, uint8_t mv, bool highlight, int16_t dex) {
     return;
   }
   const MoveEntry &m = MOVE_TBL[mv];
+  const char *name = moveName(mv);
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(2);
   gfx->setCursor(82, y + 8);
-  gfx->print(m.name);
+  gfx->print(name);
   // There is no per-type palette (DexEntry.accent is per species), and inventing
   // one by hand would duplicate what gen_dex.py generates. Colouring same-type
   // moves in the species accent is more useful anyway: STAB is a 1.5x damage
@@ -3778,8 +3829,8 @@ static void btlNarrate(const Combatant &actor, const Combatant &target, const Tu
   if (lg.skipped) return;
   btlSfxFor(lg);
   if (lg.hurtSelf) { btlSay(T(S_BTL_HURTSELF)); return; }
-  if (lg.charged) { btlSay(T(S_BTL_USED), actor.name, MOVE_TBL[lg.move].name); return; }
-  if (lg.move) btlSay(T(S_BTL_USED), actor.name, MOVE_TBL[lg.move].name);
+  if (lg.charged) { btlSay(T(S_BTL_USED), actor.name, moveName(lg.move)); return; }
+  if (lg.move) btlSay(T(S_BTL_USED), actor.name, moveName(lg.move));
   if (lg.missed) { btlSay(T(S_BTL_MISS), actor.name); return; }
   if (lg.immune) { btlSay(T(S_BTL_IMMUNE)); return; }
   if (lg.crit) btlSay(T(S_BTL_CRIT));
@@ -3981,8 +4032,8 @@ static void btlApplyResult() {
   btlFoe.ailment = r.hostAil;
 
   btlMsgCount = 0;
-  if (r.hostMove) btlSay(T(S_BTL_USED), btlFoe.name, MOVE_TBL[r.hostMove].name);
-  if (r.guestMove) btlSay(T(S_BTL_USED), btlYou.name, MOVE_TBL[r.guestMove].name);
+  if (r.hostMove) btlSay(T(S_BTL_USED), btlFoe.name, moveName(r.hostMove));
+  if (r.guestMove) btlSay(T(S_BTL_USED), btlYou.name, moveName(r.guestMove));
   if (r.guestDmg) { btlHitUntil[0] = now + BTL_HIT_MS; sfxPlay(SFX_HIT); }
   if (r.hostDmg) { btlHitUntil[1] = now + BTL_HIT_MS; sfxPlay(SFX_HIT); }
   if (btlYou.fainted()) {
@@ -4578,10 +4629,11 @@ void renderBattle() {
       gfx->fillRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, mv ? UI_BG_DAY : UI_TRACK);
       gfx->drawRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, UI_INK);
       if (!mv) continue;
+      const char *name = moveName(mv);
       gfx->setTextColor(UI_INK);
-      gfx->setTextSize(strlen(MOVE_TBL[mv].name) <= 11 ? 2 : 1);
+      gfx->setTextSize(strlen(name) <= 11 ? 2 : 1);
       gfx->setCursor(x + 10, y + 7);
-      gfx->print(MOVE_TBL[mv].name);
+      gfx->print(name);
       // Same chip as the move list: in a fight the type IS the decision, and
       // grey 6px text was the least visible thing on the busiest screen.
       int cw = drawTypeChip(x + 10, y + 34, MOVE_TBL[mv].type);
@@ -5722,9 +5774,11 @@ void renderLearn() {
   gfx->setCursor(CX - (int)strlen(head) * 3, 48);
   gfx->print(head);
   gfx->setTextColor(DEX_TBL[pet.speciesId].accent);
-  gfx->setTextSize(3);
-  gfx->setCursor(CX - (int)strlen(MOVE_TBL[mv].name) * 9, 66);
-  gfx->print(MOVE_TBL[mv].name);
+  const char *move = moveName(mv);
+  int moveSize = strlen(move) <= 17 ? 3 : 2;
+  gfx->setTextSize(moveSize);
+  gfx->setCursor(CX - (int)strlen(move) * moveSize * 3, moveSize == 3 ? 66 : 72);
+  gfx->print(move);
 
   for (int i = 0; i < MOVE_SLOTS; i++) drawMoveRow(LEARN_ROW_Y(i), pet.moves[i], false, pet.speciesId);
 
@@ -6061,14 +6115,15 @@ void bagTap(int16_t x, int16_t y) {
 // HERE and remembered, because a capture has to hand back the creature that was
 // actually fought. Re-rolling any of it at capture time would mean the thing
 // you caught was not the thing on screen.
-bool startWildBattle(bool hard) {
+bool startWildBattle(uint8_t region, bool hard) {
   if (pet.isEgg() || pet.ceremony != CER_NONE) return false;
+  if (region >= REGION_COUNT || !regionAvailable(region)) return false;
   uint8_t tier = wildTierForRoll((uint8_t)random(100));
-  int16_t dex = wildPickSpecies(pet.region, tier, (uint32_t)random(65536) * 31u + random(31));
+  int16_t dex = wildPickSpecies(region, tier, (uint32_t)random(65536) * 31u + random(31));
   // A tier can be empty when only some packs are installed -- Kanto has no
   // R_LEGENDARIO gap, but a future region might. Fall back rather than refusing
   // the encounter, since "nothing happened" reads as a broken button.
-  if (!dex) dex = wildPickSpecies(pet.region, R_COMUN, random(65536));
+  if (!dex) dex = wildPickSpecies(region, R_COMUN, random(65536));
   if (!dex) return false;
 
   uint8_t lo = wildLevelMin(pet.level(), hard);

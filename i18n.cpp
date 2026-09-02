@@ -1,8 +1,10 @@
 #include "i18n.h"
 #include "pet.h"        // MED_COUNT
+#include "move_names.h"
 #include <Preferences.h>
 
 Lang gLang = LANG_DEFAULT;
+static_assert(LANG_COUNT == MOVE_NAME_LANG_COUNT, "move-name language order must match Lang");
 
 // Tabla de cadenas [idioma][id]. Sin acentos ni enes: la fuente bitmap del
 // firmware no los tiene (por eso el espanol ya iba "Esta", "bano", etc.).
@@ -293,6 +295,11 @@ static const char *const MED_DSC[LANG_COUNT][MED_COUNT] = {
   { "NIVEL 10", "NIVEL 25", "NIVEL 50", "BAGA ACHADA",
     "SEQ 7 DIAS", "LACO MAX", "FORMA FINAL", "EM FORMA" },
 };
+
+const char *moveName(uint8_t move) {
+  if (move >= MOVE_COUNT) move = MV_NONE;
+  return MOVE_NAME_TBL[gLang][move];
+}
 
 const char *T(StrId id) { return STRINGS[gLang][id]; }
 const char *medalName(int i)  { return MED_NAME[gLang][i]; }

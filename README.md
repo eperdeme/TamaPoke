@@ -3,7 +3,7 @@
 [![Flash in browser](https://img.shields.io/badge/flash-in%20browser-FF6B00?logo=googlechrome&logoColor=white)](https://dylanpdao.github.io/TamaPoke/web/)
 [![MakerWorld](https://img.shields.io/badge/MakerWorld-3D%20case-00AE42?logo=bambulab&logoColor=white)](https://makerworld.com/es/models/2937822-tamapoke-a-pokemon-pokeball-tamagotchi)
 ![Board](https://img.shields.io/badge/board-ESP32--S3%20round%20AMOLED-E7352C?logo=espressif&logoColor=white)
-![Firmware](https://img.shields.io/badge/firmware-v3.18-8A2BE2)
+![Firmware](https://img.shields.io/badge/firmware-v3.19-8A2BE2)
 ![Code](https://img.shields.io/badge/code-MIT-blue)
 ![Languages](https://img.shields.io/badge/languages-6-FFCB05)
 [![Stars](https://img.shields.io/github/stars/DylanPDao/TamaPoke?style=flat&logo=github&color=yellow)](https://github.com/DylanPDao/TamaPoke/stargazers)
@@ -239,8 +239,10 @@ brings ELECTIVIRE, MAGMORTAR and RHYPERIOR waiting on exactly the same thing.
 ### Wild encounters, catching and the bag
 
 **EXPLORE** is its own stop immediately beside the pet on the horizontal axis.
-The screen shows the current region, normal/hard difficulty and one large action;
-wild encounters no longer hide at the bottom of the gym ladder.
+Its large `< REGION >` selector moves through every installed sprite pack in
+either direction, independently of the region chosen for the current egg. The
+screen also offers normal/hard difficulty and one large action; wild encounters
+no longer hide at the bottom of the gym ladder.
 
 The encounter rolls a rarity tier, then a species of that tier that is **in an
 installed region pack and has art** — a caught creature is kept forever, so one
@@ -739,6 +741,8 @@ a farewell and punished by a runaway. Legendaries only with 25+ registered.
 
 **Languages:** the UI ships in 6 languages — English (default), Spanish, French,
 German, Italian, Portuguese — switchable from the settings screen (swipe down).
+Move names on cards, pickers and battle buttons follow that choice, as does the
+battle narration that names the move being used.
 
 ## Backgrounds: biome + real time
 
@@ -755,10 +759,12 @@ beach, forest, volcano, mountain, snow). Sleeping forces night.
 - `rtcbat.h` / `rtcbat.cpp` — PCF85063 RTC + AXP2101 PMU (battery, brightness, PWR button)
 - `audio.h` / `audio.cpp` — ES8311 + I2S + Game-Boy-style tone synth (non-blocking task)
 - `i18n.h` / `i18n.cpp` — the 6-language string tables
+- `move_names.h` — GENERATED (`gen_moves.py`): move display names in all 6 languages
 - `dex.h` — GENERATED (`gen_dex.py`): the 386 table
 - `species.h` — GENERATED (`sprites.py`): fallback sprites, UI icons, colours
 - `pin_config.h` — the board's official pins
 - `tools/` — pipeline: `dex_data.py` (data), `dex_stats.py`, `dex_types.py`, `gen_dex.py`,
+  `dex_move_names.py` / `gen_moves.py` (localized moves),
   `sprites.py` (workshop), `pack_pmd.py` / `make_thumbs.py`
   (packers), `pack_bundle.py` (web bundle), `send_sd.py` (SD upload), `touch_log.py`
 - `tools/emu/` — desktop emulator (real firmware + stubbed hardware, SDL)

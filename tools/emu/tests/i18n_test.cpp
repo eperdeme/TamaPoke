@@ -17,6 +17,7 @@ int FakeSerial::available() { return 0; }
 String FakeSerial::readStringUntil(char) { return String(""); }
 void sfxPlay(uint8_t) {}
 #include "i18n.h"
+#include "moves.h"
 #include <cstdio>
 #include <cstring>
 
@@ -33,6 +34,31 @@ int main() {
       for (const unsigned char *p = (const unsigned char *)v; *p; p++)
         if (*p > 0x7F) { printf("NON-ASCII  %s index %d: \"%s\"\n", LANG[l], s, v); bad++; break; }
     }
-  printf("%s: %d languages x %d strings\n", bad ? "FAIL" : "PASS", LANG_COUNT, STR_COUNT);
+  for (int l = 0; l < LANG_COUNT; l++) {
+    int translated = 0;
+    setLang((Lang)l);
+    for (int move = 0; move < MOVE_COUNT; move++) {
+      const char *value = moveName((uint8_t)move);
+      if (!value) { printf("NULL MOVE  %s index %d\n", LANG[l], move); bad++; continue; }
+      for (const unsigned char *p = (const unsigned char *)value; *p; p++)
+        if (*p > 0x7F) { printf("NON-ASCII MOVE  %s index %d: \"%s\"\n", LANG[l], move, value); bad++; break; }
+      if (move && strcmp(value, MOVE_TBL[move].name)) translated++;
+      if (strlen(value) > 23) { printf("LONG MOVE  %s index %d: \"%s\"\n", LANG[l], move, value); bad++; }
+    }
+    if (l == LANG_EN && translated) { printf("EN move names drifted from MOVE_TBL\n"); bad++; }
+    if (l != LANG_EN && !translated) { printf("%s move table silently fell back to English\n", LANG[l]); bad++; }
+  }
+  static const char *EMBER[LANG_COUNT] = {
+    "ASCUAS", "EMBER", "FLAMMECHE", "GLUT", "BRACIERE", "BRASA"
+  };
+  for (int l = 0; l < LANG_COUNT; l++) {
+    setLang((Lang)l);
+    if (strcmp(moveName(MV_EMBER), EMBER[l])) {
+      printf("MOVE ORDER  %s expected %s, got %s\n", LANG[l], EMBER[l], moveName(MV_EMBER));
+      bad++;
+    }
+  }
+  printf("%s: %d languages x %d strings + %d x %d move names\n",
+         bad ? "FAIL" : "PASS", LANG_COUNT, STR_COUNT, LANG_COUNT, MOVE_COUNT);
   return bad ? 1 : 0;
 }
