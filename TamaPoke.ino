@@ -39,7 +39,7 @@
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
-#define FW_VERSION "3.17"
+#define FW_VERSION "3.18"
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
   LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -1563,11 +1563,12 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
                  PDET_BTN_Y + PDET_BTN_H / 2 - 4);
   gfx->print(T(S_RELEASE_BTN));
 
-  if (!leftOk && !fromBox) {
-    gfx->setTextColor(UI_INK_SOFT);
+  if (!leftOk) {
+    const char *why = fromBox ? T(S_PARTY_FULL) : T(S_FOCUS_NOW);
+    gfx->setTextColor(UI_BAR_WARN);
     gfx->setTextSize(1);
-    gfx->setCursor(CX - (int)strlen(T(S_FOCUS_NOW)) * 3, PDET_BTN_Y + PDET_BTN_H + 4);
-    gfx->print(T(S_FOCUS_NOW));
+    gfx->setCursor(CX - (int)strlen(why) * 3, PDET_BTN_Y - 14);
+    gfx->print(why);
   }
   gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(2);

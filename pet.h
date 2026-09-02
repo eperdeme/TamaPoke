@@ -447,6 +447,9 @@ public:
 
 private:
   Preferences prefs;
+  // Scratch pets used for opponents share the player's NVS namespace. Only a
+  // Pet explicitly opened with begin() owns that persistent state.
+  bool opened = false;
   uint32_t lastTick = 0;
   uint32_t eatUntil = 0;
   uint32_t heartUntil = 0;
