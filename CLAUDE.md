@@ -577,9 +577,14 @@ done from here.
 - ~~Save backup~~ **done**. `EXPORT` prints the whole save as a block of
   `IMPORT <hex>` lines, and pasting that block back is the restore -- there is
   no second format to get wrong and no 2000-character line for a terminal to
-  mangle. About 1.2 KB, 16 lines.
+  mangle. About 3 KB, 38 lines with the redundant pet and player checkpoints.
+  `save_test` prints the figure against `SAVE_TRANSFER_MAX` and fails once it
+  passes three quarters of it: `saveExport()` returns 0 rather than truncating,
+  so outgrowing the ceiling turns `EXPORT` into `EXPORT FAIL` -- and it would do
+  so on the release that grew the dex, not the one that shipped the change.
+  **Raise `SAVE_TRANSFER_MAX`; never trim the backup.**
 
-  `save.cpp` is KEY-DRIVEN: `SAVE_FIELDS` lists all 51 keys with their types and
+  `save.cpp` is KEY-DRIVEN: `SAVE_FIELDS` lists all 55 keys with their types and
   both directions walk that one table through the ordinary `Preferences` API, so
   the identical code runs on the board and in the emulator. A struct of fields
   would have been a second description of the save that drifts the moment
@@ -1086,6 +1091,128 @@ erase a run.
 The one thing that does take them is `WIPE` (`factoryReset()` -> `prefs.clear()`),
 which is a factory reset and is meant to.
 
+They also have their own checkpoint pair, `plyA`/`plyB` -- see below.
+
+### The save is CHECKPOINTED, and the legacy keys are no longer the truth
+
+Read the header comment in `pet.cpp` before touching any of this. The short
+version, because it is the most expensive bug this project has shipped:
+
+**NVS writes one key at a time and `Preferences` commits on every `put()`.** A
+save spread over ~50 keys is therefore not atomic. A power cut in the middle
+leaves the early fields new and the later ones old, and what loads is a creature
+assembled from two lives -- current Attack training beside older Defence, Speed
+and species. That was reported as issue #3 and it was never a logic bug.
+
+So each logical record is now ONE blob, CRC-guarded, written into TWO keys
+alternately. The newest complete blob wins; if the write in flight never landed,
+the previous one is whole.
+
+| Record | Keys | Holds |
+|---|---|---|
+| the creature | `petA` / `petB` | species, age, IVs, training, moves, care, nickname, **and the pending party handover** |
+| the player | `plyA` / `plyB` | trainer name, avatar, region, both badge ladders, the Pokedex bitmaps, streak, medals, records |
+
+Four things about it that are easy to get wrong:
+
+- **THE BODY IS APPEND-ONLY.** The CRC sits at the END, located by the record's
+  own `size`, so a reader takes the prefix it understands and leaves its newer
+  fields at their initialisers. Insert a field instead of appending one and you
+  silently reinterpret every save on every device -- the same rule as move
+  indices and the badge arrays (§ "wearing an INDEX"). If a change genuinely
+  cannot be expressed that way, **bump the MAGIC, not the version**: that
+  invalidates the record loudly instead of misreading it quietly. `version` is
+  carried for diagnostics only.
+- **Rejecting a checkpoint falls back to the legacy keys, which IS the torn-write
+  path.** The first version of this demanded an exact size and version match, so
+  the next field anybody added would have quietly reintroduced issue #3 on every
+  device in the field. That is why the reader is tolerant and why
+  `static_assert(offsetof(PetCoreSnapshot, pad0) == PET_FIXED - 1)` exists --
+  failing it is the reminder to read the append-only rule, not to edit the
+  number and move on.
+- **The player record cannot be a struct.** `dexReg` is sized by `DEX_COUNT`,
+  `eggByRegion` by `REGION_COUNT`, the badge arrays by `GYM_REGIONS`, and this
+  project grows all three. A struct would move every field after whichever array
+  grew. So the DIMENSIONS TRAVEL IN THE HEADER and each array is copied by its
+  own prefix rule -- `loadBlob()`'s reasoning, applied inside one atomic blob.
+- **One generation counter PER RECORD, never shared.** Slots alternate by the
+  parity of the next generation, which is always `loaded + 1`, so the slot being
+  written is always the opposite of the one loaded from -- the fallback copy can
+  never be the one overwritten. Share a counter between the two records and that
+  breaks the moment one write succeeds and the other does not.
+  `powerloss_test` pins the invariant directly.
+
+The ~50 legacy keys are STILL WRITTEN, deliberately: they are what `EXPORT`
+carries and what a downgrade reads. But a failure in either checkpoint returns
+before touching them, so the previous save stays the previous save rather than
+becoming a half-updated one nothing can see is broken. **Dropping them is the
+obvious next win** -- it would take a save from ~55 NVS commits to 2, cutting
+both the tearing window and the page churn -- but it is a one-way door for
+anyone who downgrades, so it is not in this change.
+
+`powerloss_test` covers all of it, and every guard in it was negative-checked by
+breaking the firmware on purpose. Note `poisonLegacy()` in that file: almost
+every pet field is mirrored to a legacy key, so without it the fixture tests all
+passed with the checkpoint reader disabled entirely -- § "A test that proves the
+transcription rather than the firmware", caught again.
+
+### NVS can run out, and the core's answer is to erase the whole partition
+
+`nvs_flash_init()` returns `ESP_ERR_NVS_NO_FREE_PAGES` when the partition is
+full, and `initArduino()` (`esp32-hal-misc.c`) responds by calling
+`esp_partition_erase_range()` over the entire thing **before `setup()` runs**.
+Every save on the device, gone, with nothing a player could see. Nothing in the
+firmware could see it coming either: `putX()` returning short was discarded at
+every call site except the checkpoints.
+
+The stock `app3M_fat9M_16MB` table gives `nvs` 20 KB -- five 4 KB pages, ~630
+entries of 32 bytes -- and NVS needs a free page to compact into. `nvsinfo.cpp`
+reports headroom at boot and in the `HEALTH` heartbeat so the trend is visible
+during a soak test. It cannot prevent the wipe.
+
+**Do not "fix" this by growing `nvs` in the partition table.** `nvs` ends exactly
+where `otadata` starts, so growing it moves `otadata`, `app0` and `app1`, and the
+newly-added tail then contains leftover app bytes rather than erased flash --
+which is the case that triggers the erase above. If more room is ever genuinely
+needed, `ffat` (9.875 MB at `0x610000`) is **unused** -- the sprite packs are on
+a real SD card via `SD_MMC`, not on that partition -- and it sits after both app
+slots, so it can be shrunk and a new partition added in the freed tail without
+moving a single existing offset. Measure with `nvs_get_stats` first; fewer writes
+per save is the real fix.
+
+### Losing power is not the only way to lose a save
+
+- **A 4-second hold on PWR is a HARDWARE power-off inside the AXP2101.** The
+  rails drop and the firmware is never told, so it cannot save on shutdown. What
+  it can do is take the PMU's long-press interrupt, which fires at the
+  long-press threshold and therefore BEFORE the off threshold. `pwrLongPressed()`
+  and `batLowWarning()` both route into `flushBeforePowerLoss()`. **The lead time
+  is the PMU's, not ours -- measure it on hardware.** `XPOWERS_POWEROFF_6S`
+  widens it if 4 s turns out too tight.
+- The PMU **latches** its interrupts and one register read reports all of them,
+  so there can be only ONE poller: `pwrPoll()`, once per loop, which clears
+  unconditionally. The old code cleared only when it had seen a short press,
+  which was harmless while that was the only enabled interrupt and would have
+  left every new bit latched forever.
+- `flushBeforePowerLoss()` is deliberately the single entry point for all three
+  callers, because the one case where flushing must NOT happen -- a `WIPE`
+  waiting to restart, where the shutdown handler would write the deleted
+  creature straight back -- has to be impossible for the next caller to forget.
+  An earlier attempt put that guard on `Pet` instead and broke `console_test`,
+  which wipes the shared global pet and keeps using it.
+- **The party handover used to live only in RAM.** `update()` hands the creature
+  over and `newEgg()` saves the egg immediately, but the party write waits for
+  the player to accept a slot -- a banner or a whole chooser screen later. A
+  power cut in that window lost the creature with the save that erased it already
+  committed. It is in the pet checkpoint now, so the egg and the creature it
+  replaced commit together. Go through `clearEnded()` / `setEnded()`, never
+  `pet.endedKind = ...`.
+- **`Pet::saveHealthy()` is false when NVS would not open or has refused three
+  writes in a row**, and `drawSaveWarning()` puts a red triangle beside the
+  battery. A player who knows saving is broken can `EXPORT`; one who does not
+  loses the week. It is not a dialog on purpose: the condition persists, so a
+  modal would be dismissed once and forgotten.
+
 ### Tests
 
 ```bash
@@ -1264,10 +1391,17 @@ and pairing UX on a touch-only screen.
 
 ### Box size (if the party grows past 6)
 
-`sizeof(PartyMon)` is 30 bytes and the NVS partition is 20 KB (`0x5000`). A box
-of 100 is 3000 bytes and still fits one NVS blob; 151 (4530) exceeds the ~4000
-byte single-blob limit and would need splitting across two keys. RAM is a
-non-issue.
+`sizeof(PartyMon)` is **48 bytes** now (it was 30 when this was written; `moves[]`
+and then the care block were appended) and the NVS partition is 20 KB (`0x5000`).
+So the arithmetic has moved: the current box of 18 is 864 bytes, a box of 80 is
+3840 and still inside the ~4000-byte single-blob figure, and 100 (4800) already
+exceeds it and would need splitting across two keys. **Derive these from
+`sizeof(PartyMon)` when the time comes rather than trusting the numbers in this
+paragraph** -- they have been wrong once already, which is § "sizeof(PartyMon) is
+load-bearing in four places" wearing a doc instead of code. RAM is a non-issue.
+
+Check the headroom too, not just the blob limit: see § "NVS can run out". A box
+that fits one blob can still be the thing that fills the partition.
 
 **Fix the migration first.** `Party::begin()` infers the old record size as
 `stored / PARTY_SLOTS`, which is right when the stride grows but wrong when the

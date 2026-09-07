@@ -13,6 +13,11 @@ const SaveField SAVE_FIELDS[] = {
   { "wgt", SK_U8 },     { "age", SK_U32 },    { "dexn", SK_I16 },
   { "eggT2", SK_I16 },  { "crack", SK_U8 },   { "mist", SK_U8 },
   { "sleep", SK_BOOL }, { "lend", SK_U8 },    { "seen", SK_U32 },
+  // The alternating checkpoints. Redundant with the legacy scalars beside them
+  // on purpose: these are what the firmware actually BELIEVES on load, so a
+  // backup without them would restore a save the device then half-ignores.
+  { "petA", SK_BYTES }, { "petB", SK_BYTES },
+  { "plyA", SK_BYTES }, { "plyB", SK_BYTES },
   { "bond", SK_U8 },    { "nick", SK_STR },   { "froz", SK_BOOL },
   // individual values and training
   { "ivat", SK_U8 },    { "ivdf", SK_U8 },    { "ivsp", SK_U8 },

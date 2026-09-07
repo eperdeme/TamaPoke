@@ -128,7 +128,27 @@ int batPercent() { return 87; }
 bool batCharging() { return false; }
 bool usbPresent() { return true; }
 void pwrSetup() {}
+void pwrPoll() {}
 bool pwrShortPressed() { return false; }
+// There is no PMU here, so neither of these can ever fire. What the firmware
+// does when they do is a hardware path -- see the flush in loop() -- and faking
+// it from a stub would only prove the stub. powerloss_test drives the same
+// flush through Pet directly instead.
+bool pwrLongPressed() { return false; }
+bool batLowWarning() { return false; }
+
+// --- NVS headroom (nvsinfo.cpp on the board) ---
+// The emulator's NVS is a std::map in Preferences.h: there is no partition to
+// exhaust, so this reports a healthy, fixed figure rather than pretending to
+// model page accounting it does not have.
+bool nvsEntryStats(uint32_t *used, uint32_t *available, uint32_t *total) {
+  if (used) *used = 0;
+  if (available) *available = 630;   // ~5 pages of a stock 20 KB nvs
+  if (total) *total = 630;
+  return true;
+}
+bool nvsLowOnSpace() { return false; }
+void nvsReport(const char *) {}
 
 // --- audio (silent) ---
 void audioBegin() {}

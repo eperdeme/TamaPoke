@@ -23,6 +23,7 @@
 #define SAVE_MAGIC3 'S'
 #define SAVE_VERSION 1
 #define SAVE_HDR 8
+#define SAVE_TRANSFER_MAX 4096  // shared EXPORT/IMPORT ceiling, including checkpoints
 
 enum SaveKind : uint8_t {
   SK_U8 = 1, SK_I8, SK_BOOL, SK_U16, SK_I16, SK_U32, SK_BYTES, SK_STR,

@@ -151,7 +151,7 @@ int main(){
 
   // --- and the whole thing can then be backed up and restored
   {
-    static uint8_t buf[2048];
+   static uint8_t buf[SAVE_TRANSFER_MAX];
     size_t n = saveExport(buf, sizeof(buf));
     ck(n > 0, "an upgraded save exports");
     pet.factoryReset();

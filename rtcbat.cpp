@@ -81,16 +81,51 @@ bool usbPresent() { refreshPower(); return cachedUsb; }
 
 void pwrSetup() {
   if (!pmuOk) return;
+  // A 4-second hold is a HARDWARE power-off inside the AXP2101: the rails drop
+  // and the firmware is never told. That is why the long-press interrupt below
+  // matters -- it fires at the PMU's long-press threshold, which comes BEFORE
+  // the off threshold, and is the only warning the board can get that it is
+  // about to lose power. The lead time is the PMU's, not ours, so measure it on
+  // hardware before relying on it for anything slower than one NVS write; if it
+  // turns out too tight, XPOWERS_POWEROFF_6S widens the gap at the cost of a
+  // longer hold to switch the thing off.
+  //
+  // Deliberately NOT disableLongPressShutdown() plus a software pmu.shutdown():
+  // that is the tidier design, but it makes powering the device off depend on
+  // the firmware still running, and a hang would leave the player with no way
+  // out short of draining the battery.
   pmu.setPowerKeyPressOffTime(XPOWERS_POWEROFF_4S);
   pmu.disableIRQ(XPOWERS_AXP2101_ALL_IRQ);
-  pmu.enableIRQ(XPOWERS_AXP2101_PKEY_SHORT_IRQ);
+  pmu.enableIRQ(XPOWERS_AXP2101_PKEY_SHORT_IRQ | XPOWERS_AXP2101_PKEY_LONG_IRQ |
+                XPOWERS_AXP2101_WARNING_LEVEL1_IRQ |
+                XPOWERS_AXP2101_WARNING_LEVEL2_IRQ);
+  // The gauge's own warning, so a save can be flushed before the battery browns
+  // out rather than after. batPercent() was only ever used to draw an icon.
+  pmu.setLowBatWarnThreshold(15);
   pmu.clearIrqStatus();
 }
 
-bool pwrShortPressed() {
-  if (!pmuOk) return false;
+// The AXP2101 LATCHES its interrupts and one register read reports all of them,
+// so there can be only ONE poller: two callers each doing getIrqStatus() and
+// then clearIrqStatus() would clear the bit the other had not looked at yet.
+// This reads once, remembers what it saw, and clears; the accessors below
+// consume what was remembered.
+//
+// It also clears UNCONDITIONALLY. The old code cleared only when it had seen a
+// short press, which was harmless while short press was the only interrupt
+// enabled and is not any more -- an unacknowledged long-press or low-battery bit
+// would stay latched forever and every later read would see it again.
+static bool sawShort = false, sawLong = false, sawLowBat = false;
+
+void pwrPoll() {
+  if (!pmuOk) return;
   pmu.getIrqStatus();
-  bool hit = pmu.isPekeyShortPressIrq();
-  if (hit) pmu.clearIrqStatus();
-  return hit;
+  if (pmu.isPekeyShortPressIrq()) sawShort = true;
+  if (pmu.isPekeyLongPressIrq()) sawLong = true;
+  if (pmu.isDropWarningLevel1Irq() || pmu.isDropWarningLevel2Irq()) sawLowBat = true;
+  pmu.clearIrqStatus();
 }
+
+bool pwrShortPressed() { bool hit = sawShort; sawShort = false; return hit; }
+bool pwrLongPressed() { bool hit = sawLong; sawLong = false; return hit; }
+bool batLowWarning() { bool hit = sawLowBat; sawLowBat = false; return hit; }

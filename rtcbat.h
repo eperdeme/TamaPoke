@@ -16,4 +16,16 @@ bool usbPresent();
 // boton PWR del AXP2101: pulsacion larga 4s = apagado fisico (RTC sigue vivo);
 // la pulsacion corta la captura el firmware (pantalla on/off)
 void pwrSetup();
-bool pwrShortPressed();  // sondear en el loop
+// Reads the PMU's latched interrupts ONCE and remembers them. Call this exactly
+// once per loop pass, before the accessors below -- they consume what it saw and
+// do no I2C of their own. See the note in rtcbat.cpp for why there can only be
+// one poller.
+void pwrPoll();
+bool pwrShortPressed();  // screen on/off
+// The hold is on its way to the AXP2101's own power-off. This is the only
+// warning the firmware gets that the rails are about to drop, so it is the one
+// chance to flush a pending save.
+bool pwrLongPressed();
+// The gauge has dropped past its low-battery warning level. Same purpose: flush
+// before a brownout rather than after it.
+bool batLowWarning();

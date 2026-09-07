@@ -8,7 +8,9 @@ Inventory bag;
 // bag behind would be a lie.
 void Inventory::begin() {
   memset(counts, 0, sizeof(counts));
-  prefs.begin("tamapoke", false);
+  // Checked so a failure is at least visible; see the note in Party::begin().
+  if (!prefs.begin("tamapoke", false))
+    Serial.println("save: NVS would not open for the bag");
   size_t stored = prefs.getBytesLength("bag");
   if (stored) {
     // A blob from a build with FEWER items lands in the front and every key it

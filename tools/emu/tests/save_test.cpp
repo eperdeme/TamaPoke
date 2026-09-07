@@ -72,11 +72,19 @@ int main(){
     ck(inTable.size()==SAVE_FIELD_COUNT, "and the table has no duplicates");
   }
 
-  static uint8_t buf[2048];
+  static uint8_t buf[SAVE_TRANSFER_MAX];
   size_t n = saveExport(buf, sizeof(buf));
   ck(n > 0, "a save exports");
   ck(n < sizeof(buf), "and fits a sensible buffer");
-  printf("      (%u bytes)\n", (unsigned)n);
+  // Fitting is not enough. saveExport() returns 0 rather than truncating, so
+  // outgrowing the ceiling turns EXPORT into "EXPORT FAIL" -- the backup simply
+  // stops existing, and it would do so on the release that grew the dex rather
+  // than on the one that shipped this test. A quarter of the buffer spare is the
+  // margin; when this fails, raise SAVE_TRANSFER_MAX rather than trimming the
+  // backup, because a backup that is quietly PARTIAL is worse than none.
+  ck(n < sizeof(buf) - sizeof(buf) / 4,
+     "with room left for the dex and the record layouts to keep growing");
+  printf("      (%u bytes of %u)\n", (unsigned)n, (unsigned)sizeof(buf));
 
   // --- a mangled blob must never be applied
   {

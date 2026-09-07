@@ -105,6 +105,12 @@ struct FakeSerial {
 };
 extern FakeSerial Serial;
 
+// The sketch registers a save flush here so a SOFTWARE restart cannot lose the
+// last few minutes. There is nothing to hook on the desktop, and the emulator
+// re-execs itself for PANIC/WDT rather than going through esp_restart().
+typedef void (*shutdown_handler_t)();
+inline int esp_register_shutdown_handler(shutdown_handler_t) { return 0; }
+
 struct FakeESP {
   uint32_t getFreeHeap() { return 294024; }
   uint32_t getMinFreeHeap() { return 281000; }

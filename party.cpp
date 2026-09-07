@@ -12,7 +12,10 @@ void Party::begin() {
   // is missing, so without this a reload after a wipe would keep showing the
   // old party out of RAM.
   for (auto &s : slots) s = PartyMon();
-  prefs.begin("tamapoke", false);
+  // Checked so a failure is at least visible. The panel's warning comes from
+  // Pet::saveHealthy(), which shares this namespace and so fails with it.
+  if (!prefs.begin("tamapoke", false))
+    Serial.println("save: NVS would not open for the party");
   // The blob is raw structs, so growing PartyMon (moves[] was appended in v1.9)
   // changes its stride. Reading an older, shorter blob straight into the new
   // array would land slot 1 onward at the wrong offset and quietly invent a

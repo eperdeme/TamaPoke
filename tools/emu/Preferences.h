@@ -9,6 +9,16 @@
 
 typedef std::map<std::string, std::vector<uint8_t>> NvsStore;
 inline NvsStore &nvs() { static NvsStore s; return s; }
+inline int &nvsWriteBudget() { static int n = -1; return n; }
+inline void nvsFailWritesAfter(int successfulWrites) { nvsWriteBudget() = successfulWrites; }
+inline void nvsResumeWrites() { nvsWriteBudget() = -1; }
+inline bool nvsCanWrite() {
+  int &budget = nvsWriteBudget();
+  if (budget < 0) return true;
+  if (!budget) return false;
+  budget--;
+  return true;
+}
 void nvsLoad(const char *path);
 void nvsSave(const char *path);
 
@@ -20,31 +30,35 @@ public:
   void clear() { kv.clear(); }
   bool isKey(const char *k) { return kv.count(k) != 0; }
 
-  template <typename T> void putT(const char *k, T v) {
+  template <typename T> size_t putT(const char *k, T v) {
+    if (!nvsCanWrite()) return 0;
     std::vector<uint8_t> b(sizeof(T));
     memcpy(b.data(), &v, sizeof(T));
     kv[k] = b;
+    return sizeof(T);
   }
   template <typename T> T getT(const char *k, T d) {
     auto it = kv.find(k);
     if (it == kv.end() || it->second.size() != sizeof(T)) return d;
     T v; memcpy(&v, it->second.data(), sizeof(T)); return v;
   }
-  void putUChar(const char *k, uint8_t v) { putT(k, v); }
+  size_t putUChar(const char *k, uint8_t v) { return putT(k, v); }
   uint8_t getUChar(const char *k, uint8_t d = 0) { return getT(k, d); }
-  void putChar(const char *k, int8_t v) { putT(k, v); }
+  size_t putChar(const char *k, int8_t v) { return putT(k, v); }
   int8_t getChar(const char *k, int8_t d = 0) { return getT(k, d); }
-  void putBool(const char *k, bool v) { putT(k, v); }
+  size_t putBool(const char *k, bool v) { return putT(k, v); }
   bool getBool(const char *k, bool d = false) { return getT(k, d); }
-  void putUInt(const char *k, uint32_t v) { putT(k, v); }
+  size_t putUInt(const char *k, uint32_t v) { return putT(k, v); }
   uint32_t getUInt(const char *k, uint32_t d = 0) { return getT(k, d); }
-  void putShort(const char *k, int16_t v) { putT(k, v); }
+  size_t putShort(const char *k, int16_t v) { return putT(k, v); }
   int16_t getShort(const char *k, int16_t d = 0) { return getT(k, d); }
-  void putUShort(const char *k, uint16_t v) { putT(k, v); }
+  size_t putUShort(const char *k, uint16_t v) { return putT(k, v); }
   uint16_t getUShort(const char *k, uint16_t d = 0) { return getT(k, d); }
-  void putBytes(const char *k, const void *p, size_t n) {
+  size_t putBytes(const char *k, const void *p, size_t n) {
+    if (!nvsCanWrite()) return 0;
     const uint8_t *b = (const uint8_t *)p;
     kv[k] = std::vector<uint8_t>(b, b + n);
+    return n;
   }
   // Size of a stored blob, 0 if absent. The firmware uses it to tell an
   // old, shorter record layout from the current one (see Party::begin).
@@ -70,8 +84,10 @@ public:
     memcpy(p, it->second.data(), it->second.size());
     return it->second.size();
   }
-  void putString(const char *k, const char *v) {
+  size_t putString(const char *k, const char *v) {
+    if (!nvsCanWrite()) return 0;
     kv[k] = std::vector<uint8_t>(v, v + strlen(v) + 1);
+    return strlen(v) + 1;
   }
   size_t getString(const char *k, char *out, size_t n) {
     auto it = kv.find(k);

@@ -4,6 +4,7 @@
 #include "moves.h"
 #include "noart.h"   // speciesHasArt(): the egg pool skips what cannot be drawn
 #include "audio.h"
+#include <stddef.h>
 
 // Reads a blob that may be LONGER than the array we are reading it into.
 //
@@ -37,9 +38,414 @@ static void loadBlob(Preferences &p, const char *key, void *dst, size_t n) {
   free(tmp);
 }
 
+// ---------------------------------------------------------------------------
+// CHECKPOINTED RECORDS: how a save survives losing power halfway through.
+//
+// NVS writes one key at a time and Preferences commits on every put(), so a
+// save spread over ~50 keys is not atomic. A cut in the middle leaves the early
+// fields new and the later ones old, and what loads next boot is a creature
+// assembled from two different lives -- current Attack training beside older
+// Defence, Speed and species. That is issue #3.
+//
+// The fix is to write each logical record as ONE blob, guarded by a CRC, into
+// TWO keys used alternately. The newest complete blob wins; if the write that
+// was in flight never landed, the previous one is still whole. The legacy
+// scalar keys are still written for backups and for downgrades, but they are no
+// longer what the firmware believes.
+//
+// Every record here shares one layout:
+//
+//   off 0    u32  magic        -- identifies the record AND its wire format
+//   off 4    u16  version      -- informational; see the append-only rule
+//   off 6    u16  size         -- the WHOLE blob, trailing crc included
+//   off 8    u32  generation   -- monotonic; picks the newer of the two slots
+//   off 12   ...  body
+//   size-2   u16  crc          -- CRC-16/CCITT-FALSE over bytes [0, size-2)
+//
+// THE CRC SITS AT THE END, not in the header, so that `size` alone locates it.
+// That is what lets a record be read across a layout change: a reader takes the
+// body prefix it understands and leaves any field it has that the stored record
+// did not at its initialiser -- the same rule loadBlob() applies to the dex
+// bitmaps, for the same reason.
+//
+// SO THE BODY IS APPEND-ONLY. New fields go at the end, never inserted, exactly
+// as with move indices and the badge arrays (CLAUDE.md § "wearing an INDEX").
+// Inserting one silently reinterprets every save already on a device.
+//
+// If a change ever CANNOT be expressed that way, bump the MAGIC rather than the
+// version. That invalidates the record cleanly and loudly instead of quietly
+// misreading it, and it is one rule rather than a version check somebody has to
+// remember to relax. `version` is carried for diagnostics only.
+//
+// Why this matters more than it looks: rejecting a checkpoint means falling
+// back to the legacy keys, which is precisely the torn-write path all of this
+// exists to replace. A tolerant reader is what stops the next field anybody
+// adds from silently reintroducing issue #3 on every device in the field.
+static constexpr size_t CKPT_HDR = 12;   // magic, version, size, generation
+static constexpr size_t CKPT_CRC = 2;    // the trailing crc
+
+// Unaligned little-endian accessors. The blob is addressed by byte offset
+// rather than cast to a struct, so no field's placement depends on how the
+// compiler chose to pad anything.
+static inline uint16_t ckptRd16(const uint8_t *p) {
+  uint16_t v; memcpy(&v, p, 2); return v;
+}
+static inline uint32_t ckptRd32(const uint8_t *p) {
+  uint32_t v; memcpy(&v, p, 4); return v;
+}
+static inline void ckptWr16(uint8_t *p, uint16_t v) { memcpy(p, &v, 2); }
+static inline void ckptWr32(uint8_t *p, uint32_t v) { memcpy(p, &v, 4); }
+
+// CRC-16/CCITT-FALSE: init 0xFFFF, poly 0x1021, MSB first, no final xor.
+// save.cpp has its own copy for the EXPORT blob; that one is a wire format
+// shared with the host tools, so the duplication is deliberate.
+static uint16_t ckptCrc(const uint8_t *data, size_t n) {
+  uint16_t crc = 0xFFFF;
+  for (size_t i = 0; i < n; i++) {
+    crc ^= (uint16_t)data[i] << 8;
+    for (uint8_t bit = 0; bit < 8; bit++)
+      crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021)
+                           : (uint16_t)(crc << 1);
+  }
+  return crc;
+}
+
+// Fills in the header and the trailing crc over a body the caller has already
+// written. Returns the total length.
+static uint16_t ckptSeal(uint8_t *buf, size_t bodyEnd, uint32_t magic,
+                         uint16_t version, uint32_t generation) {
+  uint16_t total = (uint16_t)(bodyEnd + CKPT_CRC);
+  ckptWr32(buf + 0, magic);
+  ckptWr16(buf + 4, version);
+  ckptWr16(buf + 6, total);
+  ckptWr32(buf + 8, generation);
+  ckptWr16(buf + bodyEnd, ckptCrc(buf, bodyEnd));
+  return total;
+}
+
+// Reads and validates one checkpoint slot into `buf`. Returns the stored length
+// on success, 0 if the key is absent, too short, not this record, inconsistent
+// about its own size, or fails its CRC. `cap` must leave room for a record
+// written by a LATER build than this one -- getBytes() copies nothing at all
+// when the stored blob is larger than the buffer, so a tight buffer would turn
+// every downgrade into a legacy-key fallback.
+static uint16_t ckptRead(Preferences &prefs, const char *key, uint32_t magic,
+                         uint8_t *buf, size_t cap) {
+  size_t stored = prefs.getBytesLength(key);
+  if (stored < CKPT_HDR + CKPT_CRC) return 0;   // absent, or too short to be one
+  if (stored > cap) {
+    Serial.printf("save: %s is %u bytes, this build reads at most %u\n", key,
+                  (unsigned)stored, (unsigned)cap);
+    return 0;
+  }
+  if (prefs.getBytes(key, buf, cap) != stored) return 0;
+  if (ckptRd32(buf + 0) != magic) return 0;
+  if (ckptRd16(buf + 6) != stored) return 0;    // self-describing length must agree
+  if (ckptRd16(buf + stored - CKPT_CRC) != ckptCrc(buf, stored - CKPT_CRC)) return 0;
+  return (uint16_t)stored;
+}
+
+// Wrap-safe "is lhs newer than rhs": the counter is uint32_t and comparing it
+// directly would invert after 4 billion saves.
+static bool generationAfter(uint32_t lhs, uint32_t rhs) {
+  return (int32_t)(lhs - rhs) > 0;
+}
+
+// Reads whichever of the two slots is newest AND complete. Returns its length,
+// or 0 if neither validates. The winner is re-read rather than kept in a second
+// buffer: these blobs are hundreds of bytes and the loop task's stack is not
+// somewhere to spend that twice.
+static uint16_t ckptReadNewest(Preferences &prefs, const char *keyA,
+                               const char *keyB, uint32_t magic, uint8_t *buf,
+                               size_t cap) {
+  uint16_t nA = ckptRead(prefs, keyA, magic, buf, cap);
+  uint32_t genA = nA ? ckptRd32(buf + 8) : 0;
+  uint16_t nB = ckptRead(prefs, keyB, magic, buf, cap);
+  uint32_t genB = nB ? ckptRd32(buf + 8) : 0;
+  if (nB && (!nA || !generationAfter(genA, genB))) return nB;   // buf already holds B
+  if (!nA) return 0;
+  return ckptRead(prefs, keyA, magic, buf, cap);
+}
+
+// Which of the two slots a given generation belongs in. Odd -> A, even -> B, so
+// consecutive saves alternate and each one overwrites the OLDER copy. Since the
+// next generation is always (loaded + 1), its parity is always the opposite of
+// the slot it was loaded from: the fallback copy can never be the one being
+// overwritten. That invariant is the whole design, and powerloss_test pins it.
+static const char *ckptSlot(uint32_t generation, const char *a, const char *b) {
+  return (generation & 1) ? a : b;
+}
+
+// --- the creature ----------------------------------------------------------
+static constexpr uint32_t PET_CORE_MAGIC = 0x31504B54UL;  // "TKP1"
+// v2 appended the pending party handover; see PET_TAIL_* below. v1 records
+// still read -- they simply have no tail, which is exactly "nothing waiting for
+// a party slot", the right default.
+static constexpr uint16_t PET_CORE_VERSION = 2;
+// Generous enough to read a record from a later build; see ckptRead().
+static constexpr size_t PET_CORE_CAP = 192;
+
+// The fixed part of the record: byte-for-byte the v1 body, which is why a
+// checkpoint already on a device still validates. PetCoreSnapshot below is
+// exactly this prefix, and only PET_FIXED bytes of it are ever copied -- the
+// struct's own sizeof is rounded up by its 4-byte alignment and those trailing
+// bytes are not part of the format.
+static constexpr size_t PET_FIXED = 70;
+
+struct PetCoreSnapshot {
+  uint32_t magic;
+  uint16_t version;
+  uint16_t size;
+  uint32_t generation;
+  uint32_t ageMinutes;
+  uint32_t lastSeenEpoch;
+  int16_t speciesId;
+  int16_t eggTarget;
+  uint16_t medals;
+  uint8_t fullness, joy, energy, hygiene, poops, weight;
+  uint8_t ivAtk, ivDef, ivSpe, ivHp;
+  uint8_t trAtk, trDef, trSpe;
+  uint8_t moves[MOVE_SLOTS];
+  uint8_t lastLearnLevel;
+  uint8_t berryKnown, shiny, eggShiny, starterPick;
+  uint8_t evoPen, sleepAuto, retirePending, eggTaps;
+  uint8_t careMistakes, sleeping, lastEnd, frozen, bond;
+  char nick[12];
+  // v1 had one byte of tail padding here, before its trailing crc. Named rather
+  // than left implicit so the struct has no bytes the compiler chose and the
+  // append point is unambiguous: a new SCALAR goes here, taking this byte, and
+  // the record's version and PET_FIXED both move.
+  uint8_t pad0;
+};
+// EXACT, not "< 256". PET_FIXED is on-disk format -- it is what the crc covers
+// and what a v1 blob's `size` implies -- so a field added above changes what
+// every device already holds. Failing this assert is the reminder to read the
+// append-only rule at the top of this section, then move the number
+// deliberately and bump PET_CORE_VERSION.
+static_assert(offsetof(PetCoreSnapshot, pad0) == PET_FIXED - 1,
+              "pet checkpoint fixed layout changed");
+static_assert(sizeof(PetCoreSnapshot) >= PET_FIXED, "PET_FIXED overruns the struct");
+
+// The v2 tail: the creature a finished ceremony handed over, still waiting for a
+// party slot.
+//
+// It lives INSIDE the creature's own record rather than under a key of its own,
+// and that is the entire point. update() calls snapshotForParty() and then
+// newEgg(), which saves the new egg immediately -- but the handover itself was
+// only ever in RAM (Pet::endedMon), and the party write does not happen until
+// the player accepts a slot, which may be a banner or a whole chooser screen
+// later. Power off in between and the creature was gone, with the save that
+// erased it already committed. A 4-second hold on the power key at exactly that
+// moment is an ordinary thing for a player to do.
+//
+// Two keys with a generation threshold cannot fix that without a two-phase
+// commit: whichever order they are written in, there is a window where the
+// handover is durable but the egg is not, or the reverse, and the recovery rule
+// then has to distinguish "the egg never landed" from "this was consumed ages
+// ago" -- which it cannot do from a generation number alone without eventually
+// resurrecting a creature that is still alive. Putting it in the same blob as
+// the egg means they commit together or not at all, and there is no window and
+// no rule to get wrong.
+//
+// The PartyMon goes LAST because it grows: it has gained moves[] and then a
+// whole care block, and Party::begin() migrates the party blob by length for
+// that reason. Its stored length travels with it so the same prefix rule
+// applies here.
+static constexpr size_t PET_TAIL_KIND = PET_FIXED;          // u8  ceremony kind
+static constexpr size_t PET_TAIL_RSVD = PET_FIXED + 1;      // u8  reserved, 2-byte aligns the next
+static constexpr size_t PET_TAIL_MONLEN = PET_FIXED + 2;    // u16 stored sizeof(PartyMon)
+static constexpr size_t PET_TAIL_MON = PET_FIXED + 4;       // the record itself
+static constexpr size_t PET_BODY = PET_TAIL_MON + sizeof(PartyMon);
+static_assert(PET_BODY + CKPT_CRC <= PET_CORE_CAP, "raise PET_CORE_CAP");
+
+// Takes a validated blob and copies whatever body prefix the stored record and
+// this build have in common. Anything this build has that the record did not
+// keeps its zero initialiser, and anything the record has that this build does
+// not is dropped -- the append-only rule is what makes both directions safe.
+static void petCoreFromBytes(const uint8_t *buf, uint16_t n,
+                             PetCoreSnapshot &snapshot) {
+  size_t body = n - CKPT_CRC;
+  if (body > PET_FIXED) body = PET_FIXED;
+  snapshot = PetCoreSnapshot();
+  memcpy(&snapshot, buf, body);
+}
+
+static bool readPetCore(Preferences &prefs, const char *key,
+                        PetCoreSnapshot &snapshot) {
+  uint8_t buf[PET_CORE_CAP];
+  uint16_t n = ckptRead(prefs, key, PET_CORE_MAGIC, buf, sizeof(buf));
+  if (!n) return false;
+  petCoreFromBytes(buf, n, snapshot);
+  return true;
+}
+
+// --- the player ------------------------------------------------------------
+// Everything in a save that OUTLIVES the creature: the trainer, the Pokedex,
+// the badges, the daily streak, the medal total and the minigame records. That
+// was ~25 more keys written one after another, so a cut between them could
+// leave a badge won without the dex entry that came with it, or a medal counted
+// on the creature but not in the lifetime total. The same fault as issue #3,
+// one layer out, and it survived the first fix because that fix only covered
+// the creature.
+//
+// Unlike the creature's, this record CANNOT be a struct. dexReg is sized by
+// DEX_COUNT, eggByRegion by REGION_COUNT and the badge arrays by GYM_REGIONS,
+// and this project grows all three -- the dex has gone 151 -> 386 -> 1025. A
+// struct would move every field after whichever array grew, and that is the one
+// thing the append-only rule cannot absorb.
+//
+// So the DIMENSIONS TRAVEL IN THE HEADER and each array is copied by its own
+// prefix rule: a stored array shorter than this build's lands at the front and
+// the tail keeps its zero initialiser, a longer one is truncated. That is
+// exactly what loadBlob() does per key -- dex bit n means the same species
+// however big the table got -- applied inside one atomic blob instead of across
+// twenty-five separate writes.
+static constexpr uint32_t PLAYER_MAGIC = 0x31594B54UL;   // "TKY1"
+static constexpr uint16_t PLAYER_VERSION = 1;
+static constexpr size_t PLAYER_FIXED = 42;   // header + every scalar, before the arrays
+static constexpr size_t PLAYER_CAP = 512;
+static constexpr size_t PLAYER_DEX_BYTES = (DEX_COUNT + 7) / 8;
+// DERIVED from the tables, never restated: CLAUDE.md § "sizeof(PartyMon) is
+// load-bearing in four places" is what a literal here costs. Failing this is
+// the signal to raise PLAYER_CAP, not to trim the record.
+static constexpr size_t PLAYER_MAX =
+    PLAYER_FIXED + 2 * PLAYER_DEX_BYTES + 4 * (GYM_REGIONS - 1) +
+    2 * REGION_COUNT + 12 /* trainerName */ + CKPT_CRC;
+static_assert(PLAYER_MAX <= PLAYER_CAP, "raise PLAYER_CAP for the player record");
+
+// A bounds-checked cursor over the variable tail of a blob. Overrunning sets
+// `bad` rather than running off the end of the buffer.
+struct CkptCursor {
+  uint8_t *buf;
+  size_t at;
+  size_t end;
+  bool bad = false;
+  void put(const void *src, size_t n) {
+    if (at + n > end) { bad = true; return; }
+    memcpy(buf + at, src, n);
+    at += n;
+  }
+  // Copies `stored` bytes out of the blob into a destination of `n`, keeping the
+  // PREFIX they share and stepping over the whole stored length either way.
+  void take(void *dst, size_t n, size_t stored) {
+    if (at + stored > end) { bad = true; return; }
+    memcpy(dst, buf + at, stored < n ? stored : n);
+    at += stored;
+  }
+};
+
+bool Pet::savePlayerSnapshot() {
+  const uint32_t nextGen = playerGeneration + 1;
+  uint8_t buf[PLAYER_CAP] = {};
+
+  ckptWr16(buf + 12, (uint16_t)sizeof(dexReg));   // u16: a dex byte count outgrew 255 long ago
+  buf[14] = REGION_COUNT;
+  buf[15] = GYM_REGIONS - 1;                      // the length of badgesX / badgesHardX
+  buf[16] = (uint8_t)sizeof(trainerName);
+  buf[17] = avatar;
+  buf[18] = region;
+  buf[19] = 0;                                    // reserved, keeps the scalars 2-byte aligned
+  ckptWr16(buf + 20, badges);
+  ckptWr16(buf + 22, badgesHard);
+  ckptWr16(buf + 24, streak);
+  ckptWr16(buf + 26, bestStreak);
+  ckptWr32(buf + 28, lastCareDay);
+  ckptWr16(buf + 32, totalMedals);
+  ckptWr16(buf + 34, lastMilestone);
+  ckptWr16(buf + 36, gameHi);
+  ckptWr16(buf + 38, strHi);
+  ckptWr16(buf + 40, spdHi);
+
+  CkptCursor cur{ buf, PLAYER_FIXED, sizeof(buf) - CKPT_CRC };
+  cur.put(dexReg, sizeof(dexReg));
+  cur.put(dexShinyReg, sizeof(dexShinyReg));
+  cur.put(badgesX, sizeof(badgesX));
+  cur.put(badgesHardX, sizeof(badgesHardX));
+  cur.put(eggByRegion, sizeof(eggByRegion));
+  cur.put(trainerName, sizeof(trainerName));
+  if (cur.bad) {   // PLAYER_MAX static_asserts this cannot happen; say so if it does
+    Serial.println("save: player record does not fit PLAYER_CAP");
+    return false;
+  }
+
+  uint16_t total = ckptSeal(buf, cur.at, PLAYER_MAGIC, PLAYER_VERSION, nextGen);
+  const char *key = ckptSlot(nextGen, "plyA", "plyB");
+  if (prefs.putBytes(key, buf, total) != total) return false;
+  // Read back into the same buffer and re-check, exactly as the creature's does.
+  uint16_t n = ckptRead(prefs, key, PLAYER_MAGIC, buf, sizeof(buf));
+  if (n != total || ckptRd32(buf + 8) != nextGen) return false;
+  playerGeneration = nextGen;
+  return true;
+}
+
+bool Pet::loadPlayerSnapshot() {
+  uint8_t buf[PLAYER_CAP];
+  uint16_t n = ckptReadNewest(prefs, "plyA", "plyB", PLAYER_MAGIC, buf, sizeof(buf));
+  if (!n) return false;
+
+  const size_t dexBytes = ckptRd16(buf + 12);
+  const size_t regionN = buf[14];
+  const size_t badgeN = buf[15];
+  const size_t nameN = buf[16];
+  // Check the dimensions BEFORE copying a single byte. A record that disagrees
+  // with its own length is rejected whole rather than half-applied over the
+  // legacy values already loaded -- half-applied is the very mixture this
+  // record exists to prevent. A body LONGER than the dimensions describe is
+  // fine and ignored: that is a later build's appended field.
+  const size_t body = n - CKPT_CRC;
+  const size_t need = PLAYER_FIXED + 2 * dexBytes + 4 * badgeN + 2 * regionN + nameN;
+  if (!regionN || need > body) {
+    Serial.println("save: player checkpoint dimensions do not match its length");
+    return false;
+  }
+
+  playerGeneration = ckptRd32(buf + 8);
+  avatar = buf[17];
+  region = buf[18];
+  badges = ckptRd16(buf + 20);
+  badgesHard = ckptRd16(buf + 22);
+  streak = ckptRd16(buf + 24);
+  bestStreak = ckptRd16(buf + 26);
+  lastCareDay = ckptRd32(buf + 28);
+  totalMedals = ckptRd16(buf + 32);
+  lastMilestone = ckptRd16(buf + 34);
+  gameHi = ckptRd16(buf + 36);
+  strHi = ckptRd16(buf + 38);
+  spdHi = ckptRd16(buf + 40);
+
+  CkptCursor cur{ buf, PLAYER_FIXED, body };
+  cur.take(dexReg, sizeof(dexReg), dexBytes);
+  cur.take(dexShinyReg, sizeof(dexShinyReg), dexBytes);
+  cur.take(badgesX, sizeof(badgesX), badgeN * 2);
+  cur.take(badgesHardX, sizeof(badgesHardX), badgeN * 2);
+  cur.take(eggByRegion, sizeof(eggByRegion), regionN * 2);
+  cur.take(trainerName, sizeof(trainerName), nameN);
+  trainerName[sizeof(trainerName) - 1] = 0;
+
+  // REGION_ALL is the LAST entry of the table and is stored RAW, so a save from
+  // a build with fewer regions has a number that now means somebody else --
+  // with Galar and Paldea appended, ALL moved 7 -> 9 and a stored 7 became a
+  // region with no sprite pack. The record carries the table size it was
+  // written with so that cannot happen; this is the same rule as the "regn"
+  // key, asked of the record that is actually being believed.
+  if (regionN != REGION_COUNT && region >= (uint8_t)(regionN - 1)) region = REGION_ALL;
+  if (region >= REGION_COUNT) region = REGION_ALL;
+  if (avatar >= AVATAR_COUNT) avatar = 0;   // a save from when there were four
+  return true;
+}
+
 void Pet::begin() {
-  prefs.begin("tamapoke", false);
-  opened = true;
+  // CHECKED. This used to set opened = true regardless, so a namespace that
+  // would not open left every write failing forever with nothing to show for it
+  // -- getBool("init") returns its default, the player is handed a fresh egg,
+  // and saving silently does nothing for as long as they keep playing. It is
+  // still a fresh egg now, because there is nothing to load, but saveHealthy()
+  // is false and the panel says so.
+  opened = prefs.begin("tamapoke", false);
+  if (!opened)
+    Serial.println("save: NVS namespace would not open -- NOTHING WILL BE SAVED");
+  saveGeneration = 0;
+  playerGeneration = 0;
   // Zeroed BEFORE the branch below, not inside load(): getBytes() leaves its
   // destination untouched when the key is missing, and the fresh-install path
   // returns without ever calling load(). Without this a begin() after a factory
@@ -106,7 +512,7 @@ void Pet::setClock(uint32_t nowEpoch) {
 }
 
 void Pet::syncClock(uint32_t nowEpoch) {
-  uint32_t seen = prefs.getUInt("seen", 0);
+  uint32_t seen = lastSeenEpoch;
   lastSeenEpoch = nowEpoch;
   if (nowEpoch == 0) return;
   uint32_t mins = (seen && nowEpoch > seen) ? (nowEpoch - seen) / 60 : 0;
@@ -388,6 +794,10 @@ void Pet::snapshotForParty() {
   if (retireIsEarly()) return;
   endedMon = toPartyMon();
   endedKind = ceremony;
+  // Deliberately NOT saved here. update() calls this and then newEgg(), whose
+  // save() writes the handover into the same checkpoint blob as the new egg --
+  // so the creature being banked and the creature replacing it commit together.
+  // Saving here as well would only add a write that could tear against that one.
 }
 
 // vuelca el guardado periodico pendiente (lo llama el loop en un momento sin
@@ -1365,10 +1775,130 @@ PetMood Pet::mood() const {
   return MOOD_HAPPY;
 }
 
+bool Pet::saveCoreSnapshot() {
+  const uint32_t nextGen = saveGeneration + 1;
+  PetCoreSnapshot snapshot = {};
+  snapshot.ageMinutes = ageMinutes;
+  snapshot.lastSeenEpoch = lastSeenEpoch;
+  snapshot.speciesId = speciesId;
+  snapshot.eggTarget = eggTarget;
+  snapshot.medals = medals;
+  snapshot.fullness = fullness; snapshot.joy = joy;
+  snapshot.energy = energy; snapshot.hygiene = hygiene;
+  snapshot.poops = poops; snapshot.weight = weight;
+  snapshot.ivAtk = ivAtk; snapshot.ivDef = ivDef;
+  snapshot.ivSpe = ivSpe; snapshot.ivHp = ivHp;
+  snapshot.trAtk = trAtk; snapshot.trDef = trDef; snapshot.trSpe = trSpe;
+  memcpy(snapshot.moves, moves, sizeof(moves));
+  snapshot.lastLearnLevel = lastLearnLevel;
+  snapshot.berryKnown = berryKnown; snapshot.shiny = shiny;
+  snapshot.eggShiny = eggShiny; snapshot.starterPick = starterPick;
+  snapshot.evoPen = evoPen; snapshot.sleepAuto = sleepAuto;
+  snapshot.retirePending = retirePending; snapshot.eggTaps = eggTaps;
+  snapshot.careMistakes = careMistakes; snapshot.sleeping = sleeping;
+  snapshot.lastEnd = lastEnd; snapshot.frozen = frozen; snapshot.bond = bond;
+  strncpy(snapshot.nick, nick, sizeof(snapshot.nick) - 1);
+
+  uint8_t buf[PET_CORE_CAP] = {};
+  memcpy(buf, &snapshot, PET_FIXED);
+  // The pending handover rides along, so the new egg and the creature it
+  // replaced commit in the same write.
+  buf[PET_TAIL_KIND] = endedKind;
+  buf[PET_TAIL_RSVD] = 0;
+  ckptWr16(buf + PET_TAIL_MONLEN, (uint16_t)sizeof(PartyMon));
+  memcpy(buf + PET_TAIL_MON, &endedMon, sizeof(PartyMon));
+
+  uint16_t total = ckptSeal(buf, PET_BODY, PET_CORE_MAGIC, PET_CORE_VERSION, nextGen);
+  const char *key = ckptSlot(nextGen, "petA", "petB");
+  if (prefs.putBytes(key, buf, total) != total) return false;
+  // Read it back and re-check the CRC before believing it. This catches a
+  // rejected or short write, which is what a full or failing NVS looks like
+  // from up here -- it cannot catch a marginal cell that reads correctly now
+  // and decays later, which is what the second slot is for.
+  PetCoreSnapshot written;
+  if (!readPetCore(prefs, key, written) || written.generation != nextGen)
+    return false;
+  saveGeneration = nextGen;
+  return true;
+}
+
+bool Pet::loadCoreSnapshot() {
+  uint8_t buf[PET_CORE_CAP];
+  uint16_t n = ckptReadNewest(prefs, "petA", "petB", PET_CORE_MAGIC, buf, sizeof(buf));
+  if (!n) return false;
+  PetCoreSnapshot snapshot;
+  petCoreFromBytes(buf, n, snapshot);
+
+  // The v2 tail, if this record has one. A v1 blob stops at PET_FIXED and both
+  // fields keep their initialisers, which reads as "nothing waiting for a slot".
+  const size_t body = n - CKPT_CRC;
+  endedKind = CER_NONE;
+  endedMon = PartyMon();
+  if (body >= PET_TAIL_MON) {
+    size_t monLen = ckptRd16(buf + PET_TAIL_MONLEN);
+    if (monLen && PET_TAIL_MON + monLen <= body) {
+      // Prefix rule again: a record from before PartyMon grew lands in the front
+      // and the care block keeps its initialisers, which stateVersion 0 already
+      // means "predates care state". A longer one is truncated.
+      memcpy(&endedMon, buf + PET_TAIL_MON,
+             monLen < sizeof(PartyMon) ? monLen : sizeof(PartyMon));
+      uint8_t kind = buf[PET_TAIL_KIND];
+      // Only the two endings that actually bank a creature, and only if there
+      // is one: a junk kind must not park an empty record in the chooser.
+      if ((kind == CER_FAREWELL || kind == CER_RELEASE) && !endedMon.empty())
+        endedKind = kind;
+      else
+        endedMon = PartyMon();
+    }
+  }
+
+  saveGeneration = snapshot.generation;
+  ageMinutes = snapshot.ageMinutes;
+  lastSeenEpoch = snapshot.lastSeenEpoch;
+  speciesId = snapshot.speciesId;
+  eggTarget = snapshot.eggTarget;
+  medals = snapshot.medals;
+  fullness = snapshot.fullness; joy = snapshot.joy;
+  energy = snapshot.energy; hygiene = snapshot.hygiene;
+  poops = snapshot.poops; weight = snapshot.weight;
+  ivAtk = snapshot.ivAtk; ivDef = snapshot.ivDef;
+  ivSpe = snapshot.ivSpe; ivHp = snapshot.ivHp;
+  trAtk = snapshot.trAtk; trDef = snapshot.trDef; trSpe = snapshot.trSpe;
+  memcpy(moves, snapshot.moves, sizeof(moves));
+  lastLearnLevel = snapshot.lastLearnLevel;
+  berryKnown = snapshot.berryKnown != 0; shiny = snapshot.shiny != 0;
+  eggShiny = snapshot.eggShiny != 0; starterPick = snapshot.starterPick != 0;
+  evoPen = snapshot.evoPen; sleepAuto = snapshot.sleepAuto;
+  retirePending = snapshot.retirePending != 0; eggTaps = snapshot.eggTaps;
+  careMistakes = snapshot.careMistakes; sleeping = snapshot.sleeping != 0;
+  lastEnd = snapshot.lastEnd; frozen = snapshot.frozen != 0; bond = snapshot.bond;
+  memcpy(nick, snapshot.nick, sizeof(nick));
+  nick[sizeof(nick) - 1] = 0;
+  return true;
+}
+
 void Pet::save() {
   if (!opened) return;
+  // Both checkpoints go first, and a failure in either one returns BEFORE the
+  // legacy keys are touched. That ordering is the point: the legacy keys are
+  // still what a backup exports and what a downgrade reads, so a half-finished
+  // run through them is a real save that nothing can see is broken. Leaving
+  // them entirely alone means the previous save stays the previous save.
+  if (!saveCoreSnapshot()) {
+    pendingSave = true;
+    if (saveFailures < 255) saveFailures++;
+    Serial.println("save: pet checkpoint failed");
+    return;
+  }
+  if (!savePlayerSnapshot()) {
+    pendingSave = true;
+    if (saveFailures < 255) saveFailures++;
+    Serial.println("save: player checkpoint failed");
+    return;
+  }
   ticksSinceSave = 0;
   pendingSave = false;
+  saveFailures = 0;
   prefs.putUChar("full", fullness);
   prefs.putUChar("joy", joy);
   prefs.putUChar("ene", energy);
@@ -1460,6 +1990,7 @@ void Pet::load() {
   sleepAuto = prefs.getUChar("slpa", SLEEP_NONE);
   retirePending = prefs.getBool("rtpn", false);
   loadBlob(prefs, "dexsh", dexShinyReg, sizeof(dexShinyReg));
+  lastSeenEpoch = prefs.getUInt("seen", 0);
   ageMinutes = prefs.getUInt("age", 0);
   if (prefs.isKey("dexn")) {
     speciesId = prefs.getShort("dexn", -1);
@@ -1523,6 +2054,33 @@ void Pet::load() {
   if (avatar >= AVATAR_COUNT) avatar = 0;   // a save from when there were four
   badges = prefs.getUShort("badg", 0);
   badgesHard = prefs.getUShort("badh", 0);
+  // The player's progress, on the same terms as the creature's below: if the
+  // record is there it is what the firmware believes, and the legacy keys read
+  // above were only the migration path.
+  if (!loadPlayerSnapshot() && (prefs.isKey("plyA") || prefs.isKey("plyB")))
+    Serial.println("save: BOTH player checkpoints failed; using legacy keys");
+
+  // The checkpoint is the truth about the creature; the legacy reads above are
+  // what a save from before it existed has, and what a backup restores. Both
+  // clamps have to be re-applied, because the checkpoint bypassed the ones the
+  // legacy path already did.
+  if (loadCoreSnapshot()) {
+    if (trAtk > trMaxAtk()) trAtk = trMaxAtk();
+    if (trDef > trMaxDef()) trDef = trMaxDef();
+    if (trSpe > trMaxSpe()) trSpe = trMaxSpe();
+    for (int i = 0; i < MOVE_SLOTS; i++)
+      if (moves[i] >= MOVE_COUNT) moves[i] = 0;
+  } else if (prefs.isKey("petA") || prefs.isKey("petB")) {
+    // There ARE checkpoints and neither one could be read. Louder than the
+    // upgrade case below, because it means both slots were lost at once and the
+    // creature now standing on the panel came from the legacy keys instead --
+    // which is the torn-write path, so it may be a mixture of two lives.
+    Serial.println("save: BOTH pet checkpoints failed; using legacy keys");
+  } else if (prefs.isKey("dexn")) {
+    // Normal exactly once per device: a save written by a build from before the
+    // checkpoints existed. The next save creates them.
+    Serial.println("save: no pet checkpoint yet, migrating from legacy keys");
+  }
   if (!isEgg() && moveCount() == 0 && lastLearnLevel == 0) {
     // save from before moves existed: hand it the set it should already have
     // rather than a queue of every gate it ever passed

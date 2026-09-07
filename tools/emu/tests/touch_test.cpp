@@ -10,6 +10,8 @@
 #include "party.h"
 #include "moves.h"
 #include "battle.h"
+#include "trainers.h"
+#include "inventory.h"
 #include <chrono>
 #include <thread>
 #include <string>
@@ -34,8 +36,9 @@ void setup();
 void loop();
 extern Pet pet;   // defined in the sketch
 extern bool trainOpen, sackOpen, gameOpen, menuOpen, cardOpen, movePickOpen, spdOpen;
-extern bool bagOpen;
+extern bool bagOpen, playerOpen;
 int uiMenuRowCenterY(int i);
+int uiBagRowCenterY(int i);
 extern uint8_t movePickSlot, movePickPage;
 extern bool battleOpen, btlOver, btlWon;
 extern Combatant btlYou, btlFoe;
@@ -46,7 +49,7 @@ extern uint8_t btlFoeAt, btlSquadN, btlSquadAt, btlMenu;
 extern Combatant btlSquad[7];
 extern int8_t btlSwapWho;
 extern bool btlHard;
-extern bool gymOpen, gymHard; extern uint8_t gymPage;
+extern bool gymOpen, gymHard; extern uint8_t gymPage, gymRegion, btlRegion;
 extern bool pickOpen, pickHard; extern uint8_t pickTrainer; extern uint16_t squadMask;
 uint8_t squadCap(uint8_t idx, bool hard);
 uint8_t pickChosen(); uint8_t pickCandidates(); void pickDefault(uint8_t);
@@ -190,7 +193,42 @@ int main(int argc, char **argv) {
     return 1;
   }
   printf("PASS: menu BAG row opens the bag\n");
+
+  pet.trAtk = 0;
+  pet.saveNow();
+  bag.add(IT_PROTEIN);
+  uint8_t proteinRow = 0;
+  while (proteinRow < bag.distinctCount() && bag.keyAt(proteinRow) != IT_PROTEIN)
+    proteinRow++;
+  if (proteinRow >= bag.distinctCount()) {
+    printf("FAIL: Protein did not appear in the field bag\n");
+    return 1;
+  }
+  click(233, uiBagRowCenterY(proteinRow));
+  uint8_t trainedAtk = pet.trAtk;
+  Pet afterVitamin;
+  afterVitamin.begin();
+  if (!trainedAtk || afterVitamin.trAtk != trainedAtk) {
+    printf("FAIL: Protein training did not survive reload (%u -> %u)\n",
+           trainedAtk, afterVitamin.trAtk);
+    return 1;
+  }
+  printf("PASS: training gained from a field item persists immediately\n");
   bagOpen = false;
+
+  uint8_t oldAvatar = pet.avatar;
+  playerOpen = true;
+  click(233, 100);
+  Pet afterAvatar;
+  afterAvatar.begin();
+  if (pet.avatar == oldAvatar || afterAvatar.avatar != pet.avatar) {
+    printf("FAIL: avatar change did not survive reload (%u -> %u -> %u)\n",
+           oldAvatar, pet.avatar, afterAvatar.avatar);
+    return 1;
+  }
+  printf("PASS: an avatar change persists immediately\n");
+  playerOpen = false;
+
   // Put the card back: everything below this line continues from it, and a
   // check that quietly changes the state its neighbours depend on is how a
   // suite starts failing somewhere other than where it broke.
@@ -209,6 +247,13 @@ int main(int argc, char **argv) {
   printf("PASS: picking a move replaces the slot (%s -> %s)\n",
          before ? MOVE_TBL[before].name : "-",
          pet.moves[1] ? MOVE_TBL[pet.moves[1]].name : "-");
+  Pet afterMove;
+  afterMove.begin();
+  if (afterMove.moves[1] != pet.moves[1]) {
+    printf("FAIL: the replacement move did not survive reload\n");
+    return 1;
+  }
+  printf("PASS: a replacement move persists immediately\n");
 
   // the swap must never leave the same move in two slots
   bool dupe = false;
@@ -328,6 +373,35 @@ int main(int argc, char **argv) {
   if (!btlWon) { printf("FAIL: a L100 creature lost to Brock\n"); return 1; }
   if (!pet.hasBadge(0, 0, false) || hadBadge) { printf("FAIL: no badge awarded\n"); return 1; }
   printf("PASS: beating a leader awards its badge (%u/8)\n", pet.badgeCount(false));
+
+  // The selected region becomes battle-owned state. Replacements and badge
+  // awards use btlRegion, not the gym chooser's mutable region.
+  for (uint8_t region = 1; region < GYM_REGIONS; region++) {
+    battleOpen = false;
+    gymRegion = region;
+    startTrainerBattle(0, false);
+    if (btlRegion != gymRegion) {
+      printf("FAIL: region %u battle kept region %u\n", gymRegion, btlRegion);
+      return 1;
+    }
+    const Trainer &leader = TRAINER_SETS[gymRegion].list[0];
+    if (btlFoe.dex != leader.team[0].dex) {
+      printf("FAIL: region %u battle did not start with its own leader\n", gymRegion);
+      return 1;
+    }
+    btlFoe.hp = 0;
+    btlSwapWho = 1;
+    btlMsgCount = 1;
+    click(233, 320);  // dismiss the faint message; the real replacement arrives
+    if (btlFoeAt != 1 || btlFoe.dex != leader.team[1].dex) {
+      printf("FAIL: region %u leader replaced its lead with dex %u\n",
+             gymRegion, btlFoe.dex);
+      return 1;
+    }
+  }
+  printf("PASS: every non-Kanto leader sends its own second creature\n");
+  battleOpen = false;
+  gymRegion = 0;
 
   // ---- hard mode caps the team to the opponent's size AND level
   battleOpen = false;

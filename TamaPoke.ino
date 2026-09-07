@@ -34,12 +34,13 @@
 #include "wild.h"
 #include "sdmon.h"
 #include "rtcbat.h"
+#include "nvsinfo.h"
 #include "i18n.h"
 #include "audio.h"
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
-#define FW_VERSION "3.19"
+#define FW_VERSION "3.20"
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
   LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -821,6 +822,28 @@ bool rimMoved = false;
 float rimA0 = 0;
 int rimSteps = 0;
 
+// A factory reset has emptied NVS and we are waiting to restart into a new game.
+// Nothing may write the in-RAM creature back over it in the meantime.
+bool saveInhibited = false;
+
+// Flush a pending save because power is about to go away: the PWR key on its way
+// to the AXP2101's hardware cut, the battery's low warning, or a software
+// restart. THE single answer for all three, so the one case where it must NOT
+// happen cannot be forgotten by whoever adds the fourth -- see CLAUDE.md § "A
+// rule enforced in one path but not in its twin", which is a list of what
+// happens when three callers each keep their own copy of a guard.
+//
+// Deliberately ignores the dim/off gate that the periodic autosave in loop()
+// obeys. That gate exists so a ~1 s flash write is never visible mid-animation;
+// a visible stutter is a far smaller price than the last few minutes of a
+// creature's life.
+void flushBeforePowerLoss(const char *why) {
+  if (saveInhibited) return;
+  if (!pet.savePending()) return;
+  Serial.printf("save: flushing (%s)\n", why);
+  pet.flushSave();
+}
+
 void setup() {
   Serial.setRxBufferSize(8192);  // la transferencia a SD llega en bloques de 2 KB
   Serial.begin(115200);
@@ -883,6 +906,17 @@ void setup() {
   pet.syncClock(e);
 
   audioBegin();  // ES8311 + I2S + amplificador (suena un jingle de arranque)
+
+  // After everything has loaded, so the figure reflects a real save rather than
+  // an empty one. A full partition is erased WHOLE by the core on the next boot,
+  // so this number trending down over a soak test is the only warning there is.
+  nvsReport("boot");
+
+  // Covers the SOFTWARE restarts -- ESP.restart() after an IMPORT, and the one
+  // the serial console does. It does NOT cover the AXP2101's 4-second hardware
+  // power-off, which tells the firmware nothing at all; that is what the
+  // long-press flush in loop() is for.
+  esp_register_shutdown_handler([]() { flushBeforePowerLoss("shutdown"); });
 
   lastInteract = millis();
 }
@@ -953,7 +987,7 @@ void loop() {
       snprintf(partyBannerName, sizeof(partyBannerName), "%s",
                pet.endedMon.nick[0] ? pet.endedMon.nick : DEX_TBL[pet.endedMon.dex].name);
       partyBannerUntil = now + 3500;
-      pet.endedKind = CER_NONE;
+      pet.clearEnded();
       sfxPlay(SFX_MEDAL);
     } else {
       partyPick = true;
@@ -962,15 +996,25 @@ void loop() {
     }
   }
 
-  // pulsacion corta del PWR: pantalla on/off
+  // El PMU late sus interrupciones: se leen TODAS de una vez (pwrPoll) y los
+  // accesores de abajo consumen lo que vio. Ver rtcbat.cpp: dos sondeos
+  // independientes se borrarian los bits el uno al otro.
   static uint32_t lastPwr = 0;
   if (now - lastPwr > 250) {
     lastPwr = now;
+    pwrPoll();
     if (pwrShortPressed()) {
       screenOff = !screenOff;
       pet.setScreenOff(screenOff);   // asleep only if it is also night
       if (!screenOff) lastInteract = now;
     }
+    // The hold is on its way to the AXP2101's own power-off, and the firmware
+    // gets no second warning. Flush NOW, ignoring the dim/off gate below: that
+    // gate exists so a ~1 s flash write is never visible mid-animation, and a
+    // visible stutter is a much smaller price than the last few minutes of a
+    // creature's life. Same for the battery's low warning.
+    if (pwrLongPressed()) flushBeforePowerLoss("pwr long press");
+    if (batLowWarning()) flushBeforePowerLoss("battery low");
   }
 
   updateBrightness(now);
@@ -996,8 +1040,13 @@ void loop() {
   static uint32_t lastHealth = 0;
   if (now - lastHealth > 300000) {
     lastHealth = now;
-    Serial.printf("HEALTH up=%lus heap=%u min=%u\n", (unsigned long)(now / 1000),
-                  ESP.getFreeHeap(), ESP.getMinFreeHeap());
+    Serial.printf("HEALTH up=%lus heap=%u min=%u save=%s\n",
+                  (unsigned long)(now / 1000), ESP.getFreeHeap(),
+                  ESP.getMinFreeHeap(), pet.saveHealthy() ? "ok" : "BROKEN");
+    // NVS headroom rides the same heartbeat as the heap, and for the same
+    // reason: the value on its own says little, the trend over a soak says
+    // everything. See nvsinfo.cpp for what running out costs.
+    nvsReport("health");
   }
 
   // 85 ms en juego/saco: margen seguro para que el redibujado no pise el envio
@@ -1224,7 +1273,7 @@ void handleSerial() {
     // Prints the whole save as a block of IMPORT commands. Pasting that block
     // back is the restore -- there is no separate format to get wrong, and no
     // single 2000-character line for a terminal to mangle.
-    static uint8_t buf[2048];
+    static uint8_t buf[SAVE_TRANSFER_MAX];
     size_t n = saveExport(buf, sizeof(buf));
     if (!n) { Serial.println("EXPORT FAIL"); return; }
     Serial.printf("# TamaPoke save, %u bytes. Paste this whole block back.\n",
@@ -1238,7 +1287,7 @@ void handleSerial() {
   } else if (line.startsWith("IMPORT")) {
     // IMPORT <hex>   append a chunk
     // IMPORT         commit what has been appended
-    static uint8_t in[2048];
+    static uint8_t in[SAVE_TRANSFER_MAX];
     static size_t inN = 0;
     String hex = line.substring(6);
     hex.trim();
@@ -1267,6 +1316,10 @@ void handleSerial() {
     if (ok) { Serial.println("DONE"); delay(100); ESP.restart(); }
   } else if (line == "WIPE") {
     pet.factoryReset();     // borra NVS y reinicia -> partida nueva (eleccion de inicial)
+    // Set BEFORE the restart, because the restart runs the shutdown handler, and
+    // that handler's whole job is to flush a pending save. Without this it would
+    // write the creature that was just deleted straight back into the empty NVS.
+    saveInhibited = true;
     Serial.println("DONE");
     delay(100);
     ESP.restart();
@@ -1490,7 +1543,7 @@ void onSwipeV(int dir) {
   if (partyOpen) {
     if (partyDetail) { if (back) partyDetail = 0; return; }
     if (back) {
-      if (partyPick) { partyPick = false; pet.endedKind = CER_NONE; }
+      if (partyPick) { partyPick = false; pet.clearEnded(); }
       uiTileGo(TILE_PET);
     }
     return;
@@ -1792,7 +1845,7 @@ void partyTap(int16_t x, int16_t y) {
        x >= PARTYCLOSE_X && x <= PARTYCLOSE_X + PARTYCLOSE_W) || y < 34) {
     if (partyPick) {                 // declined the swap: the pet is let go
       partyPick = false;
-      pet.endedKind = CER_NONE;
+      pet.clearEnded();
     }
     partyOpen = false;
     sfxPlay(SFX_TAP);
@@ -1823,7 +1876,7 @@ void partyTap(int16_t x, int16_t y) {
     snprintf(partyBannerName, sizeof(partyBannerName), "%s",
              pet.endedMon.nick[0] ? pet.endedMon.nick : DEX_TBL[pet.endedMon.dex].name);
     partyBannerUntil = millis() + 3500;
-    pet.endedKind = CER_NONE;
+    pet.clearEnded();
     partyPick = false;
     partyOpen = false;
     sfxPlay(SFX_MEDAL);
@@ -1851,7 +1904,7 @@ void onSwipe(int dir) {
     // A sheet drawn on top of a tile closes first; the axis is underneath it.
     if (galleryDetail) { galleryDetail = 0; galleryPmd.unload(); galleryDirty = true; return; }
     if (partyDetail) { partyDetail = 0; return; }
-    if (partyPick) { partyPick = false; pet.endedKind = CER_NONE; }
+    if (partyPick) { partyPick = false; pet.clearEnded(); }
     if (pet.ceremony || confirmUntil) return;
     int n = t - dir;   // the content follows the finger
     // IT BUMPS. This is the whole point of the axis: a horizontal swipe can no
@@ -1934,7 +1987,7 @@ void onTap(int16_t x, int16_t y) {
     // the avatar is the only other live target; everything else backs out
     if (playerPage == 0 && x > CX - 40 && x < CX + 40 && y > 70 && y < 146) {
       pet.avatar = (uint8_t)((pet.avatar + 1) % AVATAR_COUNT);
-      pet.flushSave();
+      pet.saveNow();
       sfxPlay(SFX_TAP);
       return;
     }
@@ -2074,7 +2127,7 @@ void onTap(int16_t x, int16_t y) {
       for (int s = 0; s < MOVE_SLOTS; s++)
         if (tgt[s] == all[idx] && s != movePickSlot) tgt[s] = tgt[movePickSlot];
       tgt[movePickSlot] = all[idx];
-      if (movePickParty) party.save(); else pet.flushSave();
+      if (movePickParty) party.save(); else pet.saveNow();
       movePickOpen = false;
       return;
     }
@@ -3932,7 +3985,8 @@ void startLinkBattle() {
 
 void startTrainerBattle(uint8_t idx, bool hard) {
   if (idx >= TRAINER_COUNT || pet.isEgg() || pet.ceremony != CER_NONE) return;
-  const Trainer &tr = TRAINERS[idx];
+  uint8_t region = gymRegion % GYM_REGIONS;
+  const Trainer &tr = TRAINER_SETS[region].list[idx];
   uint8_t top = 0;
   for (int k = 0; k < tr.count; k++)
     if (tr.team[k].level > top) top = tr.team[k].level;
@@ -3942,11 +3996,11 @@ void startTrainerBattle(uint8_t idx, bool hard) {
   buildSquad(top, hard ? tr.count : TRAINER_TEAM_MAX, squadMask);
   if (!btlSquadN) return;
   btlTrainer = (int8_t)idx;
+  btlRegion = region;
   btlHard = hard;
   btlWild = false;
   btlFoeAt = 0;
-  const Trainer &t = TRAINERS[idx];
-  foeFromSpecies(btlFoe, t.team[0].dex, t.team[0].level, hard ? HARD_IV : EASY_IV);
+  foeFromSpecies(btlFoe, tr.team[0].dex, tr.team[0].level, hard ? HARD_IV : EASY_IV);
   btlMsgCount = 0;
   btlOver = false;
   btlWon = false;
@@ -4132,9 +4186,10 @@ static void wildStoreCaught() {
   if (party.add(m) || party.boxAdd(m)) return;
   // Both full: hand it to the chooser the endings already own. endedKind is
   // only ever tested against CER_NONE by that flow, so this is the intended
-  // handover and not a borrowed meaning.
-  pet.endedMon = m;
-  pet.endedKind = CER_RELEASE;
+  // handover and not a borrowed meaning. Through setEnded() so it is written to
+  // the pet checkpoint as well -- a creature you just caught and have not yet
+  // found a slot for must not evaporate on a power cut either.
+  pet.setEnded(m, CER_RELEASE);
 }
 
 // Throwing a ball. Spends the turn either way: a free capture attempt every
@@ -5996,6 +6051,8 @@ uint8_t bagPages() {
   return n ? (uint8_t)((n + BAG_PER_PAGE - 1) / BAG_PER_PAGE) : 1;
 }
 
+int uiBagRowCenterY(int i) { return BAG_ROW_Y(i) + 25; }
+
 // A toast over the bag: what the last item did. Not a dialog -- using a vitamin
 // is not a decision, and a confirmation for every tap would make training worse
 // than the punching bag it competes with.
@@ -6026,7 +6083,7 @@ static bool bagUseOnPet(ItemKey k) {
   if (*cur >= cap) return false;
   uint16_t next = (uint16_t)*cur + e.amount;
   *cur = next > cap ? cap : (uint8_t)next;
-  pet.flushSave();
+  pet.saveNow();
   return true;
 }
 
@@ -6680,8 +6737,25 @@ void drawBattery() {
   }
 }
 
+// Drawn beside the battery when Pet::saveHealthy() goes false: NVS would not
+// open, or it has refused three writes in a row.
+//
+// Deliberately not a dialog. The condition persists, so a modal would be
+// dismissed once and then forgotten, and it is not actionable in the moment --
+// what the player needs is to know before they put in another week, so they can
+// EXPORT. The firmware could not say this at all before: the only symptom was a
+// line on a serial port no player has attached.
+void drawSaveWarning() {
+  if (pet.saveHealthy()) return;
+  const int x = CX - 40, y = 11, w = 13, h = 13;
+  gfx->fillTriangle(x + w / 2, y, x, y + h, x + w, y + h, UI_BAR_BAD);
+  gfx->fillRect(x + w / 2, y + 5, 2, 4, RGB565_BLACK);   // the "!"
+  gfx->fillRect(x + w / 2, y + 10, 2, 2, RGB565_BLACK);
+}
+
 void drawHeader(const char *name, uint16_t nameColor, const char *msg) {
   drawBattery();
+  drawSaveWarning();
   gfx->setTextColor(nameColor);
   gfx->setTextSize(3);
   gfx->setCursor(CX - strlen(name) * 9, HEADER_NAME_Y);

@@ -311,7 +311,7 @@ public:
   void setScreenOff(bool off);  // the sketch reports the PWR button
   bool screenIsOff = false;
   void dbgTick() { tick(); }   // tests drive minutes directly; tick() is private
-  // syncClock() reads "seen" back out of NVS, so a test has to put it there
+  // Keep the legacy key in step too, so tests also cover migration saves.
   void dbgSetSeen(uint32_t e) { lastSeenEpoch = e; prefs.putUInt("seen", e); }
   uint8_t sleepAuto = SLEEP_NONE;   // who decided the current sleep state  // dormir / despertar
   void clean();
@@ -367,7 +367,21 @@ public:
   // primera partida: el jugador elige inicial (Bulbasaur/Charmander/Squirtle)
   bool awaitingStarter() const { return starterPick; }
   void chooseStarter(int16_t dex) { eggTarget = dex; starterPick = false; save(); }
-  void factoryReset() { prefs.clear(); }  // borra la NVS (test: comando serie WIPE)
+  // Empties NVS; the caller restarts into a new game (serial command WIPE).
+  // BOTH generation counters go back to zero with it, or the next save would
+  // write a record numbered above the empty slots and the parity invariant in
+  // ckptSlot() would no longer hold.
+  //
+  // It does NOT stop later saves. Keeping the in-RAM creature from being written
+  // back over the wipe is the job of saveInhibited in the sketch, next to the
+  // flush hooks that are the actual risk -- one guard, where the callers are.
+  void factoryReset() {
+    prefs.clear();
+    saveGeneration = 0;
+    playerGeneration = 0;
+    saveFailures = 0;
+    pendingSave = false;
+  }
   void dbgRunawayReady() { fullness = joy = energy = hygiene = 0; neglectTicks = RUNAWAY_TICKS; }  // test
   // test: force what the egg holds and hatch it now (serial command EGG).
   // The legendary/shiny IV guarantees only fire inside hatch(), so without
@@ -436,7 +450,36 @@ public:
   // guardado periodico diferido: tick() marca pendiente y el loop lo vuelca
   // cuando la pantalla esta atenuada/apagada (la escritura a flash congela
   // ~1s ambos cores: asi no se ve ni corta el tactil)
+  // The handover has been resolved: the creature took a party or box slot, or
+  // the player let it go. Persisted straight away, because it now lives in the
+  // pet checkpoint -- clearing it only in RAM would re-offer the same creature
+  // on the next boot, which is the mirror of the bug that made it durable.
+  void clearEnded() {
+    if (endedKind == CER_NONE) return;
+    endedKind = CER_NONE;
+    endedMon = PartyMon();
+    saveNow();
+  }
+  // A creature is waiting for a slot. Used in place of reaching for endedKind so
+  // there is one answer, and so the durable copy cannot be set without being
+  // written -- see CLAUDE.md § "A rule enforced in one path but not its twin".
+  void setEnded(const PartyMon &m, uint8_t kind) {
+    endedMon = m;
+    endedKind = kind;
+    saveNow();
+  }
   bool savePending() const { return pendingSave; }
+  // Is persistence actually WORKING? False means the creature on the panel is
+  // not being written anywhere -- NVS would not open, or it is refusing writes
+  // because it is full or failing. The firmware used to be unable to tell: the
+  // only symptom was a line on a serial port no player has attached, so hours
+  // of play could be lost with nothing on screen to suggest it. The sketch
+  // draws a warning when this goes false, because a player who KNOWS saving is
+  // broken can EXPORT, and one who does not cannot.
+  //
+  // Three consecutive failures rather than one: a single short write can be a
+  // transient, three in a row is not coming back on its own.
+  bool saveHealthy() const { return opened && saveFailures < 3; }
   void flushSave();
   // Writes NOW, whatever pendingSave says. flushSave() is `if (pendingSave)
   // save()`, so a console command that changed something the game had not
@@ -450,6 +493,17 @@ private:
   // Scratch pets used for opponents share the player's NVS namespace. Only a
   // Pet explicitly opened with begin() owns that persistent state.
   bool opened = false;
+  // Consecutive failed checkpoint writes. Reset by the first success, so it
+  // measures "is saving broken NOW" rather than counting a lifetime.
+  uint8_t saveFailures = 0;
+  // ONE COUNTER PER RECORD, not one shared between them. If the creature's
+  // checkpoint succeeded and the player's did not, a shared counter would
+  // advance anyway -- and the next player write, one higher again, would land
+  // back on the slot holding the only complete player copy and overwrite the
+  // very fallback the pair exists to provide. Each record's next generation has
+  // to be its OWN last plus one for the parity invariant in ckptSlot() to hold.
+  uint32_t saveGeneration = 0;
+  uint32_t playerGeneration = 0;
   uint32_t lastTick = 0;
   uint32_t eatUntil = 0;
   uint32_t heartUntil = 0;
@@ -485,6 +539,10 @@ private:
   void applyAutoSleep();
   void hatch();
   void registerSpecies(int16_t dex);
+  bool saveCoreSnapshot();
+  bool loadCoreSnapshot();
+  bool savePlayerSnapshot();
+  bool loadPlayerSnapshot();
   void save();
   void load();
   static uint8_t clamp100(int v) { return v < 0 ? 0 : (v > 100 ? 100 : v); }
