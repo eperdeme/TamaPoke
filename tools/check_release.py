@@ -56,7 +56,20 @@ def main():
     )
     if check.returncode:
         fail('installer safety check failed')
-    print(f'release v{source_version} is internally consistent')
+
+    # The changelog is PUBLIC-FACING, not a courtesy. web/installer.js reads the
+    # release body through the GitHub API and drops it straight onto the installer
+    # page, so a release with no notes greets visitors with "No changelog was
+    # provided for this release." -- which is what v3.20 did until it was edited
+    # by hand. Fail the release instead of publishing that.
+    notes = ROOT / 'docs' / 'release-notes' / f'v{tag}.md'
+    if not notes.is_file():
+        fail(f'missing {notes.relative_to(ROOT)} -- write the changelog before tagging')
+    body = notes.read_text().strip()
+    if len(body) < 200 or '\n' not in body:
+        fail(f'{notes.relative_to(ROOT)} is too thin to be a changelog')
+    print(f'release v{source_version} is internally consistent, '
+          f'changelog {len(body)} bytes')
 
 
 if __name__ == '__main__':

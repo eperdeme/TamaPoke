@@ -17,7 +17,16 @@ jobs:
       - name: Validate tagged firmware
         run: python3 tools/check_release.py "$GITHUB_REF_NAME"
 
+      # --notes-file, never --generate-notes. The generated notes are a bare
+      # "Full Changelog" compare link, and web/installer.js puts the release body
+      # STRAIGHT ONTO THE INSTALLER PAGE -- so a generated release shows visitors
+      # "No changelog was provided for this release." v3.20 shipped exactly that.
+      # check_release.py refuses a tag with no notes file, so this cannot happen
+      # quietly again.
       - name: Publish GitHub Release and changelog
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "TamaPoke $GITHUB_REF_NAME"
+        run: |
+          gh release create "$GITHUB_REF_NAME" --verify-tag \
+            --title "TamaPoke $GITHUB_REF_NAME" \
+            --notes-file "docs/release-notes/$GITHUB_REF_NAME.md"

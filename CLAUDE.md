@@ -22,6 +22,32 @@ Personal, non-commercial fan project. Code MIT; sprites CC BY-NC (PMD SpriteColl
 | `tools/emu/` | Desktop emulator: runs the real firmware in an SDL window |
 | `web/` | ESP Web Tools installer page + prebuilt `tamapoke.bin` + `sprites-<region>.pak` (committed: release assets have no CORS) |
 
+## Releasing
+
+`git push origin vX.Y` is the whole release: `.github/workflows/publish-release.yml`
+runs `tools/check_release.py` and then publishes. Before tagging:
+
+1. `bash tools/build_web.sh` -- **after the last source edit.** `check_release.py`
+   verifies each binary's `?v=` hash against its own bytes, not against the
+   source, so a stale `app.bin` passes the check and ships anyway.
+2. `FW_VERSION`, the README badge and `web/manifest.json` must all match the tag.
+   `build_web.sh` does the manifest; the other two are by hand.
+3. **Write `docs/release-notes/vX.Y.md`.** `web/installer.js` reads the release
+   body through the GitHub API and puts it straight onto the installer page, so a
+   release with no notes greets visitors with "No changelog was provided for this
+   release." v3.20 shipped exactly that, because the workflow used
+   `--generate-notes` and all that generates is a bare compare link. It uses
+   `--notes-file` now and `check_release.py` refuses a tag without one.
+
+   The page renders the body in a `<pre>` with `textContent`, so `##` and `**`
+   appear literally. Keep it markdown anyway -- it renders properly on GitHub and
+   still reads as plain text there. **Write it for PLAYERS**: what changed, what
+   it looked like when it was broken, and whether they need to do anything. No
+   file or function names.
+
+Tagging the tip of a feature branch is normal here (v3.18 was), so a release does
+not have to wait for a merge to `main`.
+
 ## Build & flash
 
 ```bash
