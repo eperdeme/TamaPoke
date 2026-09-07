@@ -1365,6 +1365,12 @@ void handleSerial() {
     Serial.printf("psram=%u screen=%s btlspr=%d/%d\n", (unsigned)ESP.getFreePsram(),
                   SCREEN_NAME[uiCurrentScreen() % SCR_COUNT],
                   btlPmd[0].loaded ? 1 : 0, btlPmd[1].loaded ? 1 : 0);
+    // The same two lines the periodic heartbeat prints. Typed on a board is when
+    // you actually want them, and a console HEALTH that reported LESS than the
+    // automatic one is § "A rule enforced in one path but not in its twin".
+    Serial.printf("save=%s pending=%d\n", pet.saveHealthy() ? "ok" : "BROKEN",
+                  pet.savePending() ? 1 : 0);
+    nvsReport("health");
     Serial.println("DONE");
   } else if (line == "STATS") {
     Serial.printf("spec=%d nv=%u com=%u fel=%u ene=%u lim=%u desc=%u sd=%d mon=%d bat=%d usb=%d rtc=%u\n",
