@@ -15,6 +15,37 @@ def fail(message):
     raise SystemExit(f"release check failed: {message}")
 
 
+def git(*args):
+    """Runs git, returning stdout stripped, or None if the command failed."""
+    result = subprocess.run(['git', *args], cwd=ROOT, capture_output=True, text=True, check=False)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def check_tag_on_main(tag):
+    """A release is cut from main, never from a branch tip -- see CLAUDE.md § Git.
+
+    Documented-only conventions rot: v3.18 and v3.22 were both tagged on a branch
+    tip, and the Pages site serves web/ from main, so a release that never lands
+    there leaves every visitor on the old firmware while the tag claims otherwise.
+    """
+    ref = f'v{tag}'
+    commit = git('rev-parse', '--verify', f'{ref}^{{commit}}')
+    if commit is None:
+        print(f'note: {ref} does not exist yet, skipping the main-ancestry check')
+        return
+    for candidate in ('refs/remotes/origin/main', 'refs/heads/main'):
+        main = git('rev-parse', '--verify', f'{candidate}^{{commit}}')
+        if main is not None:
+            break
+    if main is None:
+        fail('cannot find main to check the tag against; fetch origin and retry')
+    if subprocess.run(['git', 'merge-base', '--is-ancestor', commit, main],
+                      cwd=ROOT, check=False).returncode != 0:
+        fail(f'{ref} ({commit[:9]}) is not on main ({main[:9]}). '
+             'Merge the branch into main and push it before tagging -- see CLAUDE.md.')
+    print(f'{ref} is on main')
+
+
 def version_from(pattern, path):
     match = re.search(pattern, path.read_text())
     if not match:
@@ -80,6 +111,8 @@ def main():
     # page, so a release with no notes greets visitors with "No changelog was
     # provided for this release." -- which is what v3.20 did until it was edited
     # by hand. Fail the release instead of publishing that.
+    check_tag_on_main(tag)
+
     notes = ROOT / 'docs' / 'release-notes' / f'v{tag}.md'
     if not notes.is_file():
         fail(f'missing {notes.relative_to(ROOT)} -- write the changelog before tagging')

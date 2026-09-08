@@ -109,8 +109,15 @@ runs `tools/check_release.py` and then publishes. Before tagging:
    it looked like when it was broken, and whether they need to do anything. No
    file or function names.
 
-Tagging the tip of a feature branch is normal here (v3.18 was), so a release does
-not have to wait for a merge to `main`.
+4. **Merge to `main` and push it BEFORE tagging.** The tag must be on `main` —
+   see § "Git". `check_release.py` fails a tag that is not reachable from
+   `origin/main`, so tagging a branch tip now stops the release instead of
+   publishing from it.
+
+Note the Pages site serves `web/` from `main`, so the installer's "current build"
+only moves when `main` does. That is the other reason a release that never gets
+merged is only half a release: the tags exist, and everybody visiting the page
+still gets the old firmware.
 
 ## Build & flash
 
@@ -420,7 +427,23 @@ To exercise long-horizon logic in minutes, temporarily lower `PET_TICK_MS`,
 
 ## Git
 
-Feature branches only, never commit straight to `main`.
+**Develop on a feature branch. Merge to `main`. Tag off `main`.** In that order,
+every time.
+
+- **Never commit straight to `main`.** Work happens on a branch and arrives by
+  merge. (This has been broken once, by an agent that merged a branch, stayed on
+  `main` and committed the next change there. Check what branch you are on before
+  committing, not after.)
+- **A release is cut from `main`, never from a branch tip.** Push the branch,
+  merge to `main`, push `main`, *then* tag the merged commit. `v3.18` and `v3.22`
+  were tagged on branch tips before this was written down, and an earlier version
+  of this file cited that as precedent — it was not. Do not copy it.
+- `tools/check_release.py` **enforces this**: a tag whose commit is not reachable
+  from `origin/main` fails the release workflow, so the rule cannot quietly rot
+  the way a documented-only convention does.
+- Prefer a fast-forward merge. `main`'s recent history is linear from v3.14
+  onward, and keeping release tags on the first-parent line is what makes
+  `git describe` and the release compare links behave sensibly.
 
 ## Roadmap
 

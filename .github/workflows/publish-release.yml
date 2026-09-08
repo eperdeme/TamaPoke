@@ -13,6 +13,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history and the main ref: check_release.py refuses a tag that is
+          # not reachable from origin/main, and the default shallow checkout of a
+          # single tag cannot answer that question.
+          fetch-depth: 0
+
+      - name: Fetch main for the tag-on-main check
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
 
       - name: Validate tagged firmware
         run: python3 tools/check_release.py "$GITHUB_REF_NAME"
