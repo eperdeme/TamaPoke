@@ -538,10 +538,15 @@ pipeline below — the firmware accepts files over USB (PUT protocol with per-bl
 ACK), so you don't have to remove the card (it formats the SD to FAT if needed).
 
 ```bash
-python3 tools/pack_pmd.py       # fetch + pack PMD sprites, normal + shiny, for every region in dex_data.REGIONS -> tools/sdcard/mons/p[s]NNN.bin
+python3 tools/unpack_bundle.py  # FASTEST: restore tools/sdcard/mons/ from the committed web/sprites-*.pak (no network)
+python3 tools/pack_pmd.py       # or fetch from source: PMD sprites, normal + shiny, every region in dex_data.REGIONS
 python3 tools/make_thumbs.py    # Pokédex thumbnails (from the PMD sprites) -> thumbs.bin
 python3 tools/send_sd.py        # send tools/sdcard/mons/* to the board's SD over USB
 ```
+
+`unpack_bundle.py` is the one you want unless you are adding a region: the `.pak`
+bundles are committed, so it needs no network and gives you the exact bytes that
+ship. `pack_pmd.py` re-fetches ~40 MB per region from SpriteCollab.
 
 To make the **one-click web-installer bundle** instead of sending over USB:
 

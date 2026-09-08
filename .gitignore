@@ -24,13 +24,23 @@ tools/pokeapi_cache/
 # The loose per-species sprite packs are build INTERMEDIATES, not artefacts.
 # They are what pack_bundle.py reads to build web/sprites-*.pak, and the .pak
 # files are what actually gets distributed -- so tracking both puts the same
-# ~105 MB of sprite data in the repo twice. Regenerate with:
+# ~105 MB of sprite data in the repo twice. Restore them with:
 #
-#   python3 tools/pack_pmd.py            # or: kanto / johto / hoenn
+#   python3 tools/unpack_bundle.py       # from the committed .pak, no network
+#
+# or re-fetch from source, which is only needed when adding a region:
+#
+#   python3 tools/pack_pmd.py            # or: kanto / johto / hoenn / ...
 #   python3 tools/make_thumbs.py
 #
-# CREDITS.md already recommends exactly this: ship the code and the scripts and
-# let each user package the sprites from the original sources.
+# YOU NEED THEM TO TAKE SCREENSHOTS. Without this directory the emulator draws
+# every creature as a bare dex number, so tools/make_screens.sh would overwrite
+# docs/screens/ with art-less images -- see CLAUDE.md § Screenshots.
+#
+# CREDITS.md recommends shipping the code and the scripts and letting each user
+# package the sprites from the original sources, which is why the loose files
+# stay out of the repo while the .pak bundles (which Pages must serve
+# same-origin) stay in.
 tools/sdcard/mons/*.bin
 
 # Emulator save files and downloaded generator intermediates: local scratch, not

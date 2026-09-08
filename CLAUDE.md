@@ -22,6 +22,72 @@ Personal, non-commercial fan project. Code MIT; sprites CC BY-NC (PMD SpriteColl
 | `tools/emu/` | Desktop emulator: runs the real firmware in an SDL window |
 | `web/` | ESP Web Tools installer page + prebuilt `tamapoke.bin` + `sprites-<region>.pak` (committed: release assets have no CORS) |
 
+## Screenshots — and why they went a dozen releases stale
+
+`docs/screens/*.png` is what the README shows, and it is generated, not curated:
+
+```bash
+python3 tools/unpack_bundle.py     # ONCE per checkout -- see below
+bash tools/make_screens.sh         # regenerates every shot from the emulator
+```
+
+They come out of the emulator's headless `--shot` mode, so they are exactly what
+the firmware draws on the 466x466 panel — not mockups and not photographs.
+**Re-run after changing any screen.**
+
+They sat at 2026-08-19 until v3.22, which meant the README advertised the
+pre-v3.14 UI — flat horizontal stat bars, no tile axis — for a dozen releases.
+Nobody noticed for a reason worth understanding:
+
+- **`tools/sdcard/mons/*.bin` is gitignored**, because the loose sprites are build
+  intermediates and the `.pak` bundles are what ships. So a fresh checkout has no
+  sprite directory, and the emulator draws every creature as a bare dex number.
+  Running `make_screens.sh` in that state **overwrites the screenshots with
+  art-less ones** — strictly worse than leaving them stale, and invisible until
+  somebody opens the README. It refuses to run now, and says what to run instead.
+- **`tools/unpack_bundle.py` is the fast path**, and it exists so this is possible
+  at all: it restores 1580 sprite files from the committed `web/sprites-*.pak`
+  with no network, and the crc32s come back matching `paks.json`. `pack_pmd.py`
+  re-fetches ~40 MB per region and is only needed when adding a region.
+- **A failed shot used to be a skip.** `make_screens.sh` did `continue`, leaving
+  the previous PNG in place, so renaming a screen published a picture of
+  something that no longer existed while the script still reported success. It is
+  a hard failure now.
+
+The `SHOTS` list in `make_screens.sh`, the `--shot` names in
+`tools/emu/main_sdl.cpp` and the `<img>` tags in the README are three lists that
+must agree. Reconcile them all three ways after touching any of them — nothing
+referenced but ungenerated, nothing generated but unreferenced:
+
+```bash
+python3 - <<'EOF'
+import os, re
+readme = {os.path.basename(s) for s in
+          re.findall(r'<img\s+src="([^"]+)"', open('README.md').read())}
+disk = {f for f in os.listdir('docs/screens') if f.endswith('.png')}
+shots = {s + '.png' for s in
+         open('tools/make_screens.sh').read().split('SHOTS="')[1].split('"')[0].split()}
+print('missing on disk :', sorted(readme - disk) or 'none')
+print('unreferenced    :', sorted(disk - readme) or 'none')
+print('not generated   :', sorted(readme - shots) or 'none')
+EOF
+```
+
+**Two link-checker false positives, so nobody "fixes" a working link.**
+`makerworld.com` returns 403 and GitHub's `/stargazers` returns 404 to any
+scripted request, including one sending a full browser user-agent — verified
+against all three forks, and `gh api` confirms the repos and their star counts
+exist. Both are bot-blocking. Check by hand before believing a link checker about
+either.
+
+**And check the prose against the code, not against memory.** The same refresh
+found "Five regions" (`GYM_REGIONS` is 7) and an egg pill offering three regions
+out of nine. It also found three claims that were already correct and would have
+been broken by a confident guess: "nine regions" (`REGION_COUNT` is 10 and
+*includes* `REGION_ALL`), "39 trainers" (three verified regions x 13 — run
+`tools/verify_rosters.py`), and "1025 species". Derive the number; do not assume
+the doc is wrong just because it looks old.
+
 ## The web installer's save vault
 
 `web/` is the only JavaScript in the project and it was entirely untested until
