@@ -40,7 +40,7 @@
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
-#define FW_VERSION "3.20"
+#define FW_VERSION "3.21"
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
   LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -465,6 +465,14 @@ bool pickOpen = false;
 static void lanOffer(bool host);
 uint8_t pickTrainer = 0;
 bool pickHard = false;
+// Which region the picker was opened FOR, snapshotted when it opens -- the same
+// arrangement as btlRegion, and for the same reason. gymRegion belongs to the
+// chooser and the player can move it; anything the picker decides has to keep
+// pointing at the ladder it was opened from. Forgetting to fill in btlRegion is
+// what sent Brock's Onix into every region's gym (issue #4), so the two reads
+// this alias replaces are the same shape one screen earlier.
+uint8_t pickRegion = 0;
+#define PICK_TRAINERS (TRAINER_SETS[pickRegion % GYM_REGIONS].list)
 bool lanWantHost = true;   // which button opened the picker
 uint16_t squadMask = 0xFFFF;   // everything, until the player says otherwise
 uint8_t pickPage = 0;
@@ -2053,6 +2061,7 @@ void onTap(int16_t x, int16_t y) {
       gymOpen = false;
       pickTrainer = idx;
       pickHard = gymHard;
+      pickRegion = gymRegion;     // BEFORE squadCap: it reads pickRegion now
       pickPage = 0;
       pickDefault(squadCap(idx, gymHard));
       pickOpen = true;
@@ -3944,9 +3953,11 @@ static void buildSquad(uint8_t maxLvl, uint8_t maxCount, uint16_t mask) {
 }
 
 // How many you may bring: the leader's own count in hard mode, six otherwise.
+// PICK_TRAINERS, not TRAINERS -- this answers for the fight being set up, so it
+// must read the region the picker was opened for.
 uint8_t squadCap(uint8_t idx, bool hard) {
-  if (idx >= TRAINER_COUNT) return TRAINER_TEAM_MAX;
-  return hard ? TRAINERS[idx].count : TRAINER_TEAM_MAX;
+  if (idx >= TRAINER_COUNT) return TRAINER_TEAM_MAX;   // PICK_LAN: uncapped six
+  return hard ? PICK_TRAINERS[idx].count : TRAINER_TEAM_MAX;
 }
 
 // A fight against another device. The squads are already exchanged; the host
@@ -5280,7 +5291,7 @@ void renderPick() {
     snprintf(head, sizeof(head), "%s: %s", T(S_LAN),
              lanWantHost ? T(S_LAN_HOST) : T(S_LAN_JOIN));
   } else {
-    const Trainer &t = TRAINERS[pickTrainer];
+    const Trainer &t = PICK_TRAINERS[pickTrainer];
     for (int k = 0; k < t.count; k++)
       if (t.team[k].level > top) top = t.team[k].level;
     snprintf(head, sizeof(head), "%s  Lv.%u x%u", t.name, top, t.count);
@@ -5355,6 +5366,12 @@ void pickTap(int16_t x, int16_t y) {
       lanOpen = true;
       return;
     }
+    // The fight has to be the one the picker just showed you. startTrainerBattle()
+    // snapshots gymRegion into btlRegion, so handing the picker's own region back
+    // to the chooser here is what keeps the cap you were shown, the leader you
+    // were shown and the ladder the badge lands on all the same region -- without
+    // giving the function a second source of truth to disagree with.
+    gymRegion = pickRegion;
     startTrainerBattle(pickTrainer, pickHard);
     return;
   }
@@ -5498,6 +5515,7 @@ void lanTap(int16_t x, int16_t y) {
       lanOpen = false;
       pickTrainer = PICK_LAN;
       pickHard = false;
+      pickRegion = gymRegion;   // no ladder in a LAN fight; kept in step anyway
       pickPage = 0;
       pickDefault(squadCap(PICK_LAN, false));
       pickOpen = true;

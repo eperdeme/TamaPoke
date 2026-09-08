@@ -50,6 +50,9 @@ extern Combatant btlSquad[7];
 extern int8_t btlSwapWho;
 extern bool btlHard;
 extern bool gymOpen, gymHard; extern uint8_t gymPage, gymRegion, btlRegion;
+extern bool gymPick;
+extern uint8_t pickRegion;
+void gymRowRect(int i, int *x, int *y, int *w, int *h);
 extern bool pickOpen, pickHard; extern uint8_t pickTrainer; extern uint16_t squadMask;
 uint8_t squadCap(uint8_t idx, bool hard);
 uint8_t pickChosen(); uint8_t pickCandidates(); void pickDefault(uint8_t);
@@ -402,6 +405,65 @@ int main(int argc, char **argv) {
   printf("PASS: every non-Kanto leader sends its own second creature\n");
   battleOpen = false;
   gymRegion = 0;
+
+  // The TEAM PICKER owns its region too. squadCap() and the picker header used to
+  // read the chooser's mutable gymRegion, so the hard-mode team cap and the leader
+  // named on the screen came from wherever the chooser happened to be pointing --
+  // the same missing snapshot as btlRegion, one screen earlier. Not reachable
+  // through the gesture map today (onTap/onSwipe/onSwipeV all check pickOpen and
+  // return before the gymRegion writes), which is exactly why it needs pinning:
+  // it is one dispatch-order change away from being reachable, and this project
+  // has shipped the same paging bug four times for that reason.
+  {
+    const uint8_t saveRegion = gymRegion, savePick = pickRegion;
+    const bool savePickOpen = pickOpen, saveHard = gymHard, saveGymOpen = gymOpen;
+    const uint8_t openOn = 1;                            // JOHTO: FALKNER
+    const uint8_t want = TRAINER_SETS[openOn].list[0].count;
+    // The region to move the chooser to is FOUND, not guessed. Johto and Kalos
+    // both field two creatures in their first gym, so the obvious hardcoded pair
+    // made this assertion true whether the fix was there or not -- it passed with
+    // the bug deliberately put back. If no region differs, the test cannot detect
+    // anything and says so rather than reporting a pass.
+    int other = -1;
+    for (uint8_t r = 0; r < GYM_REGIONS && other < 0; r++)
+      if (TRAINER_SETS[r].list[0].count != want) other = (int)r;
+    if (other < 0) {
+      printf("FAIL: every first gym fields %u, so this test cannot see the bug\n", want);
+      return 1;
+    }
+    gymRegion = openOn;
+    gymHard = true;
+    gymOpen = true;
+    gymPick = false;                                     // past the chooser, on the ladder
+    gymPage = 0;
+    int rx, ry, rw, rh;
+    gymRowRect(0, &rx, &ry, &rw, &rh);
+    click(rx + rw / 2, ry + rh / 2);                     // open the picker on gym 1
+    if (!pickOpen || pickRegion != openOn) {
+      printf("FAIL: the picker did not capture its region (open=%d region=%u)\n",
+             pickOpen ? 1 : 0, pickRegion);
+      return 1;
+    }
+    if (squadCap(0, true) != want) {
+      printf("FAIL: cap %u on opening, want %u\n", squadCap(0, true), want);
+      return 1;
+    }
+    gymRegion = (uint8_t)other;     // move the chooser under the open picker
+    if (squadCap(0, true) != want) {
+      printf("FAIL: the cap followed the chooser to %s (%u, want %u)\n",
+             TRAINER_SETS[other].region, squadCap(0, true), want);
+      return 1;
+    }
+    printf("PASS: the team picker keeps the region it was opened for "
+           "(%s x%u, chooser moved to %s x%u)\n",
+           TRAINER_SETS[openOn].region, want, TRAINER_SETS[other].region,
+           TRAINER_SETS[other].list[0].count);
+    pickOpen = savePickOpen;
+    pickRegion = savePick;
+    gymRegion = saveRegion;
+    gymHard = saveHard;
+    gymOpen = saveGymOpen;
+  }
 
   // ---- hard mode caps the team to the opponent's size AND level
   battleOpen = false;
