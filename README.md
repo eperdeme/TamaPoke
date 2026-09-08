@@ -1,6 +1,6 @@
 # TamaPoke
 
-[![Flash in browser](https://img.shields.io/badge/flash-in%20browser-FF6B00?logo=googlechrome&logoColor=white)](https://dylanpdao.github.io/TamaPoke/web/)
+[![Flash in browser](https://img.shields.io/badge/flash-in%20browser-FF6B00?logo=googlechrome&logoColor=white)](https://eperdeme.github.io/TamaPoke/web/)
 [![MakerWorld](https://img.shields.io/badge/MakerWorld-3D%20case-00AE42?logo=bambulab&logoColor=white)](https://makerworld.com/es/models/2937822-tamapoke-a-pokemon-pokeball-tamagotchi)
 ![Board](https://img.shields.io/badge/board-ESP32--S3%20round%20AMOLED-E7352C?logo=espressif&logoColor=white)
 ![Firmware](https://img.shields.io/badge/firmware-v3.22-8A2BE2)
@@ -10,7 +10,7 @@
 
 A gen-1-Pokémon-inspired tamagotchi for the
 **Waveshare ESP32-S3-Touch-AMOLED-1.75** (round 466×466 AMOLED, CO5300 driver
-over QSPI, CST9217 touch over I2C). Raise any of the 386, evolve it, train it
+over QSPI, CST9217 touch over I2C). Raise any of the 1025, evolve it, train it
 and complete them all (shinies included).
 
 > ### 🙏 This is a fork of [**socquique/TamaPoke**](https://github.com/socquique/TamaPoke) by **Quique Tortosa**
@@ -27,7 +27,7 @@ and complete them all (shinies included).
 > PMD SpriteCollab (CC BY-NC, Pokémon © Nintendo/Game Freak), and the 3D case is
 > CC BY-NC-SA. See **[License](#license)** and **Credits**.
 
-🔴 **3D-printed Pokéball case + print profiles → [on MakerWorld](https://makerworld.com/es/models/2937822-tamapoke-a-pokemon-pokeball-tamagotchi)** · flash it in your browser → **[web installer](https://dylanpdao.github.io/TamaPoke/web/)**
+🔴 **3D-printed Pokéball case + print profiles → [on MakerWorld](https://makerworld.com/es/models/2937822-tamapoke-a-pokemon-pokeball-tamagotchi)** · flash it in your browser → **[web installer](https://eperdeme.github.io/TamaPoke/web/)**
 
 ## Screens
 
@@ -181,7 +181,7 @@ While **awake**, per minute:
 - A daily **streak** and high **bond** push rare/legendary odds higher.
 - A clean **goodbye blesses** the next egg; a **run-away curses** it (forces Common).
 - Within a tier it favors species whose **evolution line you haven't finished** (so
-  all 386 are completable).
+  all 1025 are completable).
 - **Shiny:** base **1 / 48** (→ **1 / 24** right after a goodbye), improved by
   streak/bond down to a best of **1 / 8**. Tracked separately in the dex.
 - Every hatch rolls unique **IVs** (see below) — no two are identical.
@@ -520,7 +520,7 @@ pipeline below — the firmware accepts files over USB (PUT protocol with per-bl
 ACK), so you don't have to remove the card (it formats the SD to FAT if needed).
 
 ```bash
-python3 tools/pack_pmd.py       # fetch + pack PMD sprites: 386 + shiny -> tools/sdcard/mons/p[s]NNN.bin
+python3 tools/pack_pmd.py       # fetch + pack PMD sprites, normal + shiny, for every region in dex_data.REGIONS -> tools/sdcard/mons/p[s]NNN.bin
 python3 tools/make_thumbs.py    # Pokédex thumbnails (from the PMD sprites) -> thumbs.bin
 python3 tools/send_sd.py        # send tools/sdcard/mons/* to the board's SD over USB
 ```
@@ -735,7 +735,7 @@ bars at zero for 1 h). Each bred species is recorded in the **bred Pokédex**
 (normal and shiny separately).
 
 The egg rolls rarity over the ~79 base forms (47 common / 27 rare / 5 legendary),
-**biased towards the lines you're missing** (all 386 are completable), blessed by
+**biased towards the lines you're missing** (all 1025 are completable), blessed by
 a farewell and punished by a runaway. Legendaries only with 25+ registered.
 **Shiny** 1/48 (better with streak/bond/farewell).
 
@@ -760,7 +760,7 @@ beach, forest, volcano, mountain, snow). Sleeping forces night.
 - `audio.h` / `audio.cpp` — ES8311 + I2S + Game-Boy-style tone synth (non-blocking task)
 - `i18n.h` / `i18n.cpp` — the 6-language string tables
 - `move_names.h` — GENERATED (`gen_moves.py`): move display names in all 6 languages
-- `dex.h` — GENERATED (`gen_dex.py`): the 386 table
+- `dex.h` — GENERATED (`gen_dex.py`): the species table, `DEX_COUNT` 1025
 - `species.h` — GENERATED (`sprites.py`): fallback sprites, UI icons, colours
 - `pin_config.h` — the board's official pins
 - `tools/` — pipeline: `dex_data.py` (data), `dex_stats.py`, `dex_types.py`, `gen_dex.py`,

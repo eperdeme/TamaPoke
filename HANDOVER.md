@@ -1,12 +1,19 @@
 # TamaPoke — where things stand
 
-Written 2026-08-20, updated through 2026-08-23, so work can resume after a restart.
-Read this with `CLAUDE.md`; this file is the *current* state, that one is the
-permanent knowledge.
+Written 2026-08-20, updated through 2026-08-23, so work could resume after a
+restart. Read this with `CLAUDE.md`, which is the permanent knowledge and is
+**authoritative wherever the two disagree**.
+
+> **§ 1 below is current as of v3.22 (2026-09-08). Sections 0 and 2 to 4c are an
+> August snapshot kept for the reasoning in them, and their branch names, version
+> numbers and "not merged" notes are long superseded** — `feat/retire-and-release`
+> landed, the dex went past Unova to 1025, and the three "failing tests" were
+> fixed a dozen releases ago. § 5's pitfalls are the part that has stayed true.
+> Do not read anything outside § 1 as a description of the repo today.
 
 ---
 
-## 0. Branch `feat/retire-and-release` (v3.6) -- in progress
+## 0. Branch `feat/retire-and-release` (v3.6) -- HISTORICAL, landed long ago
 
 Four things, all verified in the emulator; **nothing here has run on a board.**
 
@@ -41,17 +48,29 @@ Not done: a board has not seen any of it, and the installer has not been rebuilt
 
 | | |
 |---|---|
-| Published firmware | **v3.3**, live at https://dylanpdao.github.io/TamaPoke/web/ |
-| Repo version | **v3.5** in `TamaPoke.ino` — Unova, on `feat/unova`, **not merged** |
-| Your board | on **v3.3**, flashed and verified |
-| Live creature | Dragonair L45, `iv=31/31/31/31 tr=100/100/100`, Charizard\* L100 banked |
-| Branch | `feat/dex-expansion-phase0`, pushed, **no PR** |
-| Sprites | Kanto-Sinnoh 100%; Unova 143/156 (13 have no art upstream) |
-| Tests | 33 suites, **33 passing** — first fully green run on this branch |
+| Published firmware | **v3.22**, live at https://eperdeme.github.io/TamaPoke/web/ |
+| Repo version | **v3.22** in `TamaPoke.ino`, merged to `main` and tagged |
+| Dex | `DEX_COUNT` **1025**, `REGION_COUNT` 10, `GYM_REGIONS` 7 |
+| Your board | last flashed **v3.20**; v3.21 and v3.22 have not been on hardware |
+| Live creature | Venusaur L100, `iv=29/20/19/22 tr=0/16/9`, bond 84, 12 medals |
+| Tests | 40 suites + `check_savefile.mjs`, all passing (`sprite_test` skips without sprites) |
+| NVS headroom | measured on the board: `used=132 avail=372 total=630` entries |
 
-**Everything merged and published today:** RETIRE, the move-picker TM gate, type
-chips, the Hoenn sprite overflow, crash breadcrumbs, the egg region pill, the
-sleep mechanic, `MISS`, and the `LVL` off-by-one.
+**Landed since the August snapshot below:** the dex reached 1025; the save is
+checkpointed and atomic (issues #3 and #4 closed); the web installer backs up
+before flashing and verifies what it captured; and releases are cut from `main`
+with `check_release.py` enforcing it.
+
+**Not verified on hardware**, and the first thing to do with a board:
+
+1. The power-key long-press flush — hold PWR and watch for
+   `save: flushing (pwr long press)` *before* it dies. If it never appears, the
+   AXP2101's long-press IRQ fires too close to its own cut-off and
+   `XPOWERS_POWEROFF_6S` in `pwrSetup()` widens the window.
+2. The installer's backup-then-flash handoff, the twice-asked port prompt, the
+   IndexedDB history and restore-from-history. All of it is untested end to end.
+3. `STATS`'s new `board=` line, which is the real `ESP.getEfuseMac()` rather than
+   the emulator's fake one.
 
 ### Save backups (all in `backups/`, gitignored)
 
