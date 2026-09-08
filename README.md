@@ -53,40 +53,58 @@ Pokedex is empty.
 |---|---|---|
 | <img src="docs/screens/main.png" width="240"> | <img src="docs/screens/egg.png" width="240"> | <img src="docs/screens/moves.png" width="240"> |
 
-The egg carries a **region pill** — pick whether it hatches from Kanto, Johto,
-Hoenn or all three. Switching keeps the rarity it was granted and remembers each
-region's answer, so it cannot be flipped to farm a legendary.
+The egg carries a **region pill** — pick which of the nine regions it hatches
+from, or ALL for the mixed pool. Switching keeps the rarity it was granted and
+remembers each region's answer, so it cannot be flipped to farm a legendary.
+Regions with no sprite pack installed are skipped rather than offered.
 
 ### Battling
 
-| The fight | Choosing a team | Winning |
-|---|---|---|
-| <img src="docs/screens/btlmenu.png" width="240"> | <img src="docs/screens/pick.png" width="240"> | <img src="docs/screens/win.png" width="240"> |
+| The fight | Choosing a move | Choosing a team | Winning |
+|---|---|---|---|
+| <img src="docs/screens/btlmenu.png" width="180"> | <img src="docs/screens/btlmoves.png" width="180"> | <img src="docs/screens/pick.png" width="180"> | <img src="docs/screens/win.png" width="180"> |
 
-Turn- and move-based, with the real type chart, ailments and STAB. Real Game Boy
-battle music plays throughout.
+Turn- and move-based, with the real type chart, ailments and STAB. Moves sit in a
+2x2 grid with each one's type and remaining uses. Real Game Boy battle music
+plays throughout.
 
-### Five regions
+### Seven gym ladders
 
 | Pick a ladder | Johto's gyms | LAN battle |
 |---|---|---|
 | <img src="docs/screens/gympick.png" width="240"> | <img src="docs/screens/gymsj.png" width="240"> | <img src="docs/screens/lanready.png" width="240"> |
 
-Kanto, Johto, Hoenn, Sinnoh and Unova each have eight leaders, an Elite 4 and a
-champion, on easy and hard. Four of the five are the games' own teams, checked
-against the pokecrystal, pokeemerald and pokeplatinum disassemblies -- **0
-differences across all 39 trainers**, re-checkable with
-`tools/verify_rosters.py`.
+Kanto, Johto, Hoenn, Sinnoh, Unova, Kalos and Alola each have eight leaders, an
+Elite 4 and a champion, on easy and hard. Four of the seven are the games' own
+teams, checked against the pokecrystal, pokeemerald and pokeplatinum
+disassemblies -- **0 differences across all 39 verified trainers**, re-checkable
+with `tools/verify_rosters.py`.
 
-**Unova is the exception and says so.** pret has no Gen 5 disassembly, so that
-ladder is written from knowledge rather than from the game's own tables;
-`verify_rosters.py` prints it as NOT VERIFIED rather than letting a clean run
-imply otherwise. It follows Black 2 / White 2, which unlike Black/White has no
-version- or starter-dependent leaders.
+**Unova, Kalos and Alola are the exceptions, and say so.** pret's work stops at
+the DS generation, so those three ladders are written from knowledge rather than
+from the games' own tables; `verify_rosters.py` prints each of them as NOT
+VERIFIED rather than letting a clean run imply otherwise. Unova follows Black 2 /
+White 2, which unlike Black/White has no version- or starter-dependent leaders.
+
+Galar and Paldea are in the dex but have no ladder, because they have no sprite
+pack — see § Status.
 
 Sinnoh follows **Platinum**, where Fantina is the *third* gym rather than
 Diamond/Pearl's fifth; the level ramp only runs 14/22/26/32/37/41/44/50 that
 way. Same reasoning that makes Hoenn Emerald throughout.
+
+### Exploring
+
+| Choose where to hunt | A wild encounter |
+|---|---|
+| <img src="docs/screens/explore.png" width="240"> | <img src="docs/screens/wild.png" width="240"> |
+
+Wild creatures are met by exploring rather than only in gyms. The `< REGION >`
+selector picks where the next encounter comes from, independently of your egg's
+region, so changing hunting grounds never rerolls or moves the egg. Regions whose
+sprite pack is not installed are skipped. Weaken one and throw a ball to keep it;
+a caught creature goes to the party or the box, and does *not* fill the Pokédex
+until you actually raise it.
 
 ### Collecting
 
