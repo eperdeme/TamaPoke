@@ -45,6 +45,17 @@ if command -v arduino-cli >/dev/null; then
   fi
 fi
 
+# The browser half of the save backup. It is JavaScript, so it cannot run in the
+# C++ harness below -- and it went untested for exactly that reason while the
+# firmware side had two suites. Gated on node being present, the same way the
+# arduino-cli check above is, so a machine without it still runs everything else.
+if command -v node >/dev/null; then
+  echo "=== check_savefile (web/savefile.js)"
+  node "$ROOT/tools/check_savefile.mjs" || { echo "    ^ check_savefile FAILED"; exit 1; }
+else
+  echo "=== check_savefile: SKIPPED (node not installed)"
+fi
+
 # arrays, not a string: the sprite dir has to reach the compiler still quoted,
 # and passing these through eval silently strips them
 CORE=("$ROOT/gbsynth.cpp" "$ROOT/pet.cpp" "$ROOT/i18n.cpp" "$ROOT/party.cpp" "$ROOT/battle.cpp" "$ROOT/link.cpp" "$ROOT/save.cpp" "$ROOT/inventory.cpp" "$ROOT/wild.cpp")

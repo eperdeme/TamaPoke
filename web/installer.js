@@ -1,3 +1,5 @@
+import { verifyBackup, describeBackup } from './savefile.js?v=34fb1e2d93f3ccf7';
+
 const byId = (id) => document.getElementById(id);
 const enc = new TextEncoder();
 const MB = (bytes) => `${(bytes / 1048576).toFixed(1)} MB`;
@@ -17,6 +19,11 @@ let readWaiters = [];
 let packProtocol = false;
 let sdAvailable = true;
 let busy = false;
+// A label, and only a label. It comes from the board's efuse MAC so that two
+// devices' backups can be told apart in the history list. It is NOT a secret and
+// NOT a key: nothing is authorised by it, which is exactly why the history stays
+// in this browser instead of on a server somewhere keyed by it.
+let boardId = '';
 const installedPacks = new Map();
 const REQUIRED_FLASH_PARTS = new Map([
   [0, 'firmware/bootloader.bin'],
@@ -329,6 +336,36 @@ function setConnected(connected, message = connected ? 'Board connected' : 'Boar
   syncControls();
 }
 
+// Hands the serial port back to the browser properly.
+//
+// setConnected(false) only forgets our references to the reader and writer. That
+// is enough for the UI, and it was all this page ever needed while installing was
+// something you did in a separate dialog with the connection closed by hand. It
+// is NOT enough to let go of the port: the locks stay held and the port stays
+// open, so esp-web-tools cannot claim it and the flash fails with the device
+// already in use. Anything that wants to hand off has to come through here.
+//
+// Every step is best-effort on purpose. A board that has just restarted (which is
+// exactly what a restore does) throws from cancel() and close(), and failing to
+// tidy up must not become the error the player sees.
+async function releasePort(message = 'Board not connected') {
+  const hadReader = reader;
+  const hadWriter = writer;
+  const hadPort = port;
+  reader = null;                      // stops pumpSerial's loop, which watches this
+  writer = null;
+  port = null;
+  readCarry = '';
+  readQueue = [];
+  readWaiters = [];
+  packProtocol = false;
+  try { await hadReader?.cancel(); } catch { /* already gone */ }
+  try { hadReader?.releaseLock(); } catch { /* already released */ }
+  try { hadWriter?.releaseLock(); } catch { /* already released */ }
+  try { await hadPort?.close(); } catch { /* already closed */ }
+  setConnected(false, message);
+}
+
 function setBusy(value) {
   busy = value;
   syncControls();
@@ -391,6 +428,29 @@ function refreshSelection() {
     ? `${MB(bytes)}, roughly ${Math.max(1, Math.round(bytes / 1048576 / 3))} minutes over USB.`
     : (writer ? 'Current packs are left unselected.' : 'Connect a board to compare its SD card.');
   byId('install').disabled = busy || !writer || !selected.length;
+  // The history list is rebuilt only when it changes, so its Restore buttons
+  // have to be re-gated here or they would keep whatever state they were built
+  // with -- a live button with no board behind it, which is the greyed-but-still-
+  // tappable fault uiButtonDisabled() exists to prevent on the device itself.
+  for (const button of document.querySelectorAll('.history-restore')) {
+    button.disabled = busy || !writer;
+  }
+}
+
+// Reads the board's label out of STATS. Best-effort: firmware from before this
+// existed simply does not print it, and a backup with no board label is still a
+// backup, so nothing here may throw.
+async function queryBoardId() {
+  boardId = '';
+  try {
+    const result = await commandLines('STATS', 6000);
+    for (const line of result.lines) {
+      const match = /^board=([0-9A-Fa-f]{6,16})$/.exec(line.trim());
+      if (match) { boardId = match[1].toUpperCase(); break; }
+    }
+  } catch {
+    // older firmware, or a board mid-restart
+  }
 }
 
 async function queryInstalledPacks() {
@@ -564,28 +624,46 @@ function downloadText(name, text) {
   URL.revokeObjectURL(url);
 }
 
+// Reads the save off the board and VERIFIES it before handing it back.
+//
+// The verification is the point. The previous version accepted the capture if it
+// had seen at least one chunk and a closing commit line, which a TRUNCATED read
+// also satisfies -- so a short capture was downloaded and presented as a backup.
+// verifyBackup() compares the byte count the board declared against the hex that
+// actually arrived and checks the checksum, and it is the same function that
+// vets a file on the way back in.
+//
+// Throws with a reason. A caller must never treat an unverified capture as a
+// backup: that is the one failure mode a backup feature cannot recover from.
+async function captureSave() {
+  readQueue = [];
+  await writeLine('EXPORT');
+  const lines = [];
+  const deadline = Date.now() + 20000;
+  while (Date.now() < deadline) {
+    const line = await readLine(deadline - Date.now());
+    if (line === null) throw new Error('the board did not finish the export');
+    if (line === 'EXPORT FAIL') throw new Error('the firmware could not build a backup');
+    if (line.startsWith('# TamaPoke save') || line.startsWith('IMPORT ')) lines.push(line);
+    if (line === 'IMPORT') {
+      lines.push(line);
+      break;
+    }
+  }
+  if (lines.at(-1) !== 'IMPORT') throw new Error('the export stopped before the end');
+  const text = `${lines.join('\n')}\n`;
+  const parsed = verifyBackup(text);           // throws if it is not sound
+  return { text, parsed, describe: describeBackup(parsed.blob) };
+}
+
 async function backupSave() {
   setBusy(true);
   try {
-    readQueue = [];
-    await writeLine('EXPORT');
-    const lines = [];
-    const deadline = Date.now() + 15000;
-    while (Date.now() < deadline) {
-      const line = await readLine(deadline - Date.now());
-      if (line === null) throw new Error('the board did not finish the export');
-      if (line === 'EXPORT FAIL') throw new Error('the firmware could not build a backup');
-      if (line.startsWith('# TamaPoke save') || line.startsWith('IMPORT ')) lines.push(line);
-      if (line === 'IMPORT') {
-        lines.push(line);
-        break;
-      }
-    }
-    const chunks = lines.filter((line) => line.startsWith('IMPORT '));
-    if (!chunks.length || lines.at(-1) !== 'IMPORT') throw new Error('the exported save was incomplete');
-    const date = new Date().toISOString().slice(0, 10);
-    downloadText(`tamapoke-save-${date}.tpsave`, `${lines.join('\n')}\n`);
-    log(`Save backup downloaded (${chunks.length} data chunks).`);
+    const capture = await captureSave();
+    await storeBackup(capture);
+    downloadCapture(capture);
+    log(`Save backup verified and downloaded (${capture.parsed.blob.length} bytes, `
+        + `${capture.parsed.fields} fields).`);
   } catch (error) {
     log(`Backup failed: ${error.message}`);
   } finally {
@@ -593,54 +671,272 @@ async function backupSave() {
   }
 }
 
-function parseBackup(text) {
-  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const commands = [];
-  for (const line of lines) {
-    if (line.startsWith('#')) continue;
-    if (line === 'IMPORT') {
-      commands.push(line);
-    } else if (/^IMPORT [0-9a-fA-F]+$/.test(line) && (line.length - 7) % 2 === 0) {
-      commands.push(line);
-    } else {
-      throw new Error(`unrecognised backup line: ${line.slice(0, 32)}`);
-    }
-  }
-  if (commands.length < 2 || commands.at(-1) !== 'IMPORT' || commands.slice(0, -1).some((line) => line === 'IMPORT')) {
-    throw new Error('backup is missing its data or final commit line');
-  }
-  const magic = commands[0].slice(7, 15).toUpperCase();
-  if (magic !== '544B5053') throw new Error('this is not a TamaPoke save');
-  return commands;
+function backupFileName(capture) {
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  const who = capture.describe?.trainer?.replace(/[^A-Za-z0-9]/g, '') || 'save';
+  return `tamapoke-${who}-${stamp}.tpsave`;
 }
 
-async function restoreSave(file) {
+function downloadCapture(capture) {
+  downloadText(backupFileName(capture), capture.text);
+}
+
+// ---------------------------------------------------------------------------
+// Backup history, kept in this browser.
+//
+// IndexedDB rather than localStorage: it is asynchronous, it stores structured
+// values without stringifying them, and it is not sharing a ~5 MB synchronous
+// budget with everything else on the origin. A save is only a couple of KB so
+// neither would run out, but there is no reason to pick the one that blocks.
+//
+// THIS IS A CONVENIENCE, NOT A BACKUP, and the page says so. It lives in one
+// browser profile on one machine and it is deleted by "clear site data", by
+// private browsing, and by moving to another computer. That is why every capture
+// is also written to disk as a file: the file is the backup, and this is the
+// thing that makes restoring a moment's work instead of a search through
+// Downloads. Presenting it as durable would be worse than not having it.
+const DB_NAME = 'tamapoke-saves';
+const DB_STORE = 'backups';
+const HISTORY_LIMIT = 12;
+
+function openDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(DB_STORE)) {
+        db.createObjectStore(DB_STORE, { keyPath: 'id', autoIncrement: true });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('could not open the backup database'));
+  });
+}
+
+function txDone(tx) {
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error('the backup database rejected the write'));
+    tx.onabort = () => reject(tx.error || new Error('the backup database aborted'));
+  });
+}
+
+async function storeBackup(capture) {
+  try {
+    const db = await openDb();
+    const record = {
+      at: Date.now(),
+      text: capture.text,
+      bytes: capture.parsed.blob.length,
+      board: boardId,
+      trainer: capture.describe?.trainer || '',
+      dex: capture.describe?.dex ?? null,
+      ageMinutes: capture.describe?.ageMinutes ?? null,
+    };
+    const tx = db.transaction(DB_STORE, 'readwrite');
+    tx.objectStore(DB_STORE).add(record);
+    await txDone(tx);
+    await pruneBackups(db);
+    db.close();
+    await renderHistory();
+  } catch (error) {
+    // A capture that is verified and downloaded is still a good backup even if
+    // the history could not be written -- private browsing blocks IndexedDB
+    // entirely, and failing the whole operation for that would be perverse.
+    log(`Backup saved and downloaded, but this browser would not store a copy: ${error.message}`);
+  }
+}
+
+async function listBackups() {
+  try {
+    const db = await openDb();
+    const rows = await new Promise((resolve, reject) => {
+      const request = db.transaction(DB_STORE, 'readonly').objectStore(DB_STORE).getAll();
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => reject(request.error);
+    });
+    db.close();
+    return rows.sort((a, b) => b.at - a.at);
+  } catch {
+    return [];
+  }
+}
+
+async function pruneBackups(db) {
+  const rows = await new Promise((resolve, reject) => {
+    const request = db.transaction(DB_STORE, 'readonly').objectStore(DB_STORE).getAll();
+    request.onsuccess = () => resolve(request.result || []);
+    request.onerror = () => reject(request.error);
+  });
+  const doomed = rows.sort((a, b) => b.at - a.at).slice(HISTORY_LIMIT);
+  if (!doomed.length) return;
+  const tx = db.transaction(DB_STORE, 'readwrite');
+  for (const row of doomed) tx.objectStore(DB_STORE).delete(row.id);
+  await txDone(tx);
+}
+
+async function clearBackups() {
+  try {
+    const db = await openDb();
+    const tx = db.transaction(DB_STORE, 'readwrite');
+    tx.objectStore(DB_STORE).clear();
+    await txDone(tx);
+    db.close();
+  } catch (error) {
+    log(`Could not clear the history: ${error.message}`);
+  }
+}
+
+function historyLabel(row) {
+  const when = new Date(row.at).toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+  const bits = [];
+  if (row.trainer) bits.push(row.trainer);
+  if (row.dex && row.dex > 0) bits.push(`dex ${row.dex}`);
+  if (row.ageMinutes) bits.push(`Lv.${Math.min(100, 1 + Math.floor(row.ageMinutes / 60))}`);
+  bits.push(`${row.bytes} bytes`);
+  if (row.board) bits.push(`board ${row.board}`);
+  return { when, detail: bits.join(' \u00b7 ') };
+}
+
+async function renderHistory() {
+  const host = byId('history');
+  if (!host) return;
+  const rows = await listBackups();
+  host.textContent = '';
+  byId('history-clear').disabled = !rows.length;
+  if (!rows.length) {
+    const empty = document.createElement('p');
+    empty.className = 'muted';
+    empty.textContent = 'No backups stored in this browser yet.';
+    host.append(empty);
+    return;
+  }
+  for (const row of rows) {
+    const { when, detail } = historyLabel(row);
+    const item = document.createElement('div');
+    item.className = 'history-row';
+
+    const copy = document.createElement('div');
+    const title = document.createElement('strong');
+    title.textContent = when;
+    const sub = document.createElement('p');
+    sub.className = 'muted';
+    sub.textContent = detail;
+    copy.append(title, sub);
+
+    const actions = document.createElement('div');
+    actions.className = 'history-actions';
+
+    const restore = document.createElement('button');
+    restore.className = 'button button-secondary history-restore';
+    restore.textContent = 'Restore';
+    restore.disabled = busy || !writer;
+    restore.addEventListener('click', () => void restoreText(row.text, `the backup from ${when}`));
+
+    const save = document.createElement('button');
+    save.className = 'button button-secondary';
+    save.textContent = 'Download';
+    save.addEventListener('click', () => {
+      const stamp = new Date(row.at).toISOString().slice(0, 19).replace(/[:T]/g, '-');
+      const who = row.trainer?.replace(/[^A-Za-z0-9]/g, '') || 'save';
+      downloadText(`tamapoke-${who}-${stamp}.tpsave`, row.text);
+    });
+
+    actions.append(restore, save);
+    item.append(copy, actions);
+    host.append(item);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Back up, then flash.
+//
+// The whole reason this exists: "make a backup first" is advice, and advice gets
+// skipped. Doing it as part of the flash is the only version that actually
+// happens.
+//
+// It cannot be one connection. The firmware install is esp-web-tools' own custom
+// element and it calls requestPort() and owns the port for the duration, which is
+// why the page has always told people to close that dialog before connecting
+// here. So the order is: use OUR connection to read the save, release the port
+// properly, and only then hand over. releasePort() exists for this.
+//
+// The browser may ask which board to use twice -- once for us, once for the
+// installer -- and there is nothing to be done about that from here, so the page
+// says it will happen rather than letting it surprise anyone.
+async function backupThenFlash() {
+  const flashButton = byId('flash-button');
+  setBusy(true);
+  let captured = false;
+  try {
+    if (!writer) {
+      log('Connecting to read the current save before flashing...');
+      port = await navigator.serial.requestPort();
+      await port.open({ baudRate: 115200 });
+      reader = port.readable.getReader();
+      writer = port.writable.getWriter();
+      readCarry = '';
+      readQueue = [];
+      void pumpSerial(reader);
+      setConnected(true);
+    }
+    try {
+      const capture = await captureSave();
+      await storeBackup(capture);
+      downloadCapture(capture);
+      captured = true;
+      log(`Backup verified before flashing (${capture.parsed.blob.length} bytes). Handing the port to the installer.`);
+    } catch (error) {
+      // A board with nothing to back up is the normal case for a NEW one, and a
+      // board in download mode is not running firmware at all so nothing answers
+      // EXPORT. Neither is a reason to stand between the player and a flash --
+      // say what happened and carry on.
+      log(`No backup taken: ${error.message}. Continuing to the installer.`);
+    }
+  } catch (error) {
+    log(`Could not connect for a backup: ${error.message}. Continuing to the installer.`);
+  } finally {
+    await releasePort(captured ? 'Backed up; port handed to the installer' : 'Port handed to the installer');
+    setBusy(false);
+  }
+  // Opens esp-web-tools' own dialog. Deliberately after the port is released, so
+  // it can claim the device.
+  flashButton.click();
+}
+
+async function restoreText(text, label) {
   let commands;
   try {
-    commands = parseBackup(await file.text());
+    ({ commands } = verifyBackup(text));
   } catch (error) {
     log(`Restore refused before upload: ${error.message}`);
     return;
   }
-  if (!window.confirm(`Replace the save on the connected board with ${file.name}? The board will restart after validation.`)) return;
+  if (!window.confirm(`Replace the save on the connected board with ${label}? The board will restart after validation.`)) return;
 
   setBusy(true);
   try {
     readQueue = [];
     for (const command of commands.slice(0, -1)) {
       await writeLine(command);
-      if (packProtocol) {
-        const reply = await waitForAny(['IMPORT MORE', 'IMPORT ODD', 'IMPORT BAD', 'IMPORT FULL'], 8000);
-        if (reply !== 'IMPORT MORE') throw new Error(reply || 'the board stopped acknowledging save data');
-      } else {
-        await pause(125);
-      }
+      // ALWAYS wait for the acknowledgement, never a fixed delay. This used to
+      // fall back to pause(125) on firmware that predates the pack protocol,
+      // which is a guess about how long a board takes: too short and chunks are
+      // dropped, and the only thing that noticed was the checksum at the end,
+      // after the whole upload. Every firmware that has ever had IMPORT answers
+      // IMPORT MORE, so there is nothing to fall back for.
+      const reply = await waitForAny(['IMPORT MORE', 'IMPORT ODD', 'IMPORT BAD', 'IMPORT FULL'], 8000);
+      if (reply !== 'IMPORT MORE') throw new Error(reply || 'the board stopped acknowledging save data');
     }
     await writeLine('IMPORT');
     const result = await waitForAny(['IMPORT OK', 'IMPORT REJECTED', 'IMPORT EMPTY'], 15000);
     if (result !== 'IMPORT OK') throw new Error(result || 'the board did not answer');
     log('Save validated and restored. The board is restarting.');
-    setConnected(false, 'Board restarting');
+    // A restart drops the USB device, so the port is gone whether we tidy up or
+    // not -- releasing it properly means reconnecting works without a reload.
+    await releasePort('Board restarting');
   } catch (error) {
     log(`Restore failed: ${error.message}`);
   } finally {
@@ -660,6 +956,8 @@ byId('connect').addEventListener('click', async () => {
     void pumpSerial(reader);
     setConnected(true);
     log('Board connected. Reading the microSD pack catalogue...');
+    await queryBoardId();
+    await renderHistory();
     await queryInstalledPacks();
   } catch (error) {
     log(`Could not connect: ${error.message}`);
@@ -734,10 +1032,19 @@ byId('files').addEventListener('change', async (event) => {
 byId('backup').addEventListener('click', backupSave);
 byId('restore').addEventListener('change', (event) => {
   const [file] = event.target.files;
-  if (file) void restoreSave(file);
+  if (file) void file.text().then((text) => restoreText(text, file.name));
   event.target.value = '';
 });
+byId('backup-flash').addEventListener('click', backupThenFlash);
+byId('history-clear').addEventListener('click', async () => {
+  if (!window.confirm('Delete every backup stored in this browser? The .tpsave files you downloaded are not affected.')) return;
+  await clearBackups();
+  await renderHistory();
+  log('Browser backup history cleared.');
+});
 byId('clear-log').addEventListener('click', () => { logElement.textContent = ''; });
+
+void renderHistory();   // the list is worth showing before anything is connected
 
 if (!('serial' in navigator)) byId('unsupported').hidden = false;
 if ('serial' in navigator) {

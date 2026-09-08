@@ -57,6 +57,24 @@ def main():
     if check.returncode:
         fail('installer safety check failed')
 
+    # The JS cache keys, on the same terms as the firmware parts above. Pages sits
+    # behind a CDN, so a fresh installer.js paired with a STALE savefile.js is a
+    # real failure -- and it would look like the save backup quietly behaving the
+    # way it did before. build_web.sh computes both; this refuses a release where
+    # somebody has hand-edited one out of step.
+    for source, pattern in (
+        (ROOT / 'web' / 'installer.js', r"from '\./savefile\.js\?v=([0-9a-f]+)'"),
+        (ROOT / 'web' / 'index.html', r'src="installer\.js\?v=([0-9a-f]+)"'),
+    ):
+        target = ROOT / 'web' / ('savefile.js' if source.name == 'installer.js' else 'installer.js')
+        match = re.search(pattern, source.read_text())
+        if not match:
+            fail(f'{source.relative_to(ROOT)} has no cache key for {target.name}; run tools/build_web.sh')
+        expected = hashlib.sha256(target.read_bytes()).hexdigest()[:16]
+        if match.group(1) != expected:
+            fail(f'{source.relative_to(ROOT)} points at {target.name}?v={match.group(1)}, '
+                 f'expected {expected}; run tools/build_web.sh')
+
     # The changelog is PUBLIC-FACING, not a courtesy. web/installer.js reads the
     # release body through the GitHub API and drops it straight onto the installer
     # page, so a release with no notes greets visitors with "No changelog was

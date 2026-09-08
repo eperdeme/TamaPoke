@@ -112,6 +112,9 @@ typedef void (*shutdown_handler_t)();
 inline int esp_register_shutdown_handler(shutdown_handler_t) { return 0; }
 
 struct FakeESP {
+  // A fixed, obviously-fake value. The board reports its efuse MAC so the web
+  // installer can label backups per device; here it only has to be stable.
+  uint64_t getEfuseMac() { return 0xE0E0E0E0E0E0ULL; }
   uint32_t getFreeHeap() { return 294024; }
   uint32_t getMinFreeHeap() { return 281000; }
   uint32_t getFreePsram() { return 4L * 1024 * 1024; }

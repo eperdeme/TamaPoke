@@ -55,16 +55,21 @@
       </div>
 
       <div class="action-row flash-row">
+        <button class="button button-primary" id="backup-flash">
+          <i data-lucide="shield-check" aria-hidden="true"></i>
+          Back up, then install
+        </button>
         <esp-web-install-button id="flash-button" manifest="manifest.json">
-          <button class="button button-primary" slot="activate">
+          <button class="button button-secondary" slot="activate">
             <i data-lucide="cpu" aria-hidden="true"></i>
-            Install firmware
+            Install without backup
           </button>
           <span slot="unsupported">Use Chrome or Edge to flash this board.</span>
           <span slot="not-allowed">This installer requires HTTPS.</span>
         </esp-web-install-button>
         <p class="action-copy" id="edition-summary">The standard edition includes every game feature and loads region art from microSD.</p>
       </div>
+      <p class="action-copy"><strong>Back up, then install</strong> reads the save off the board, checks it, downloads it and keeps a copy in this browser before handing over to the installer. Your browser may ask which board to use twice: once to read the save, once to flash. A brand-new board has nothing to back up and goes straight through.</p>
 
       <section class="release-notes" aria-labelledby="release-notes-title">
         <header>
@@ -168,7 +173,7 @@
         </div>
         <div>
           <h3>Restore backup</h3>
-          <p>The firmware validates the format and checksum before replacing anything, then restarts with the restored save.</p>
+          <p>This page checks the length, format and checksum before sending anything, and the firmware validates it again before replacing your save, then restarts.</p>
           <label class="button button-secondary button-file" id="restore-label" aria-disabled="true">
             <i data-lucide="hard-drive-upload" aria-hidden="true"></i>
             Restore save
@@ -176,6 +181,18 @@
           </label>
         </div>
       </div>
+
+      <section class="release-notes" aria-labelledby="history-title">
+        <header>
+          <div>
+            <p class="eyebrow">Recent backups</p>
+            <h3 id="history-title">Kept in this browser</h3>
+          </div>
+          <button class="button button-secondary" id="history-clear" disabled>Clear</button>
+        </header>
+        <p class="action-copy">A convenience, not a backup. These live only in this browser on this computer, and are lost if you clear site data, use private browsing, or move to another machine. <strong>The downloaded <code>.tpsave</code> file is the real backup</strong> &mdash; keep it somewhere you trust.</p>
+        <div id="history" aria-live="polite"></div>
+      </section>
     </section>
 
     <section class="activity" aria-labelledby="activity-title">
@@ -200,6 +217,6 @@
 
   <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js"></script>
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script type="module" src="installer.js?v=2d2fc53c231413b4"></script>
+  <script type="module" src="installer.js?v=9cc61ff8c9c453c1"></script>
 </body>
 </html>

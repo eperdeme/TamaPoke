@@ -22,6 +22,66 @@ Personal, non-commercial fan project. Code MIT; sprites CC BY-NC (PMD SpriteColl
 | `tools/emu/` | Desktop emulator: runs the real firmware in an SDL window |
 | `web/` | ESP Web Tools installer page + prebuilt `tamapoke.bin` + `sprites-<region>.pak` (committed: release assets have no CORS) |
 
+## The web installer's save vault
+
+`web/` is the only JavaScript in the project and it was entirely untested until
+v3.22, while the firmware half of the same feature had two suites. That asymmetry
+is why the backup path could accept a truncated capture and call it a backup.
+
+**The split is the important part.** `web/savefile.js` holds the format, the
+checksum and the verification, and **may not touch `window`, `document` or
+`navigator`** — that is the whole reason it is a separate file, because `node`
+has to import it for `tools/check_savefile.mjs`. Anything needing a DOM, a serial
+port or IndexedDB stays in `installer.js`.
+
+```bash
+node tools/check_savefile.mjs      # also runs inside tools/emu/tests/run.sh
+```
+
+Two rules that test earns its keep by:
+
+- The CRC is pinned to the **published check value** for CRC-16/CCITT-FALSE
+  (`"123456789"` gives `0x29B1`), not to a second copy of the algorithm.
+  Comparing an implementation against a re-implementation only proves they were
+  typed the same way. Breaking the polynomial fails that one assertion instantly.
+- `tools/fixtures/golden.tpsave` **was produced by the real firmware** and the
+  real firmware accepts it back, so the JS is tested against C++ output rather
+  than against the test's own idea of the format. Regenerate it by driving the
+  emulator, which reads stdin as its serial console:
+
+  ```bash
+  printf 'EGG 6\nLVL 30\nIV 31 20 25 28\nTR 40 30 20\nPARTY 25\nEXPORT\nWIPE\n' \
+    | SDL_VIDEODRIVER=dummy tools/emu/tamapoke-emu --save /tmp/f.nvs --wipe
+  ```
+  (`WIPE` is how it exits — `ESP.restart()` is `exit(0)` there.)
+
+Things that have already bitten, or nearly:
+
+- **`verifyBackup()` runs on BOTH directions on purpose.** The block handed to a
+  player is checked by the identical function that vets the block they hand back.
+  A backup is only worth anything if it was verified when it was taken; the
+  firmware validating on restore is too late to help.
+- **A capture that ends with the right line is not a complete capture.** The
+  board declares its byte count in the header; compare against it. Without that,
+  a short serial read looked exactly like a good backup.
+- **`releasePort()` exists because `setConnected(false)` is not a disconnect.**
+  It only forgets our references — the locks stay held and the port stays open,
+  so `esp-web-tools` cannot claim the device. Anything handing off to the flasher
+  must go through `releasePort()`.
+- **The page cannot back up during an install.** `esp-web-tools` is a third-party
+  custom element that calls `requestPort()` itself and owns the port throughout,
+  so the order has to be: our connection reads the save, release, then trigger
+  theirs. That also means the browser may prompt for the board twice, and the
+  page says so rather than surprising anyone.
+- **"Erase device" is inside their dialog, not ours.** We cannot see it or veto
+  it. Backup-then-install narrows the window; it cannot close it.
+- **No remote storage, deliberately.** Pages is static so there is nowhere to
+  POST; any write token shipped in client JS is public; and a board ID is an
+  identifier, not a credential — it is not secret and it is enumerable, so it
+  authorises nothing. The `.tpsave` download is the off-machine backup, and it
+  costs nothing to host and creates no custody of anyone else's data. IndexedDB
+  is a convenience layer and the page labels it as one.
+
 ## Releasing
 
 `git push origin vX.Y` is the whole release: `.github/workflows/publish-release.yml`
@@ -29,7 +89,11 @@ runs `tools/check_release.py` and then publishes. Before tagging:
 
 1. `bash tools/build_web.sh` -- **after the last source edit.** `check_release.py`
    verifies each binary's `?v=` hash against its own bytes, not against the
-   source, so a stale `app.bin` passes the check and ships anyway.
+   source, so a stale `app.bin` passes the check and ships anyway. The same run
+   computes the two JS cache keys (`savefile.js` into `installer.js`'s import,
+   then `installer.js` into `index.html`) -- those were hand-maintained until
+   v3.22, which is a number and a promise that drift independently. The release
+   check refuses a tag where either has drifted.
 2. `FW_VERSION`, the README badge and `web/manifest.json` must all match the tag.
    `build_web.sh` does the manifest; the other two are by hand.
 3. **Write `docs/release-notes/vX.Y.md`.** `web/installer.js` reads the release

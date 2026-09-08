@@ -40,7 +40,7 @@
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
-#define FW_VERSION "3.21"
+#define FW_VERSION "3.22"
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
   LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -1381,6 +1381,12 @@ void handleSerial() {
     nvsReport("health");
     Serial.println("DONE");
   } else if (line == "STATS") {
+    // A stable per-board label, for the web installer's backup history so two
+    // devices' saves can be told apart. The efuse MAC is fixed in silicon and
+    // needs no storage. It is NOT a secret and NOTHING is authorised by it --
+    // which is why the installer keeps its history in the browser rather than
+    // on a server keyed by this.
+    Serial.printf("board=%012llX\n", ESP.getEfuseMac());
     Serial.printf("spec=%d nv=%u com=%u fel=%u ene=%u lim=%u desc=%u sd=%d mon=%d bat=%d usb=%d rtc=%u\n",
                   pet.speciesId, pet.level(), pet.fullness, pet.joy, pet.energy,
                   pet.hygiene, pet.careMistakes, sdReady, mon.loaded,
