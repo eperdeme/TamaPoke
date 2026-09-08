@@ -24,7 +24,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
-  crc16, hexToBytes, parseBackup, verifyBackup, describeBackup, SAVE_CRC_BYTES,
+  crc16, hexToBytes, parseBackup, verifyBackup, describeBackup, sendBackup,
+  SAVE_CRC_BYTES,
 } from '../web/savefile.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -160,6 +161,101 @@ ckThrows(() => verifyBackup('hello\nIMPORT'), 'unrecognised',
   const ok = verifyBackup(messy);
   ck(ok.blob.length === parsed.blob.length,
      'blank lines, indentation and extra comments do not break a paste');
+}
+
+// ---- the upload protocol, driven against fake firmware
+//
+// This is the part that had no tests and broke: the restore path assumed every
+// firmware with IMPORT also answers "IMPORT MORE". It does not -- v2.5, v3.3 and
+// v3.4 accept a restore and never reply -- so the page hung 8 s per chunk and
+// failed for exactly the people who most need to recover a save. sendBackup()
+// takes its I/O as arguments so a board is not needed to prove it.
+function fakeBoard({ acks = true, failAfter = -1, error = null, commitReply = 'IMPORT OK' }) {
+  const io = { sent: [], paused: 0, logs: [] };
+  let chunk = 0;
+  io.writeLine = async (line) => { io.sent.push(line); if (line !== 'IMPORT') chunk++; };
+  io.pause = async () => { io.paused++; };
+  io.log = (m) => io.logs.push(m);
+  io.resetQueue = () => {};
+  io.waitForAny = async (tokens) => {
+    if (tokens.includes('IMPORT OK')) return commitReply;
+    if (error && chunk === failAfter) return error;
+    if (!acks) return null;                          // silence: old firmware
+    if (failAfter >= 0 && chunk > failAfter) return null;   // stopped replying
+    return 'IMPORT MORE';
+  };
+  return io;
+}
+
+const commands = parsed.commands;
+const chunks = commands.length - 1;
+
+// Runs a case that MUST succeed, reporting a throw as a failure rather than
+// letting it abort the run. Without this the negative check for the regression
+// below killed the process with a stack trace and skipped every later test --
+// a crash says less than an assertion, and it hides whatever came after it.
+async function ckResolves(fn, what) {
+  try {
+    return await fn();
+  } catch (error) {
+    console.log(`FAIL  ${what}`);
+    console.log(`      threw: ${error.message}`);
+    bad++;
+    return null;
+  }
+}
+
+{
+  const io = fakeBoard({ acks: true });
+  const out = await ckResolves(() => sendBackup(commands, io),
+                              'modern firmware: the upload completes');
+  ck(out?.acknowledged === true, 'modern firmware: every chunk is acknowledged');
+  ck(io.paused === 0, 'and no blind delay is used at all');
+  ck(io.sent.length === commands.length, `all ${chunks} chunks plus the commit were sent`);
+  ck(io.sent.at(-1) === 'IMPORT', 'ending with the commit line');
+}
+
+{
+  // v2.5 / v3.3 / v3.4: accepts the data, never replies.
+  const io = fakeBoard({ acks: false });
+  const out = await ckResolves(() => sendBackup(commands, io),
+                              'pre-v3.15 firmware: the restore still completes');
+  ck(out?.acknowledged === false, 'pre-v3.15 firmware: the missing acknowledgement is detected');
+  ck(io.sent.length === commands.length,
+     'and every chunk plus the commit was still sent, which is the regression this covers');
+  ck(io.paused === chunks, `every chunk is paced instead (${io.paused} pauses)`);
+  ck(io.logs.some((m) => m.includes('pre-v3.15')), 'and the player is told why');
+}
+
+{
+  // Silence AFTER the first chunk is a board that stopped, not old firmware.
+  const io = fakeBoard({ acks: true, failAfter: 2 });
+  let message = null;
+  try { await sendBackup(commands, io); } catch (e) { message = e.message; }
+  ck(message !== null && message.includes('stopped acknowledging'),
+     'a board that goes quiet mid-upload is a failure, not a fallback');
+}
+
+{
+  // A named error is a real error whichever firmware it is.
+  const io = fakeBoard({ acks: true, failAfter: 1, error: 'IMPORT BAD' });
+  let message = null;
+  try { await sendBackup(commands, io); } catch (e) { message = e.message; }
+  ck(message === 'IMPORT BAD', 'a named error is reported as itself');
+}
+
+{
+  const io = fakeBoard({ acks: true, commitReply: 'IMPORT REJECTED' });
+  let message = null;
+  try { await sendBackup(commands, io); } catch (e) { message = e.message; }
+  ck(message === 'IMPORT REJECTED', 'a refused commit is reported');
+}
+
+{
+  let message = null;
+  try { await sendBackup(['IMPORT AA'], fakeBoard({})); } catch (e) { message = e.message; }
+  ck(message !== null && message.includes('verifyBackup'),
+     'a command list that is not from verifyBackup() is refused');
 }
 
 console.log(bad ? `\n${bad} FAILURE(S)` : '\nall good');

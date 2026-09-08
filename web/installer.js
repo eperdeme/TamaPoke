@@ -1,4 +1,4 @@
-import { verifyBackup, describeBackup } from './savefile.js?v=34fb1e2d93f3ccf7';
+import { verifyBackup, describeBackup, sendBackup } from './savefile.js?v=1e0c9406aa8d98ea';
 
 const byId = (id) => document.getElementById(id);
 const enc = new TextEncoder();
@@ -919,20 +919,16 @@ async function restoreText(text, label) {
   setBusy(true);
   try {
     readQueue = [];
-    for (const command of commands.slice(0, -1)) {
-      await writeLine(command);
-      // ALWAYS wait for the acknowledgement, never a fixed delay. This used to
-      // fall back to pause(125) on firmware that predates the pack protocol,
-      // which is a guess about how long a board takes: too short and chunks are
-      // dropped, and the only thing that noticed was the checksum at the end,
-      // after the whole upload. Every firmware that has ever had IMPORT answers
-      // IMPORT MORE, so there is nothing to fall back for.
-      const reply = await waitForAny(['IMPORT MORE', 'IMPORT ODD', 'IMPORT BAD', 'IMPORT FULL'], 8000);
-      if (reply !== 'IMPORT MORE') throw new Error(reply || 'the board stopped acknowledging save data');
-    }
-    await writeLine('IMPORT');
-    const result = await waitForAny(['IMPORT OK', 'IMPORT REJECTED', 'IMPORT EMPTY'], 15000);
-    if (result !== 'IMPORT OK') throw new Error(result || 'the board did not answer');
+    // The protocol lives in savefile.js so it can be tested without a board; this
+    // only supplies the I/O. See sendBackup() for why the acknowledgement is
+    // detected rather than assumed.
+    await sendBackup(commands, {
+      writeLine,
+      waitForAny,
+      pause,
+      log,
+      resetQueue: () => { readQueue = []; },
+    });
     log('Save validated and restored. The board is restarting.');
     // A restart drops the USB device, so the port is gone whether we tidy up or
     // not -- releasing it properly means reconnecting works without a reload.

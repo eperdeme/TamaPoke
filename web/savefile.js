@@ -158,6 +158,59 @@ export function describeBackup(blob) {
   return out;
 }
 
+// How long to wait between chunks when the board cannot acknowledge them.
+export const UNACKED_CHUNK_PACE_MS = 125;
+
+// Uploads the chunks of an already-verified backup and commits it.
+//
+// It takes its I/O as arguments rather than reaching for the module-level serial
+// port, which is the arrangement link.cpp uses for its transport and for exactly
+// the same reason: a test can then drive the protocol without a board or a
+// browser. `io` needs { writeLine, waitForAny, pause } and may provide
+// { resetQueue, log }.
+//
+// The acknowledgement is DETECTED, not assumed. `IMPORT` arrived in 2e835611 but
+// the `IMPORT MORE` reply only in e7fc43c5, first shipped in v3.15 -- so v2.5,
+// v3.3 and v3.4 accept a restore and never answer, and a player on one of those
+// is exactly who most needs to get their save off. An earlier version of this
+// waited unconditionally and broke them; the one before that always guessed at a
+// delay, which drops chunks on a slow board and is only caught by the checksum
+// after the entire upload. Probing the first chunk pays the timeout once and is
+// right either way.
+export async function sendBackup(commands, io) {
+  if (!Array.isArray(commands) || commands.length < 2 || commands.at(-1) !== 'IMPORT') {
+    throw new Error('sendBackup needs the command list from verifyBackup()');
+  }
+  const errors = ['IMPORT ODD', 'IMPORT BAD', 'IMPORT FULL'];
+  let acknowledges = true;
+  let first = true;
+  for (const command of commands.slice(0, -1)) {
+    await io.writeLine(command);
+    if (!acknowledges) {
+      await io.pause(UNACKED_CHUNK_PACE_MS);
+      continue;
+    }
+    const reply = await io.waitForAny(['IMPORT MORE', ...errors], first ? 4000 : 8000);
+    if (reply && reply !== 'IMPORT MORE') throw new Error(reply);
+    if (!reply) {
+      // Silence after the FIRST chunk means this firmware cannot acknowledge.
+      // Silence later means it stopped, which is a failure.
+      if (!first) throw new Error('the board stopped acknowledging save data');
+      acknowledges = false;
+      io.log?.('This firmware does not acknowledge save chunks (pre-v3.15), so the upload '
+               + 'is paced instead. The checksum is still verified before anything is replaced.');
+      await io.pause(UNACKED_CHUNK_PACE_MS);
+    }
+    first = false;
+  }
+  // A late reply to the probe above must not be read as the commit's answer.
+  io.resetQueue?.();
+  await io.writeLine('IMPORT');
+  const result = await io.waitForAny(['IMPORT OK', 'IMPORT REJECTED', 'IMPORT EMPTY'], 15000);
+  if (result !== 'IMPORT OK') throw new Error(result || 'the board did not answer');
+  return { acknowledged: acknowledges };
+}
+
 function trimText(bytes) {
   let text = '';
   for (const b of bytes) {

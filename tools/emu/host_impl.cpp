@@ -38,16 +38,34 @@ static uint8_t *slurp(const std::string &path, uint32_t *size) {
   return b;
 }
 
+// Two bugs lived in the first four lines of this, and both were INVISIBLE:
+//
+// 1. The path went into `char p[64]`. g_spriteDir is an ABSOLUTE path baked in at
+//    compile time, so on a normal checkout the result is ~69 characters --
+//    snprintf truncated it, fopen failed, and every sprite silently did not load.
+//    The only symptom was creatures drawn as bare dex numbers, which looks
+//    exactly like "no sprites installed". It is a std::string now, the same as
+//    SdThumbs::load() below, so there is no length to get wrong.
+//
+// 2. `dexNum > 999` -- a literal that did not grow with the dex. DEX_COUNT is
+//    1025, so the last 26 species could never load however long the buffer was.
+//    CLAUDE.md § "uint8_t with a dex of 386" is a list of exactly this, and this
+//    is the same mistake wearing a different width.
+//
+// sprite_test catches both, and could not run at all until unpack_bundle.py
+// existed -- so a test written to catch a sprite-truncation bug was skipped on
+// every machine while a sprite-truncation bug sat two lines away from it.
 bool PmdMon::load(int16_t dexNum, bool shiny) {
-  if (dexNum < 1 || dexNum > 999) return false;
+  if (dexNum < 1 || dexNum > DEX_COUNT) return false;
   unload();
-  char p[64];
-  snprintf(p, sizeof(p), "%s/p%s%03u.bin", g_spriteDir.c_str(), shiny ? "s" : "", (unsigned)dexNum);
+  char name[24];
+  snprintf(name, sizeof(name), "/p%s%03u.bin", shiny ? "s" : "", (unsigned)dexNum);
   uint32_t size = 0;
-  blob = slurp(p, &size);
-  if (!blob) {
-    snprintf(p, sizeof(p), "%s/p%03u.bin", g_spriteDir.c_str(), (unsigned)dexNum);
-    blob = slurp(p, &size);
+  blob = slurp(g_spriteDir + name, &size);
+  if (!blob && shiny) {
+    // No shiny variant packed: fall back to the normal one, as the firmware does.
+    snprintf(name, sizeof(name), "/p%03u.bin", (unsigned)dexNum);
+    blob = slurp(g_spriteDir + name, &size);
   }
   if (!blob) return false;
   if (size < 7 || memcmp(blob, "TPK2", 4) != 0) { unload(); return false; }
