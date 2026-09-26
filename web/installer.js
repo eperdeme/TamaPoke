@@ -850,29 +850,16 @@ async function renderHistory() {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Back up, then flash.
-//
-// The whole reason this exists: "make a backup first" is advice, and advice gets
-// skipped. Doing it as part of the flash is the only version that actually
-// happens.
-//
-// It cannot be one connection. The firmware install is esp-web-tools' own custom
-// element and it calls requestPort() and owns the port for the duration, which is
-// why the page has always told people to close that dialog before connecting
-// here. So the order is: use OUR connection to read the save, release the port
-// properly, and only then hand over. releasePort() exists for this.
-//
-// The browser may ask which board to use twice -- once for us, once for the
-// installer -- and there is nothing to be done about that from here, so the page
-// says it will happen rather than letting it surprise anyone.
-async function backupThenFlash() {
-  const flashButton = byId('flash-button');
+// This is deliberately separate from firmware installation. Both this page and
+// esp-web-tools must call navigator.serial.requestPort(), and the browser requires
+// a fresh user click for each picker. Once the verified backup is downloaded, the
+// port is released so the independent Install firmware control can claim it.
+async function backupBeforeInstall() {
   setBusy(true);
   let captured = false;
   try {
     if (!writer) {
-      log('Connecting to read the current save before flashing...');
+      log('Connecting to read the current save...');
       port = await navigator.serial.requestPort();
       await port.open({ baudRate: 115200 });
       reader = port.readable.getReader();
@@ -887,23 +874,16 @@ async function backupThenFlash() {
       await storeBackup(capture);
       downloadCapture(capture);
       captured = true;
-      log(`Backup verified before flashing (${capture.parsed.blob.length} bytes). Handing the port to the installer.`);
+      log(`Backup verified and downloaded (${capture.parsed.blob.length} bytes).`);
     } catch (error) {
-      // A board with nothing to back up is the normal case for a NEW one, and a
-      // board in download mode is not running firmware at all so nothing answers
-      // EXPORT. Neither is a reason to stand between the player and a flash --
-      // say what happened and carry on.
-      log(`No backup taken: ${error.message}. Continuing to the installer.`);
+      log(`No backup taken: ${error.message}.`);
     }
   } catch (error) {
-    log(`Could not connect for a backup: ${error.message}. Continuing to the installer.`);
+    log(`Could not connect for a backup: ${error.message}.`);
   } finally {
-    await releasePort(captured ? 'Backed up; port handed to the installer' : 'Port handed to the installer');
+    await releasePort(captured ? 'Backup complete; board disconnected' : 'Board disconnected');
     setBusy(false);
   }
-  // Opens esp-web-tools' own dialog. Deliberately after the port is released, so
-  // it can claim the device.
-  flashButton.click();
 }
 
 async function restoreText(text, label) {
@@ -1031,7 +1011,7 @@ byId('restore').addEventListener('change', (event) => {
   if (file) void file.text().then((text) => restoreText(text, file.name));
   event.target.value = '';
 });
-byId('backup-flash').addEventListener('click', backupThenFlash);
+byId('backup-save').addEventListener('click', backupBeforeInstall);
 byId('history-clear').addEventListener('click', async () => {
   if (!window.confirm('Delete every backup stored in this browser? The .tpsave files you downloaded are not affected.')) return;
   await clearBackups();

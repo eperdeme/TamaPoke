@@ -21,6 +21,18 @@ void onTap(int16_t x, int16_t y);
 bool startWildBattle(uint8_t region, bool hard);
 int8_t exploreRegionHit(int16_t x, int16_t y);
 int uiTapFinger();
+// The region chooser's tap resolver and its geometry. The sprite-pack gate it
+// enforces now covers the GYM ladders as well, which is a behaviour change worth
+// pinning: it used to exempt them, so a ladder was enterable whether its pack was
+// on the card or not -- and a gym leader with no sprite opens the fight with a bare
+// dex number where a creature should be.
+int regionPickTap(int16_t x, int16_t y, uint8_t mode);
+int uiRegionRowCenterY(int row);
+int uiRegionRowX();
+int uiRegionRowsPerPage();
+extern uint8_t rpickPage;
+#define RP_FOR_GYMS 0
+#define RP_FOR_DEX  1
 extern Pet pet;
 extern bool exploreOpen;
 extern uint8_t exploreRegion;
@@ -81,6 +93,41 @@ int main() {
   ck(startWildBattle(1, false), "an installed selected region starts an encounter");
   ck(wildDex >= REGIONS[1].lo && wildDex <= REGIONS[1].hi,
      "the encounter comes from the selected region, not the egg region");
+
+  // ---- THE SPRITE-PACK GATE NOW COVERS THE GYM LADDERS TOO
+  //
+  // It read `forGyms || regionAvailable(i)` in the draw path and `mode !=
+  // RPICK_FOR_GYMS && !regionAvailable(i)` in the tap path, so a ladder was always
+  // open regardless of whether its creatures could be drawn. Alola could already
+  // hit that; Galar and Paldea -- which have twenty-nine art-less species between
+  // them -- would have made it ordinary.
+  //
+  // Both modes are checked, because the whole fault was one mode being exempt.
+  {
+    rpickPage = 0;
+    const int rx = uiRegionRowX();
+    gRegionArt = 0xFFFF;                       // every pack present
+    int allOpen = 0;
+    for (int row = 0; row < uiRegionRowsPerPage(); row++)
+      if (regionPickTap((int16_t)rx, (int16_t)uiRegionRowCenterY(row), RP_FOR_GYMS) == row)
+        allOpen++;
+    ck(allOpen == uiRegionRowsPerPage(),
+       "with every pack installed, every gym ladder on the page is selectable");
+
+    gRegionArt = 1u << 0;                      // KANTO only
+    ck(regionPickTap((int16_t)rx, (int16_t)uiRegionRowCenterY(0), RP_FOR_GYMS) == 0,
+       "with only Kanto installed, Kanto's ladder is still selectable");
+    ck(regionPickTap((int16_t)rx, (int16_t)uiRegionRowCenterY(1), RP_FOR_GYMS) < 0,
+       "but a ladder whose sprite pack is missing is refused, not entered");
+    ck(regionPickTap((int16_t)rx, (int16_t)uiRegionRowCenterY(1), RP_FOR_DEX) < 0,
+       "exactly as the Pokedex already refused it");
+
+    // AND IT FAILS SAFE. gRegionArt defaults to all-set, so a board with no card
+    // at all behaves as it always did rather than losing every gym.
+    gRegionArt = 0xFFFF;
+    ck(regionPickTap((int16_t)rx, (int16_t)uiRegionRowCenterY(1), RP_FOR_GYMS) == 1,
+       "and putting the packs back makes them selectable again");
+  }
 
   printf("%s\n", bad ? "FAILURES" : "all good");
   return bad ? 1 : 0;

@@ -29,9 +29,11 @@ partition scheme change moves the check with it.
 
 Run by build_web.sh on every build, so neither cause can come back.
 """
+import hashlib
 import json
 import os
 import struct
+import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -52,6 +54,86 @@ def partitions(path):
         out.append((label, off, size))
     return out
 
+
+def check_flash_trigger():
+    """THE FLASH BUTTON MUST STILL BE CLICKABLE BY A HUMAN, AND ONLY BY A HUMAN.
+
+    esp-web-tools binds its handler to a <slot name="activate"> created inside its
+    own shadow root:
+
+        const o = document.createElement("slot");
+        o.addEventListener("click", async t => { t.preventDefault(); e(this) });
+        o.name = "activate";
+
+    Two consequences, and v3.22 shipped both:
+
+      * a click dispatched on the HOST element never reaches that listener, because
+        it does not propagate into the shadow tree. `flashButton.click()` was
+        therefore a no-op -- the backup ran, the log claimed the port had been
+        handed over, and no installer ever appeared. Silent, with no error.
+      * that handler calls navigator.serial.requestPort(), which needs TRANSIENT
+        USER ACTIVATION. So even aimed at the slotted button it cannot be driven
+        from code after an await: the activation is spent and expired.
+
+    So this refuses a build that loses the slotted button, and refuses one that
+    tries to synthesise the click again. Neither failure is visible in a
+    screenshot, and neither raises anything in the page.
+    """
+    bad = 0
+    with open(os.path.join(ROOT, "web", "index.html")) as fh:
+        html = fh.read()
+    with open(os.path.join(ROOT, "web", "installer.js"), "rb") as fh:
+        js_bytes = fh.read()
+    js = js_bytes.decode("utf-8")
+    # COMMENTS ARE STRIPPED FIRST. The note explaining this very regression names
+    # the call it is warning about, and a lint that reads prose flagged the
+    # explanation as the bug -- which would have meant deleting the comment to
+    # make the check pass. Scan code only.
+    js = re.sub(r'/\*.*?\*/', '', js, flags=re.S)
+    js = re.sub(r'(?m)^\s*//.*$', '', js)
+
+    if not re.search(r'<esp-web-install-button\b', html):
+        print("\nFAIL: web/index.html has no <esp-web-install-button>")
+        return 1
+    cache_key = re.search(r'installer\.js\?v=([0-9a-f]{16})', html)
+    expected_key = hashlib.sha256(js_bytes).hexdigest()[:16]
+    if not cache_key or cache_key.group(1) != expected_key:
+        actual_key = cache_key.group(1) if cache_key else "missing"
+        print("\nFAIL: web/index.html requests installer.js cache key %s, but "
+              "the current script is %s. Browsers can keep running the old "
+              "installer code." % (actual_key, expected_key))
+        bad += 1
+    # The slotted button, inside the element rather than merely somewhere on the page.
+    block = re.search(r'<esp-web-install-button\b.*?</esp-web-install-button>', html, re.S)
+    if not block or 'slot="activate"' not in block.group(0):
+        print("\nFAIL: the install button has no child with slot=\"activate\". "
+              "esp-web-tools listens on a <slot name=\"activate\"> in its shadow "
+              "root, so without it NOTHING can start a flash.")
+        bad += 1
+
+    if 'id="backup-save"' not in html or 'Back up save' not in html:
+        print("\nFAIL: web/index.html has no separate Back up save action.")
+        bad += 1
+    if not block or 'Install firmware' not in block.group(0):
+        print("\nFAIL: the slotted esp-web-tools control is not labelled Install firmware.")
+        bad += 1
+
+    # Any synthesised click is invalid here: the host misses the shadow-root
+    # listener, while the slotted button reaches it without user activation.
+    for pattern, why in (
+        (r'byId\([\'"]flash-button[\'"]\)\s*\.click\(\)',
+         "clicks the install button's HOST, which never reaches its shadow-root listener"),
+        (r'flashButton\s*\.click\(\)',
+         "clicks the install button's HOST, which never reaches its shadow-root listener"),
+        (r'activate\s*\.click\(\)',
+         "synthesises an install click after transient user activation has expired"),
+    ):
+        if re.search(pattern, js):
+            print("\nFAIL: web/installer.js %s.\n"
+                  "      The flash must be left to a real user click -- "
+                  "requestPort() needs transient activation." % why)
+            bad += 1
+    return bad
 
 def main():
     manifest_path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(WEB, "manifest.json")
@@ -127,6 +209,7 @@ def main():
               "true, which offers an unchecked 'Erase device' box instead")
         bad += 1
 
+    bad += check_flash_trigger()
     print("\n%s" % ("FAILURES" if bad else "the save is out of the blast radius"))
     return 1 if bad else 0
 

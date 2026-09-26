@@ -171,6 +171,13 @@ void nvsReport(const char *) {}
 // --- audio (silent) ---
 void audioBegin() {}
 void sfxPlay(uint8_t) {}
+// The per-species chirp. Counted rather than discarded, so the tests can prove a
+// cry was ASKED FOR at the right moments -- the emulator structurally cannot judge
+// how one SOUNDS (CLAUDE.md is explicit about that), but whether the game requests
+// one is ordinary logic and belongs under test.
+int g_emuCryCount = 0;
+int16_t g_emuCryDex = 0;
+void audioCry(int16_t dex) { g_emuCryDex = dex; g_emuCryCount++; }
 // no radio here; the protocol itself is exercised by tests/link_test.cpp
 struct Link;
 // No radio here at all, which is why lossy_test drives Link directly instead

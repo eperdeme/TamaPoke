@@ -77,9 +77,34 @@ public:
   bool boxAdd(const PartyMon &m);     // into the first free box slot
   void boxReleaseAt(uint8_t i);
   void boxSave();
+  // The party and the box are ONE checkpointed record, because a swap moves a
+  // creature between them. See the note above Party::savePair() in party.cpp.
+  bool savePair();
+  bool loadPair();
+  // loadPair()'s body, given whichever buffer it chose. See the note there: a
+  // record from a LATER build is longer than this one's, and the stack cannot
+  // pay for that tolerance, so the oversized case is read on the heap.
+  bool loadPairFrom(uint8_t *buf, size_t cap);
   // Swaps a party slot with a box slot. Either may be empty, so this doubles as
   // deposit and withdraw rather than needing three separate operations.
   void swapPartyBox(uint8_t partyIdx, uint8_t boxIdx);
+
+  // ---- the focus swap's write-ahead journal -------------------------------
+  // Exchanging the live creature with a party slot writes TWO records -- this
+  // pair, and the pet's own -- and NOTHING can make those one commit: they have
+  // separate keys and separate generation counters by design. See the essay
+  // above Party::focusBegin() in party.cpp for what tears and how this closes it.
+  //
+  // The journal holds BOTH sides of the exchange, so recovery replays the whole
+  // thing to a known end state rather than trying to work out which half landed
+  // -- a PartyMon has no identity, so that question has no reliable answer.
+  bool focusBegin(uint8_t slot, const PartyMon &outgoing, bool outgoingIsEgg,
+                  const PartyMon &incoming, uint32_t petGenBefore);
+  // Is a swap unfinished? Fills in whatever the caller passes. Not const: it
+  // reads NVS.
+  bool focusPending(uint8_t *slot, PartyMon *outgoing, bool *outgoingWasEgg,
+                    PartyMon *incoming, uint32_t *petGenBefore);
+  void focusEnd();
 
   // combat stats of a party member, same formula as the live pet's
   uint16_t atkOf(const PartyMon &m) const;
@@ -91,6 +116,15 @@ public:
 
 private:
   Preferences prefs;
+  // Its own counter, never shared with the pet's: if one record's write
+  // succeeded and another's did not, a shared counter would advance anyway and
+  // the next write would land on the slot holding the only complete copy.
+  uint32_t pairGeneration = 0;
+  // And the journal gets its OWN again, for the same reason.
+  uint32_t focusGeneration = 0;
+  // The checkpoint plus both legacy blobs, exactly once. save() and boxSave()
+  // are names for it; calling them in sequence wrote the whole pair twice.
+  void persist();
 };
 
 extern Party party;

@@ -3,7 +3,7 @@
 [![Flash in browser](https://img.shields.io/badge/flash-in%20browser-FF6B00?logo=googlechrome&logoColor=white)](https://eperdeme.github.io/TamaPoke/web/)
 [![MakerWorld](https://img.shields.io/badge/MakerWorld-3D%20case-00AE42?logo=bambulab&logoColor=white)](https://makerworld.com/es/models/2937822-tamapoke-a-pokemon-pokeball-tamagotchi)
 ![Board](https://img.shields.io/badge/board-ESP32--S3%20round%20AMOLED-E7352C?logo=espressif&logoColor=white)
-![Firmware](https://img.shields.io/badge/firmware-v3.22-8A2BE2)
+![Firmware](https://img.shields.io/badge/firmware-v3.23-8A2BE2)
 ![Code](https://img.shields.io/badge/code-MIT-blue)
 ![Languages](https://img.shields.io/badge/languages-6-FFCB05)
 [![Stars](https://img.shields.io/github/stars/DylanPDao/TamaPoke?style=flat&logo=github&color=yellow)](https://github.com/DylanPDao/TamaPoke/stargazers)
@@ -68,26 +68,36 @@ Turn- and move-based, with the real type chart, ailments and STAB. Moves sit in 
 2x2 grid with each one's type and remaining uses. Real Game Boy battle music
 plays throughout.
 
-### Seven gym ladders
+### Nine gym ladders
 
 | Pick a ladder | Johto's gyms | LAN battle |
 |---|---|---|
 | <img src="docs/screens/gympick.png" width="240"> | <img src="docs/screens/gymsj.png" width="240"> | <img src="docs/screens/lanready.png" width="240"> |
 
-Kanto, Johto, Hoenn, Sinnoh, Unova, Kalos and Alola each have eight leaders, an
-Elite 4 and a champion, on easy and hard. Four of the seven are the games' own
-teams, checked against the pokecrystal, pokeemerald and pokeplatinum
-disassemblies -- **0 differences across all 39 verified trainers**, re-checkable
-with `tools/verify_rosters.py`.
+Kanto, Johto, Hoenn, Sinnoh, Unova, Kalos, Alola, Galar and Paldea each have
+eight leaders, an Elite 4 and a champion, on easy and hard. Four of the nine are
+the games' own teams, checked against the pokecrystal, pokeemerald and
+pokeplatinum disassemblies -- **0 differences across all 39 verified trainers**,
+re-checkable with `tools/verify_rosters.py`.
 
-**Unova, Kalos and Alola are the exceptions, and say so.** pret's work stops at
-the DS generation, so those three ladders are written from knowledge rather than
-from the games' own tables; `verify_rosters.py` prints each of them as NOT
-VERIFIED rather than letting a clean run imply otherwise. Unova follows Black 2 /
-White 2, which unlike Black/White has no version- or starter-dependent leaders.
+**Five ladders are NOT verified, and say so.** pret's work stops at the DS
+generation, so Unova, Kalos, Alola, Galar and Paldea are written from knowledge
+rather than from the games' own tables; `verify_rosters.py` prints each of them as
+NOT VERIFIED rather than letting a clean run imply otherwise. Treat their levels
+as approximate.
 
-Galar and Paldea are in the dex but have no ladder, because they have no sprite
-pack — see § Status.
+Three of those five had to pick a **version**, because a ladder is one fixed list
+and cannot represent a choice. Unova follows Black 2 / White 2, which unlike
+Black/White has no version- or starter-dependent leaders. Galar follows **Sword**,
+which settles both of its exclusive slots -- Bea over Allister, Gordie over
+Melony; the two leaders Sword does not use fill Elite 4 seats instead, since Galar
+has no Elite 4 of its own. Paldea's Larry is the Normal *gym* leader here and not
+also the Elite 4's Flying member -- canon, but it reads as a bug when one name
+appears twice in the same ladder, so **Penny** takes that chair.
+
+A ladder is only offered when its **sprite pack is on the card**, exactly as the
+Pokedex and the egg pool already were. Without that gate a leader can open a fight
+with a bare dex number where a creature should be.
 
 Sinnoh follows **Platinum**, where Fantina is the *third* gym rather than
 Diamond/Pearl's fifth; the level ramp only runs 14/22/26/32/37/41/44/50 that
@@ -123,14 +133,17 @@ life cycle (egg by rarity → evolution → farewell/release/runaway, each gated
 behind a decision dialog), bred-Pokédex with gallery, turn-based trainer, wild
 and LAN battles, **wild capture and a shared bag**, battle stats (IVs +
 training), retention hooks (streak / bond / medals / name), biome + real-time
-backgrounds, ball minigame, training bag, animated bath, RTC with offline
-progression, battery (AXP2101) and PWR button, anti-burn-in dimming,
+backgrounds, **four minigames**, animated bath, RTC with offline
+progression, battery (AXP2101) and PWR button, anti-burn-in dimming with a
+**brightness setting**, **synthesised per-species chirps**,
 **sound (ES8311)**, **6 UI languages (English default)**, **starter choice on
 first run**, and a one-click **web installer**.
 
-All nine regions are in the dex. **Galar and Paldea have no sprite pack yet**, so
-they show as NEEDS PACK and stay out of the egg pool until one is built — the
-same gating every region has always used.
+All nine regions are in the dex and all nine now have a gym ladder. **Galar and
+Paldea have no sprite pack yet**, so they show as NEEDS PACK and stay out of the
+egg pool, the gym chooser and the Pokedex grid until one is built — the same
+gating every region has always used. A board with no microSD at all is
+unaffected: every region stays available, exactly as before.
 
 Pending: 3D case, soak test. See **Roadmap**.
 
@@ -172,6 +185,12 @@ While **awake**, per minute:
 - 🎯 **Reaction test:** a target appears, tap it before it shrinks away. Trains
   **SPEED**; the window tightens as you go.
 - 🥊 **Training bag:** trains **STRENGTH** (~4 hits = 1 pt, cap +18/session), tires it.
+- 🧠 **Memory:** four pads flash a sequence and you repeat it; one more step every
+  round, and your score is the longest sequence you got back. **+4 JOY per step**
+  (max +40) and bond. It trains **no stat at all**, deliberately — all three
+  trainable stats already have a game, so a fourth would just be another grind.
+  It also costs almost no energy and burns no weight, which makes it the one to
+  reach for when your creature is too worn out for the others.
 - 🫧 **Bath:** clears poops, HYG → 100.
 - 👆 **Pet it:** +5 JOY + bond.
 - 🌙 **Sleep:** rest — ENE **+6/min**, needs drain ~**4× slower** with floors
@@ -237,17 +256,21 @@ brings ELECTIVIRE, MAGMORTAR and RHYPERIOR waiting on exactly the same thing.
   **joins your party** (6 slots), keeping its species, nickname, shiny status, IVs,
   training, moves, the level it reached **and its whole care state**. It is frozen
   *while stored*: it does not age or train until you raise it again.
-- **Choosing who you raise.** Tap a party slot and press **RAISE THIS ONE**. It is a
+- **Choosing who you raise.** Tap a party slot and press **MAKE ACTIVE**. It is a
   true *exchange* — the creature on the main screen takes the slot the newcomer
   vacates — so it needs no free slot and nothing is ever lost. Both keep their
   full care state, so swapping away and back returns the creature exactly as it
   was rather than a blanked copy. The one asymmetric case is an **egg**: it has
   nothing to bank, so its slot simply empties.
+- **Moving one into storage.** Tap a party slot and press **TO BOX**, then tap the
+  destination box slot. If that slot is occupied, the two creatures exchange.
+  **RELEASE does not move it to storage**; it permanently removes it after a
+  second confirmation.
 - A **runaway does not join.** It's the one ending with a cost, and letting a
   neglected pet come back on the team would remove it. **Neither does an early
   retire** — see "Retiring a creature early" below.
-- **Letting one go for good.** Tap a party or box slot to open its sheet;
-  **RELEASE** removes that creature permanently. It asks first, every time, and
+- **Letting one go for good.** Move a party member to the box, open its sheet,
+  then press **RELEASE**. It removes that creature permanently and asks first.
   the creature does not fall through into the box — this is the one way to free
   a slot without something taking its place. A box slot now opens the same sheet
   rather than jumping straight into the party, and **TO PARTY** does that.
@@ -255,6 +278,9 @@ brings ELECTIVIRE, MAGMORTAR and RHYPERIOR waiting on exactly the same thing.
   newcomer replaces — or to let it go. Nothing is ever overwritten silently.
 
 ### Wild encounters, catching and the bag
+
+The **BAG holds items**. Pokemon storage is the **BOX**: a successful catch fills
+the first free party slot, then the first free box slot once the party is full.
 
 **EXPLORE** is its own stop immediately beside the pet on the horizontal axis.
 Its large `< REGION >` selector moves through every installed sprite pack in
@@ -356,6 +382,13 @@ After any ending, a **new egg** appears.
 - **Pokédex:** raising a species registers it; **809 + shinies** to complete.
   Browsed **one region at a time** — swipe vertically between regions,
   horizontally to page within it, so nothing is more than ten pages from the front.
+  Tap the line under the region name to **filter**: **ALL / RAISED / CAUGHT /
+  SHINY**. RAISED and CAUGHT are genuinely different answers — the dex records
+  what you have *raised* as your own creature, so a wild capture sitting in the
+  box has never touched it. CAUGHT reads your party, your box and the creature on
+  the panel, which is why it can show something the dex has never seen.
+  Opening a **registered** entry plays that species' chirp; a silhouette stays
+  silent, since the sound would give away what the "???" is hiding.
 - **Region:** the pill under a waiting egg picks which generation it comes from —
   **Kanto / Johto / Hoenn / Sinnoh / Unova / Kalos / Alola / All**. A first egg gives that
   region's starter. A handful of species have no sprite art anywhere (13 of
@@ -365,6 +398,22 @@ After any ending, a **new egg** appears.
   out of the egg pool, so a partial sprite install is a supported state. A pack
   sent from the web installer is picked up **as it lands** — the region unlocks
   without a reboot.
+
+### Personality
+Every creature has a **temperament**, shown on the profile page of its card:
+**BOLD / STURDY / BRISK / HARDY / EAGER / CALM**. It is **read from the IVs**, not
+stored — so it is fixed from the moment it hatches, survives evolving, and is
+always *true*: a BRISK creature really is the fast one, and checking its speed
+will agree. Whichever IV stands out names the trait; a creature with no standout
+stat is described by its overall quality instead, which is the honest reading of a
+flat spread.
+
+### Today
+The player card's last page is a **five-line checklist**: cared for today, well
+fed, clean, happy, rested. Every line is **computed** from what the save already
+holds — nothing extra is written, there is no reward to claim, and it resets
+itself with the day because the streak and the stat bars already do. It is there
+to answer "what does it need right now", not to be another currency.
 
 ### Battle stats & IVs
 Every pet rolls four **IVs** (individual values, 0–31) at hatch — ATK / DEF / SPD /
@@ -397,7 +446,8 @@ the games: **they cap training.**
 Training: **STRENGTH** ← the bag, **SPEED** ← the reaction test, **DEFENSE** ← the
 ball game (and still 1 h of wellbeing passively). **VIT** can't be trained. All three
 live in the training menu now; the ball moved off the home row when it became
-defence's trainer.
+defence's trainer. The **memory** game shares that menu and trains nothing — it
+pays in joy and bond, which is why it is the one row with no progress bar.
 
 **TMs unlock at level 40**, all of them, and nothing before. A TM carries no level
 requirement in the data — true of the games, wrong here, because a young creature
@@ -439,6 +489,25 @@ creature that hatches next, is spent by hatching it, and does **not** compound:
 three early retires in a row still cost one day. The creature's card says
 "evolves a day later" while it carries the debt, and the confirm dialog says the
 price before you accept it.
+
+### Settings, brightness and starting over
+Settings is **two pages**, paged from the rim like every other paged screen.
+Page 1 is the clock. Page 2 is sound, volume, **brightness** and language, plus
+**RESET GAME**.
+
+- **Brightness** is a level 1–10 and it is **saved**, so it survives a reboot and
+  travels in your `.tpsave` backup. It is a *ceiling* on the automatic dimming
+  rather than a replacement for it — the idle dimming and the sleep dimming are
+  there to protect the AMOLED, not to be overridden, so a setting that beat them
+  would let a static screen sit at full brightness for a week. The default is the
+  brightness this firmware has always used, so an existing save behaves
+  identically until you touch it.
+- **RESET GAME** always asks first, and the wipe itself happens on the **next
+  boot**, before anything is loaded. That ordering is the point: clearing the save
+  while the old creature is still in memory leaves a window where something can
+  write it straight back, and a power cut mid-wipe would otherwise leave a save
+  that is neither the old one nor a new game. The intent is recorded outside the
+  data being erased, so an interrupted reset simply finishes next time.
 
 ### Choosing your egg's region
 
@@ -810,13 +879,24 @@ encounter) ·
 `TIME <epoch>` / `RTCSET <epoch>` · `HEALTH` (uptime + heap for the soak test) ·
 `LS` / `PUT` (SD files).
 
+`MAX` (level 100, perfect IVs, training at the ceiling) is **emulator only**. The
+firmware compiles it and never enables it: this is a game about raising something
+slowly, and a one-word cheat on a real board is a way to skip the whole point of it
+by accident. It is a runtime flag rather than an `#ifdef` on purpose, so both
+builds keep compiling exactly the same sources.
+
 To test fast: lower `PET_TICK_MS`, `MINUTES_PER_LEVEL` and `FAREWELL_AGE_MIN` in `pet.h`.
 
 ## Roadmap
 
 - **Soak test** 24–48 h (instrumentation ready: `HEALTH` command/heartbeat).
-- **Galar and Paldea sprite packs** — the data is in; the art needs a
-  `pack_pmd.py` run. Until then both regions read NEEDS PACK.
+- **Galar and Paldea sprite packs** — the data and both gym ladders are in; the
+  art needs a `pack_pmd.py` run. Until then both regions read NEEDS PACK and
+  their ladders are not offered.
+- **Cries by ear.** The per-species chirps are synthesised from each creature's
+  own typing and base stats, and `cry_test` proves all 1025 are audible, bounded,
+  distinct and deterministic — but no test can say whether they *sound* right.
+  That needs `tamapoke-emu --wav` and a board.
 - **Galar and Paldea gym ladders** — `trainers.h` stops at seven regions. There
   is no pret disassembly for either, so they cannot be verified the way
   `verify_rosters.py` checks the others; writing them from memory is how the

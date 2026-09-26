@@ -55,21 +55,26 @@
       </div>
 
       <div class="action-row flash-row">
-        <button class="button button-primary" id="backup-flash">
+        <button class="button button-primary" id="backup-save">
           <i data-lucide="shield-check" aria-hidden="true"></i>
-          Back up, then install
+          Back up save
         </button>
+        <!-- The button MUST stay slot="activate". esp-web-tools binds its click
+             handler to a <slot name="activate"> inside its own shadow root, so this
+             slotted button is the only element whose click can reach it -- clicking
+             the host does nothing at all. check_installer.py refuses a build that
+             loses it, and installer.js says why at length. -->
         <esp-web-install-button id="flash-button" manifest="manifest.json">
           <button class="button button-secondary" slot="activate">
             <i data-lucide="cpu" aria-hidden="true"></i>
-            Install without backup
+            <span>Install firmware</span>
           </button>
           <span slot="unsupported">Use Chrome or Edge to flash this board.</span>
-          <span slot="not-allowed">This installer requires HTTPS.</span>
+          <span slot="not-allowed">This installer requires HTTPS or localhost.</span>
         </esp-web-install-button>
         <p class="action-copy" id="edition-summary">The standard edition includes every game feature and loads region art from microSD.</p>
       </div>
-      <p class="action-copy"><strong>Back up, then install</strong> reads the save off the board, checks it, downloads it and keeps a copy in this browser before handing over to the installer. Your browser may ask which board to use twice: once to read the save, once to flash. A brand-new board has nothing to back up and goes straight through.</p>
+      <p class="action-copy"><strong>Back up save</strong> reads, verifies and downloads the current save. <strong>Install firmware</strong> opens the flasher. Use both when updating a board; each needs its own click and board selection because the browser grants serial access one action at a time. A brand-new board can go straight to Install firmware.</p>
 
       <section class="release-notes" aria-labelledby="release-notes-title">
         <header>
@@ -217,6 +222,6 @@
 
   <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js"></script>
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script type="module" src="installer.js?v=e869ec891e88dad8"></script>
+  <script type="module" src="installer.js?v=2833ef585dab7ff8"></script>
 </body>
 </html>

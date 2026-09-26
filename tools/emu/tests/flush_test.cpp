@@ -27,6 +27,13 @@ extern uint8_t cardPage;
 extern uint8_t partyDetail, boxDetail;
 extern bool boxOpen, releaseConfirm;
 extern bool bagOpen;
+// The four minigames, the paged settings screen and the player's pages. The
+// minigames were NEVER covered here, which is a gap in the one test that exists
+// because a screen shipped frozen -- and every one of them advances real state
+// from its render path, so a missing flush there is worse than a still picture.
+extern bool gameOpen, sackOpen, spdOpen, memoOpen;
+extern uint8_t clockPage, playerPage;
+void startGame(); void startSack(); void startSpeedGame(); void startMemoGame();
 extern Party party;
 void startBattle(int16_t dex, uint8_t lvl);
 
@@ -37,6 +44,8 @@ static void clearAll(){
   exploreOpen=false;
   boxOpen=releaseConfirm=false;
   bagOpen=false;
+  gameOpen=sackOpen=spdOpen=memoOpen=false;
+  clockPage=0; playerPage=0;
   partyDetail=boxDetail=0;
 }
 static void check(const char *name){
@@ -75,6 +84,24 @@ int main(){
   clearAll(); partyOpen=true;    check("party");
   clearAll(); bagOpen=true;      check("bag");
   clearAll(); clockOpen=true;    check("clock");
+  // Settings is two pages now, and the second one is where brightness and the
+  // reset live -- a page that never flushed would look like a frozen device
+  // exactly where somebody is trying to change a setting.
+  clearAll(); clockOpen=true; clockPage=1; check("settings");
+  // Every player page, including the medals and TODAY's checklist. Derived from
+  // PLAYER_PAGES rather than a literal, so a ladder added later brings its page.
+  for (uint8_t p = 0; p < GYM_REGIONS + 2; p++) {
+    clearAll(); playerOpen=true; playerPage=p;
+    char n[16]; snprintf(n,sizeof(n),"player%u",p); check(n);
+  }
+  // THE FOUR MINIGAMES, started properly rather than by setting a flag: each has
+  // a live branch and a results branch, and only a real start puts it in the live
+  // one. All four APPLY their reward from inside render(), so this is also the
+  // test that would catch one of them being skipped.
+  clearAll(); startGame();      check("ball");
+  clearAll(); startSack();      check("sack");
+  clearAll(); startSpeedGame(); check("speed");
+  clearAll(); startMemoGame();  check("memo");
   for (uint8_t p=0;p<4;p++){ clearAll(); cardOpen=true; cardPage=p;
     char n[16]; snprintf(n,sizeof(n),"card%u",p); check(n); }
   clearAll(); startBattle(9,50); check("battle");
@@ -103,6 +130,7 @@ int main(){
   clearAll(); cardOpen=true;        crumbIs("card");
   clearAll(); bagOpen=true;         crumbIs("bag");
   clearAll(); startBattle(9,50);    crumbIs("battle");
+  clearAll(); startMemoGame();      crumbIs("minigame");
   clearAll();
 
   printf("%s\n", bad ? "FAILURES" : "every screen flushes");

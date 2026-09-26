@@ -35,10 +35,61 @@
 enum : uint8_t { SLEEP_NONE = 0, SLEEP_AUTO, SLEEP_PLAYER };
 #define DEF_TRAIN_TICKS 60                 // minutos de bienestar por +1 de DEF
 
+// ---------------------------------------------------------------------------
+// WHAT A CLOCK READING IS WORTH.
+//
+// Offline progression multiplies whatever the RTC says by a whole life's worth
+// of decay, so the reading is the single most load-bearing number in the save --
+// and it comes off a physical part with its own battery that can read zero, come
+// up unset, or be dragged anywhere by a host command. The old code trusted it
+// three ways over: it adopted a ZERO as the new reference (destroying the only
+// record of when the device was last seen, and turning the next good reading
+// into a decades-long jump), it rebased silently onto a BACKWARD jump, and it
+// CLAMPED a forward jump of any size to two weeks and then applied all of it --
+// aging a creature fourteen days it never lived off a garbage reading, which can
+// cross the farewell threshold and the level cap in one boot.
+//
+// So a reading is judged ONCE, here, and every caller asks. Nothing is ever
+// clamped away: a rejected or rebased reading costs the player no progress at
+// all, it only declines to invent any.
+enum ClockVerdict : uint8_t {
+  CLK_REJECT = 0,  // not a time at all: keep the reference we already had
+  CLK_REBASE,      // a real time, but not a plausible amount of elapsed life
+  CLK_APPLY,       // trustworthy: apply *minsOut minutes of offline progression
+};
+// Nothing before this is a real time: it is the epoch a virgin RTC is seeded
+// with, so a reading below it predates the firmware that could have written it.
+// The sketch seeds from this same constant rather than restating the number.
+#define CLOCK_EPOCH_FLOOR 1767225600UL
+// The most offline time that is worth applying. A genuine two-week absence is
+// plausible; anything longer is a clock fault, not a holiday.
+#define CLOCK_MAX_OFFLINE_MINS (14UL * 24 * 60)
+// A reading may sit slightly behind the stored one without being a fault: the
+// RTC and millis() drift apart, and the 30 s stamp in loop() can land either
+// side of a second. Beyond this the clock genuinely went backwards.
+#define CLOCK_BACK_SLACK_SECS 120UL
+
+// THE single answer. `seen` is the stored reference (0 = never set), `now` the
+// fresh reading. Writes the minutes to apply into *minsOut, which is 0 for
+// anything but CLK_APPLY.
+ClockVerdict clockVerdict(uint32_t seen, uint32_t now, uint32_t *minsOut);
+
 // ceremonias de fin de ciclo
 enum : uint8_t { CER_NONE = 0, CER_FAREWELL, CER_RUNAWAY, CER_RELEASE };
 
 enum PetMood : uint8_t { MOOD_HAPPY, MOOD_SAD, MOOD_EATING, MOOD_SLEEPING };
+
+// Derived from the IVs by Pet::personality(); see the essay there. The first four
+// are IN THE SAME ORDER as the IVs they read (ATK, DEF, SPE, HP), which is what
+// lets that function return the winning index directly instead of mapping it.
+enum : uint8_t {
+  PERS_BOLD = 0,   // strongest attack
+  PERS_STURDY,     // strongest defence
+  PERS_BRISK,      // fastest
+  PERS_HARDY,      // toughest
+  PERS_EAGER,      // no standout stat, but good all round
+  PERS_CALM,       // no standout stat, and modest -- also what an egg reads as
+};
 
 // medallas del individuo (bitmask)
 enum : uint16_t {
@@ -150,6 +201,44 @@ public:
   bool lovesBerry(uint8_t color) const {
     return !isEgg() && (speciesId % 3) == color;  // gusto oculto por especie
   }
+
+  // ---------------------------------------------------------------------------
+  // PERSONALITY: flavour, DERIVED, never stored.
+  //
+  // No new save field, and none is needed: the IVs are rolled once at hatch and
+  // never change again, and they are already persisted -- so anything computed
+  // from them is stable across reboots for free. Same trick as lovesBerry()
+  // above, which hides a per-species taste inside speciesId.
+  //
+  // Deliberately NOT derived from speciesId: that changes when the creature
+  // evolves, and a companion whose temperament resets the moment it grows up is
+  // worse than having none at all.
+  //
+  // And deliberately NOT a hash of the IVs. A hash is stable but arbitrary --
+  // it tells the player nothing and cannot be wrong, which also means it cannot
+  // be interesting. This READS THE STATS: the standout IV names the trait, so a
+  // BRISK creature really is the fast one, and a player who checks its speed
+  // finds the description was true. A creature with no standout stat is
+  // described by its overall quality instead, which is the honest reading of a
+  // spread with nothing to single out.
+  static const uint8_t PERSONALITY_COUNT = 6;
+  uint8_t personality() const {
+    if (isEgg()) return PERS_CALM;
+    const uint8_t v[4] = { ivAtk, ivDef, ivSpe, ivHp };
+    uint8_t hi = 0, lo = 0;
+    for (uint8_t i = 1; i < 4; i++) {
+      if (v[i] > v[hi]) hi = i;      // ties keep the FIRST, so ATK/DEF/SPE/HP is
+      if (v[i] < v[lo]) lo = i;      // the tie-break order and it is deterministic
+    }
+    if ((uint8_t)(v[hi] - v[lo]) <= 4) {
+      const uint16_t sum = (uint16_t)ivAtk + ivDef + ivSpe + ivHp;
+      return sum >= 4 * 20 ? PERS_EAGER : PERS_CALM;
+    }
+    // PERS_BOLD/STURDY/BRISK/HARDY are in the same order as v[] above, so the
+    // winning index IS the trait. One correspondence rather than a switch that
+    // could disagree with the array.
+    return hi;
+  }
   // The ball game: happiness AND defence training. Returns the DEF gained.
   uint8_t playResult(uint8_t score);
   uint8_t trainStrength(uint16_t hits);  // saco de entrenamiento (entrena FUE)
@@ -164,6 +253,14 @@ public:
   // already spent the energy, and that is what rate-limits rematching.
   uint8_t rewardTraining(uint8_t amount, uint8_t &which);
   uint16_t spdHi = 0;    // best reaction-test score
+  // Longest sequence repeated back in the memory game. Player-wide like the other
+  // three records, so it outlives the creature that set it.
+  uint16_t memoHi = 0;
+  // The memory game's reward. Deliberately joy and bond rather than a stat: all
+  // three trainable stats already have a game (the bag trains ATK, the reaction
+  // test SPE, the ball DEF), so a fourth would be another grind rather than
+  // another thing to do. Returns the joy actually gained.
+  uint8_t playMemo(uint16_t best);
 
   // stats de combate: base real de gen 1 + nivel + IV + entrenamiento
   uint16_t atkStat() const;
@@ -446,6 +543,11 @@ public:
   bool showMedal() const { return millis() < medalUntil; }
   bool showMilestone() const { return millis() < milestoneUntil; }
   int careBonus() const;  // mejora del huevo por racha + vinculo
+  // Has today's care already been registered? THE single answer, so the UI does
+  // not keep its own idea of when a day turns over: registerCare() decides that,
+  // off the same clock, and a checklist disagreeing with the streak it is meant
+  // to describe would be worse than not showing one.
+  bool caredToday() const { return lastCareDay != 0 && lastCareDay == today(); }
 
   // guardado periodico diferido: tick() marca pendiente y el loop lo vuelca
   // cuando la pantalla esta atenuada/apagada (la escritura a flash congela
@@ -469,6 +571,14 @@ public:
     saveNow();
   }
   bool savePending() const { return pendingSave; }
+  // Which generation the creature's checkpoint is on. Exposed READ-ONLY, and for
+  // one purpose: the focus swap's journal (Party::focusBegin) records this before
+  // it starts, so recovery at boot can tell "the pet half never landed" from "it
+  // landed and the game carried on for an hour" WITHOUT comparing creature
+  // records -- a PartyMon has no identity, so two legitimately identical
+  // creatures are indistinguishable from one duplicated by a torn write. The
+  // counter is the identity the records lack.
+  uint32_t petGeneration() const { return saveGeneration; }
   // Is persistence actually WORKING? False means the creature on the panel is
   // not being written anywhere -- NVS would not open, or it is refusing writes
   // because it is full or failing. The firmware used to be unable to tell: the

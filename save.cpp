@@ -18,6 +18,7 @@ const SaveField SAVE_FIELDS[] = {
   // backup without them would restore a save the device then half-ignores.
   { "petA", SK_BYTES }, { "petB", SK_BYTES },
   { "plyA", SK_BYTES }, { "plyB", SK_BYTES },
+  { "pbA", SK_BYTES },  { "pbB", SK_BYTES },
   { "bond", SK_U8 },    { "nick", SK_STR },   { "froz", SK_BOOL },
   // individual values and training
   { "ivat", SK_U8 },    { "ivdf", SK_U8 },    { "ivsp", SK_U8 },
@@ -36,10 +37,17 @@ const SaveField SAVE_FIELDS[] = {
   { "strk", SK_U16 },   { "bstrk", SK_U16 },  { "cday", SK_U32 },
   { "medal", SK_U16 },  { "tmedal", SK_U16 }, { "mstone", SK_U16 },
   { "ghi", SK_U16 },    { "shi", SK_U16 },    { "qhi", SK_U16 },
+  { "mhi", SK_U16 },    // the memory game's record, beside the other three
   // the banked creatures, and what you are carrying
   { "party", SK_BYTES }, { "box", SK_BYTES }, { "bag", SK_BYTES },
   // settings, so a restored device plays the way it did
   { "lang", SK_U8 },    { "snd", SK_BOOL },   { "vol", SK_U8 },
+  // Screen brightness, 1..BRIGHT_LEVELS. Here beside the volume it mirrors, and
+  // NOT a bump of SAVE_VERSION: export omits a key that is absent and import
+  // skips one it does not recognise, so adding a field is invisible to every
+  // .tpsave already in a player's hands. Bumping the version would refuse all of
+  // them outright -- saveImport() tests it for exact equality.
+  { "brt", SK_U8 },
 };
 const uint16_t SAVE_FIELD_COUNT = sizeof(SAVE_FIELDS) / sizeof(SAVE_FIELDS[0]);
 
@@ -48,7 +56,18 @@ const uint16_t SAVE_FIELD_COUNT = sizeof(SAVE_FIELDS) / sizeof(SAVE_FIELDS[0]);
 // 42 bytes, and the moment the record grew the box silently stopped being
 // restored while every other field still was -- a backup that is quietly
 // partial is worse than none. save_test caught exactly that.
-#define MAX_VAL (sizeof(PartyMon) * BOX_SLOTS)
+// The largest single value in the backup. It USED to be the box -- BOX_SLOTS
+// whole records -- and is now the party+box CHECKPOINT, which holds both arrays
+// plus its own header. Getting this wrong does not fail loudly: readField()
+// returns -1 for anything longer, so the oversized key is quietly left out and
+// the backup is silently partial. That already happened once, when this was the
+// literal 768 and a PartyMon grew past 42 bytes.
+//
+// DERIVED, never a literal, and derived from the same expression party.cpp uses
+// so the two cannot drift.
+#define PAIR_BLOB_MAX (18 + sizeof(PartyMon) * (PARTY_SLOTS + BOX_SLOTS) + 2)
+#define MAX_VAL (PAIR_BLOB_MAX > sizeof(PartyMon) * BOX_SLOTS \
+                 ? PAIR_BLOB_MAX : sizeof(PartyMon) * BOX_SLOTS)
 
 static uint16_t crc16(const uint8_t *p, size_t n) {
   uint16_t c = 0xFFFF;
@@ -216,5 +235,55 @@ bool saveImport(const uint8_t *in, size_t n) {
     at = vat + 3 + vlen;
   }
   p.end();
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// The durable reset intent. See the essay above RESET_NS in save.h.
+//
+// One scalar in a namespace of its own. A single put() is the smallest thing NVS
+// commits, so arming cannot itself be torn: the flag is either there or it is
+// not, and both readings are safe -- absent means the save stands.
+static const char *RESET_KEY = "rst";
+static const uint8_t RESET_WANTED = 0xA5;   // a value, not merely a present key,
+                                            // so a stray zeroed byte is not a wipe
+
+void resetArm() {
+  Preferences p;
+  if (!p.begin(RESET_NS, false)) {
+    Serial.println("reset: could not record the intent -- NOT restarting into a wipe");
+    return;
+  }
+  p.putUChar(RESET_KEY, RESET_WANTED);
+  p.end();
+}
+
+bool resetArmed() {
+  Preferences p;
+  if (!p.begin(RESET_NS, true)) return false;
+  const bool armed = p.getUChar(RESET_KEY, 0) == RESET_WANTED;
+  p.end();
+  return armed;
+}
+
+void resetComplete() {
+  Preferences p;
+  if (!p.begin(RESET_NS, false)) return;
+  p.remove(RESET_KEY);
+  p.end();
+}
+
+bool resetRecover() {
+  if (!resetArmed()) return false;
+  Preferences p;
+  if (p.begin("tamapoke", false)) {
+    p.clear();
+    p.end();
+  }
+  // SECOND, deliberately. Acknowledging first would let a cut in between leave a
+  // save that is half wiped with nothing left to say so; this way the worst case
+  // is clearing an already-empty namespace one more time.
+  resetComplete();
+  Serial.println("reset: completed a requested wipe before loading anything");
   return true;
 }

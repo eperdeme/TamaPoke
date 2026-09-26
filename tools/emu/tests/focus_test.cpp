@@ -21,6 +21,7 @@ void setup(); void render();
 extern Pet pet;
 extern Party party;
 void focusSwap(uint8_t slot);
+void focusRecover();
 
 static int bad=0;
 static void ck(bool ok,const char*w){printf("%s  %s\n",ok?"PASS":"FAIL",w); if(!ok)bad++;}
@@ -125,6 +126,95 @@ int main(){
   ck(pet.speciesId==was, "swapping with an empty slot changes nothing");
   focusSwap(PARTY_SLOTS + 3);
   ck(pet.speciesId==was, "and neither does an out-of-range slot");
+
+  // ---- THE SWAP MUST NOT TEAR.
+  //
+  // It writes TWO checkpoint records -- the party/box pair and the pet's -- and
+  // nothing can make those one commit. So the interesting question is not "does
+  // it work", it is "what does an interrupted one leave behind", and the
+  // assertion is an INVARIANT rather than a specific outcome: whichever side of
+  // the swap the save settles on, each creature must appear EXACTLY ONCE across
+  // the live pet and the party. A count of two means one was invented; a count
+  // below one means one was lost. Both of those shipped before the journal.
+  {
+    PartyMon parked; parked.dex=135; parked.level=44;
+    parked.ivAtk=parked.ivDef=parked.ivSpe=parked.ivHp=21;
+    parked.stateVersion=1; parked.joy=51; parked.fullness=52;
+    strcpy(parked.nick,"JOLT");
+    const int16_t liveWas = 136, parkedWas = 135;
+
+    // Cut the power mid-swap: one write lands and everything after it fails,
+    // which is what losing power part way through actually looks like.
+    for (int budget = 0; budget <= 4; budget++) {
+      nvsResumeWrites();
+      party.focusEnd();
+      for (int i=0;i<PARTY_SLOTS;i++) party.releaseAt(i);
+      pet.dbgHatchAs(liveWas,false);
+      while (pet.hasLearnOffer()) pet.declineLearn();
+      pet.ageMinutes = 50UL*60;
+      party.replaceAt(2, parked);
+      pet.saveNow();
+
+      nvsFailWritesAfter(budget);
+      focusSwap(2);
+      nvsResumeWrites();
+
+      // Reload from NVS ALONE -- RAM is what a power cut throws away -- and then
+      // run the recovery the sketch runs at boot.
+      party = Party(); party.begin();
+      pet.begin();
+      focusRecover();
+
+      int seenLive = (pet.speciesId == liveWas) ? 1 : 0;
+      int seenParked = (pet.speciesId == parkedWas) ? 1 : 0;
+      for (int i = 0; i < PARTY_SLOTS; i++) {
+        if (party.slots[i].dex == liveWas) seenLive++;
+        if (party.slots[i].dex == parkedWas) seenParked++;
+      }
+      char m[120];
+      snprintf(m, sizeof(m),
+               "cut after %d write(s): each creature exists exactly once (live %d, parked %d)",
+               budget, seenLive, seenParked);
+      ck(seenLive == 1 && seenParked == 1, m);
+    }
+    nvsResumeWrites();
+  }
+
+  // ---- and a journal left over from a swap that FINISHED must not replay.
+  //
+  // Recovery FORCES the end state, so replaying a stale journal would silently
+  // undo whatever was played after the swap. The pet checkpoint's generation is
+  // what separates "never landed" from "landed, and the game moved on"; without
+  // that check the fix introduces a worse bug than the one it closes.
+  {
+    party.focusEnd();
+    for (int i=0;i<PARTY_SLOTS;i++) party.releaseAt(i);
+    PartyMon parked; parked.dex=134; parked.level=40;
+    parked.stateVersion=1; parked.joy=60;
+    strcpy(parked.nick,"VAPOR");
+    party.replaceAt(3, parked);
+    pet.dbgHatchAs(6,false);
+    while (pet.hasLearnOffer()) pet.declineLearn();
+    pet.saveNow();
+
+    focusSwap(3);                       // completes, and retracts its journal
+    ck(pet.speciesId==134, "a completed swap put the banked creature in charge");
+    // The player then plays on: the creature ages and the game saves.
+    pet.ageMinutes += 5UL*60;
+    pet.saveNow();
+    const uint8_t lvlAfter = pet.level();
+    // Forge a journal as if that swap had never been acknowledged, carrying a
+    // generation from BEFORE it -- which is exactly what a cut before focusEnd()
+    // leaves on the device.
+    PartyMon bogus; bogus.dex=9; bogus.level=1;
+    party.focusBegin(3, bogus, false, parked, 0);
+    focusRecover();
+    ck(pet.speciesId==134 && pet.level()==lvlAfter,
+       "a stale journal is retracted, not replayed over real play");
+    uint8_t slot; PartyMon a,b; bool egg; uint32_t gen;
+    ck(!party.focusPending(&slot,&a,&egg,&b,&gen),
+       "and it is gone, so it cannot fire again on the next boot");
+  }
 
   printf(bad?"FAILED %d\n":"OK\n", bad);
   return bad?1:0;

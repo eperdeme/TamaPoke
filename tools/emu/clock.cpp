@@ -29,3 +29,16 @@ uint32_t millis() {
   g_virtUs += dus * (gesturing ? 1 : g_timeScale);
   return (uint32_t)(g_virtUs / 1000);
 }
+
+// A DETERMINISTIC NUDGE, for the headless tests.
+//
+// The clock above is driven by real elapsed time, which makes anything with an
+// animation or a timeout effectively untestable: a memory game that shows a
+// sequence over ~600 ms per step cannot be played by a test without sleeping, and
+// a test that sleeps for seconds is a test that gets skipped. Scaling time
+// instead is worse -- it stays wall-clock dependent, so the result is flaky.
+//
+// Same idea as nvsFailWritesAfter() in Preferences.h: a hook whose only purpose
+// is letting the harness drive a condition the hardware reaches by itself. It is
+// additive to g_virtUs, so the clock stays monotonic.
+void emuAdvanceMs(uint32_t ms) { g_virtUs += (uint64_t)ms * 1000; }

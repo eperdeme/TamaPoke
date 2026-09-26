@@ -1,4 +1,4 @@
-// Letting a banked creature go for good, from the party and from the box.
+// Moving a party creature into the box, and letting a boxed creature go for good.
 //
 // This is an IRREVERSIBLE action reached by a tap on a round panel, which is the
 // exact shape CLAUDE.md section 4 warns about, so what is pinned here is not
@@ -8,10 +8,8 @@
 //   * NO really cancels, and the creature is still there afterwards
 //   * the confirm is MODAL: a tap that would otherwise hit a move row underneath
 //     it does nothing, rather than falling through to the picker
-//   * a released creature is gone from BOTH the party and the box, not quietly
-//     pushed from one into the other
-//   * any half-finished box swap is disarmed, so nothing is left pointing at a
-//     slot whose creature no longer exists
+//   * TO BOX never arms the destructive confirmation
+//   * a released creature is gone from BOTH the party and the box
 #include "Arduino.h"
 #include "Arduino_GFX_Library.h"
 #include "Preferences.h"
@@ -48,12 +46,19 @@ void partySlotPos(int i, int *cx, int *cy);
 static int SLOT_X(int i){ int x, y; partySlotPos(i, &x, &y); return x; }
 static int SLOT_Y(int i){ int x, y; partySlotPos(i, &x, &y); return y; }
 bool monSheetBtn(int16_t,int16_t,bool);
-#define SHEET_L_X 160
-#define SHEET_R_X 320
-#define SHEET_BTN_Y (336 + 48/2)
 #define CONF_YES_Y (206 + 52/2)
 #define CONF_NO_Y  (268 + 52/2)
 #define CONF_X 233
+
+static void sheetButtonCenter(bool primary, int &cx, int &cy) {
+  int left=466, right=-1, top=466, bottom=-1;
+  for (int y=0;y<466;y++) for (int x=0;x<466;x++)
+    if (monSheetBtn(x,y,primary)) {
+      if (x<left) left=x; if (x>right) right=x;
+      if (y<top) top=y; if (y>bottom) bottom=y;
+    }
+  cx=(left+right)/2; cy=(top+bottom)/2;
+}
 
 // handleTouch() self-gates to 50 Hz off millis(), so real time has to pass
 // between polls; a tight spin is swallowed by that gate.
@@ -88,8 +93,11 @@ int main(){
   if (pet.isEgg()) pet.dbgHatchAs(6,false);
   pet.ageMinutes = 60UL*40;
   while (pet.hasLearnOffer()) pet.declineLearn();
+  int primaryX, primaryY, secondaryX, secondaryY;
+  sheetButtonCenter(true, primaryX, primaryY);
+  sheetButtonCenter(false, secondaryX, secondaryY);
 
-  // ---- the party sheet
+  // ---- PARTY -> BOX is an explicit, non-destructive action on the sheet
   {
     clearAll();
     party.slots[0]=mon(25,30,"PIKA");
@@ -98,33 +106,14 @@ int main(){
     partyTap(SLOT_X(0), SLOT_Y(0));      // open its sheet
     ck(partyDetail==1, "tapping a party slot opens its sheet");
     ck(!releaseConfirm, "with no confirm up yet");
-
-    partyTap(SHEET_R_X, SHEET_BTN_Y);            // RELEASE
-    ck(releaseConfirm, "RELEASE arms a confirm");
-    ck(party.count()==1, "and does NOT act on the first tap");
-
-    // modal: y=170 is inside the panel and over move row 1, which would open
-    // the picker if the confirm leaked taps through to what is under it
-    movePickOpen=false;
-    partyTap(233, 170);
-    ck(!movePickOpen, "the confirm is modal: a move row underneath it is inert");
-    ck(party.count()==1, "and the creature is still there");
-
-    partyTap(CONF_X, CONF_NO_Y);                 // NO
-    ck(!releaseConfirm, "NO closes the confirm");
-    ck(party.count()==1 && party.slots[0].dex==25, "and keeps the creature");
-
-    partyTap(SHEET_R_X, SHEET_BTN_Y);            // RELEASE again
-    partyTap(CONF_X, CONF_YES_Y);                // YES
-    ck(party.count()==0, "YES lets it go");
-    ck(party.boxCount()==0, "and it does NOT reappear in the box");
-    ck(!releaseConfirm && partyDetail==0, "the sheet closes behind it");
-  }
-
-  // ---- it survives a reload: this is NVS, not just the array in memory
-  {
-    Party q; q.begin();
-    ck(q.count()==0, "the release is persisted, not only in RAM");
+    partyTap(secondaryX, secondaryY);             // TO BOX
+    ck(!releaseConfirm, "TO BOX does not arm a destructive confirmation");
+    ck(boxOpen && !partyDetail, "TO BOX opens storage directly");
+    ck(boxSwapFrom==1, "and keeps that party member selected for deposit");
+    boxTap(SLOT_X(0), SLOT_Y(0));                // first empty box slot
+    ck(party.count()==0 && party.boxCount()==1,
+       "tapping a box slot moves the selected creature into storage");
+    ck(party.box[0].dex==25, "without releasing it");
   }
 
   // ---- the box sheet
@@ -137,15 +126,21 @@ int main(){
     ck(boxDetail==1, "tapping a box slot opens its sheet");
     ck(party.count()==0, "rather than moving the creature on one tap");
 
-    boxTap(SHEET_R_X, SHEET_BTN_Y);              // RELEASE
-    ck(releaseConfirm, "RELEASE arms a confirm on the box sheet too");
+    boxTap(secondaryX, secondaryY);               // RELEASE
+    ck(releaseConfirm, "RELEASE arms a confirm on the box sheet");
+    movePickOpen=false;
+    boxTap(233, 170);                             // over a move row beneath it
+    ck(!movePickOpen, "the confirm is modal: the sheet underneath is inert");
+    ck(party.boxCount()==1, "and the creature is still there before confirmation");
     boxTap(CONF_X, CONF_NO_Y);
     ck(party.boxCount()==1, "NO keeps it");
 
-    boxTap(SHEET_R_X, SHEET_BTN_Y);
+    boxTap(secondaryX, secondaryY);
     boxTap(CONF_X, CONF_YES_Y);
-    ck(party.boxCount()==0, "YES lets a boxed creature go");
+    ck(party.boxCount()==0, "the confirmed RELEASE lets a boxed creature go");
     ck(party.count()==0, "and it is not pushed into the party instead");
+    Party q; q.begin();
+    ck(q.boxCount()==0, "the release is persisted, not only in RAM");
   }
 
   // ---- TO PARTY still works, since the sheet replaced a direct tap
@@ -155,26 +150,12 @@ int main(){
     party.boxSave();
     partyOpen=true; boxOpen=true;
     boxTap(SLOT_X(0), SLOT_Y(0));
-    boxTap(SHEET_L_X, SHEET_BTN_Y);              // TO PARTY
+    boxTap(primaryX, primaryY);                   // TO PARTY
     ck(party.count()==1 && party.slots[0].dex==143, "TO PARTY withdraws it");
     ck(party.boxCount()==0, "and the box slot is freed");
   }
 
-  // ---- a released creature cannot leave a swap armed at an empty slot
-  {
-    clearAll();
-    party.slots[0]=mon(25,30,"PIKA");
-    party.save();
-    partyOpen=true;
-    partyTap(SLOT_X(0), SLOT_Y(0));
-    ck(boxSwapFrom==1, "opening a sheet arms the swap side");
-    partyTap(SHEET_R_X, SHEET_BTN_Y);
-    partyTap(CONF_X, CONF_YES_Y);
-    ck(boxSwapFrom==0 && boxSel==0,
-       "and releasing disarms it, so nothing points at a creature that is gone");
-  }
-
-  // ---- BRING BACK, tapped where a thumb actually lands
+  // ---- MAKE ACTIVE, tapped where a thumb actually lands
   //
   // Never covered before: the party section above hatches a creature, so
   // pet.isEgg() is false and BRING BACK correctly denies. With an egg waiting --
@@ -190,8 +171,8 @@ int main(){
     partyOpen = true;
     partyTap(SLOT_X(0), SLOT_Y(0));
     ck(partyDetail == 1, "the sheet opens with an egg waiting");
-    partyTap(233, SHEET_BTN_Y);                  // dead centre
-    ck(pet.speciesId == 3, "BRING BACK works when tapped at the panel centre");
+    partyTap(primaryX, primaryY);                // centre primary action
+    ck(pet.speciesId == 3, "MAKE ACTIVE works when tapped at the panel centre");
     ck(party.count() == 0, "and the creature leaves the party to become the pet");
   }
 

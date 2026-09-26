@@ -40,3 +40,11 @@ void audioBegin();          // init ES8311 + I2S + amplificador + tarea de audio
 void sfxPlay(uint8_t id);   // encola un efecto (no bloquea el loop)
 void audioSetEnabled(bool on);
 bool audioEnabled();
+
+// A species' own chirp. SYNTHESISED, not sampled -- see cry.h for how it is
+// derived and why there is no recorded audio in this project at all.
+//
+// It shares the effect queue with sfxPlay(), so it is equally non-blocking and is
+// equally dropped when the queue is full. sfxPlay() keeps its one-byte signature:
+// the queue element grew to carry a dex number, and that is private to audio.cpp.
+void audioCry(int16_t dex);

@@ -36,8 +36,12 @@ void setup();
 void loop();
 extern Pet pet;   // defined in the sketch
 extern bool trainOpen, sackOpen, gameOpen, menuOpen, cardOpen, movePickOpen, spdOpen;
+extern bool memoOpen;
 extern bool bagOpen, playerOpen;
 int uiMenuRowCenterY(int i);
+// The training menu's geometry, read from the firmware rather than restated here.
+int uiTrainRowTop(int i);
+int uiTrainRowH();
 int uiBagRowCenterY(int i);
 extern uint8_t movePickSlot, movePickPage;
 extern bool battleOpen, btlOver, btlWon;
@@ -157,22 +161,32 @@ int main(int argc, char **argv) {
   if (!trainOpen) { printf("FAIL: train icon did not open the submenu\n"); return 1; }
   printf("PASS: 5th icon opens the training submenu\n");
 
-  click(233, 178);                       // row 0 == STRENGTH == TRAIN_ROW_Y(0)+28
-  if (!sackOpen) { printf("FAIL: STRENGTH row did not start the sack\n"); return 1; }
-  printf("PASS: STRENGTH routes to the punching bag\n");
-  sackOpen = false;
-
-  click(tbx, tby);
-  click(233, 242);                       // row 1 == SPEED == TRAIN_ROW_Y(1)+28
-  if (!spdOpen) { printf("FAIL: SPEED row did not start the reaction test\n"); return 1; }
-  printf("PASS: SPEED routes to the reaction test\n");
-  spdOpen = false;
-
-  click(tbx, tby);
-  click(233, 306);                       // row 2 == DEFENCE -> the ball game
-  if (!gameOpen) { printf("FAIL: DEFENCE row did not start the ball game\n"); return 1; }
-  printf("PASS: DEFENCE routes to the ball game\n");
-  gameOpen = false;
+  // ASKED, NOT HARDCODED. These were literal y coordinates -- 178, 242, 306 --
+  // and the training menu grew a fourth row, which retuned the pitch and moved
+  // every one of them onto the row below. The test then failed for the right
+  // reason while pointing at the wrong thing: it was restating a layout instead
+  // of reading it, which is the shape CLAUDE.md warns about and exactly why
+  // uiMenuRowCenterY() a few lines down exists at all.
+  {
+    const int mid = uiTrainRowH() / 2;
+    struct Route { int row; bool *flag; const char *what; };
+    const Route route[] = {
+      { 0, &sackOpen, "STRENGTH routes to the punching bag" },
+      { 1, &spdOpen,  "SPEED routes to the reaction test" },
+      { 2, &gameOpen, "DEFENCE routes to the ball game" },
+      { 3, &memoOpen, "MEMORY routes to the memory game" },
+    };
+    for (const Route &r : route) {
+      if (!trainOpen) click(tbx, tby);
+      click(233, uiTrainRowTop(r.row) + mid);
+      if (!*r.flag) {
+        printf("FAIL: training row %d did not start its game\n", r.row);
+        return 1;
+      }
+      printf("PASS: %s\n", r.what);
+      *r.flag = false;
+    }
+  }
   trainOpen = false;
 
   click(233, 60);                        // name/status band opens the menu

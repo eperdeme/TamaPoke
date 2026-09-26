@@ -191,8 +191,24 @@ int main(){
     pr.end();
 
     // and a party/box blob from a build with MORE slots at the same stride
+    //
+    // TWO SAVES, not one, because the party and box gained a CHECKPOINT (pbA/pbB)
+    // and the checkpoint is deliberately the truth about the pair -- the legacy
+    // "party"/"box" blobs are the migration path and what a downgrade reads. This
+    // block used to write only the legacy blobs and then assert on them, which
+    // after the checkpoint landed described a save no build can produce: a device
+    // whose party came from a LATER build would carry that build's checkpoint too,
+    // and the checkpoint would rightly win. It read as a firmware bug and was a
+    // stale test.
+    //
+    // So both real shapes are covered: a save from BEFORE checkpoints existed
+    // (legacy keys only), and a save from a build with more slots (checkpoint
+    // present, and oversized).
     {
+      // -- shape 1: legacy keys only, as a pre-checkpoint build left them
       Preferences pr2; pr2.begin("tamapoke", false);
+      pr2.remove("pbA");
+      pr2.remove("pbB");
       std::vector<uint8_t> bigp(sizeof(PartyMon) * (PARTY_SLOTS + 3), 0);
       PartyMon m; m.dex = 149; m.level = 100;
       snprintf(m.nick, sizeof(m.nick), "DRAGO");
@@ -208,12 +224,145 @@ int main(){
          "a party written by a build with MORE slots keeps its first six");
       ck(pq.box[0].dex == 6, "and so does the box");
     }
+    {
+      // -- shape 2: a CHECKPOINT from a build with more slots. Its dimensions
+      // travel in its own header, so the extra records are consumed and dropped
+      // rather than misaligning ours. Built by hand: the running build cannot
+      // write a record with dimensions it does not have.
+      const uint8_t moreParty = PARTY_SLOTS + 2, moreBox = BOX_SLOTS + 4;
+      const size_t mon = sizeof(PartyMon);
+      const size_t fixed = 18;                     // PAIR_FIXED
+      std::vector<uint8_t> blob(fixed + mon * (moreParty + moreBox) + 2, 0);
+      memcpy(blob.data() + 0, "\x4B\x50\x42\x31", 4);   // PAIR_MAGIC "KPB1"
+      uint16_t ver = 1; memcpy(blob.data() + 4, &ver, 2);
+      uint16_t total = (uint16_t)blob.size(); memcpy(blob.data() + 6, &total, 2);
+      uint32_t gen = 9; memcpy(blob.data() + 8, &gen, 4);
+      uint16_t ms = (uint16_t)mon; memcpy(blob.data() + 12, &ms, 2);
+      blob[14] = moreParty;
+      blob[15] = moreBox;
+      // slot 0 of the party, and slot 0 of the box, are what we assert on
+      PartyMon pm; pm.dex = 144; pm.level = 70;
+      snprintf(pm.nick, sizeof(pm.nick), "ICER");
+      memcpy(blob.data() + fixed, &pm, mon);
+      PartyMon bm; bm.dex = 9; bm.level = 55;
+      memcpy(blob.data() + fixed + mon * moreParty, &bm, mon);
+      // CRC-16/CCITT-FALSE over everything before the trailing crc, same as ckpt.h
+      uint16_t crc = 0xFFFF;
+      for (size_t i = 0; i + 2 < blob.size(); i++) {
+        crc ^= (uint16_t)blob[i] << 8;
+        for (int k = 0; k < 8; k++)
+          crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021) : (uint16_t)(crc << 1);
+      }
+      memcpy(blob.data() + blob.size() - 2, &crc, 2);
+
+      Preferences pr3; pr3.begin("tamapoke", false);
+      pr3.putBytes("pbA", blob.data(), blob.size());
+      pr3.remove("pbB");
+      pr3.end();
+      Party pq2; pq2.begin();
+      ck(pq2.slots[0].dex == 144 && pq2.slots[0].level == 70 &&
+         !strcmp(pq2.slots[0].nick, "ICER"),
+         "a pair CHECKPOINT from a build with more slots keeps its first six");
+      ck(pq2.box[0].dex == 9 && pq2.box[0].level == 55,
+         "and the first eighteen of its box");
+    }
 
     Pet q; q.begin();
     ck(q.isRegistered(25) && q.isRegistered(151),
        "a Pokedex written by a LATER build still loads after downgrading");
     ck(q.badgeCountIn(1, false) == 8,
        "and so do the badges it recorded for a region this build still has");
+  }
+
+  // ---- A PLAYER CHECKPOINT FROM BEFORE memoHi EXISTED
+  //
+  // The player record gained a scalar, which moves where its ARRAYS start. That is
+  // the dangerous kind of change: loadPlayerSnapshot() validates the array
+  // dimensions against the stored body length, so a build that simply raised its
+  // idea of the fixed-block size would find every existing record too short,
+  // reject it, and fall back to the legacy keys -- the torn-write path the
+  // checkpoint exists to replace, on every device in the field.
+  //
+  // The fix is that the fixed-block length now TRAVELS IN THE RECORD, at the byte
+  // that used to be a reserved zero. A v1 record reads 0 there and 0 means 42.
+  // This builds such a record by hand -- the running build cannot write one -- and
+  // proves the badges, the streak and the three older minigame records all survive
+  // while the new one simply reads as "no record yet".
+  {
+    Preferences pr; pr.begin("tamapoke", false);
+    pr.remove("plyA"); pr.remove("plyB");
+
+    const size_t FIXED_V1 = 42;
+    const size_t dexBytes = sizeof(((Pet*)nullptr)->dexReg);
+    // SIX, not GYM_REGIONS - 1. The record has to be built the way the OLD build
+    // wrote it, and that build had seven ladders -- so it stored six extra badge
+    // masks where this one stores eight. Using the current count would quietly
+    // stop testing the array growth that Galar and Paldea caused, which is the
+    // other half of what could go wrong here.
+    const size_t badgeN = 6;
+    static_assert(GYM_REGIONS - 1 > 6,
+                  "this fixture is the SEVEN-ladder layout; if the build shrank to "
+                  "that, it is no longer testing growth");
+    const size_t nameN = 12;
+    const size_t body = FIXED_V1 + 2*dexBytes + 4*badgeN + 2*REGION_COUNT + nameN;
+    std::vector<uint8_t> b(body + 2, 0);
+    memcpy(b.data() + 0, "TKY1", 4);                       // PLAYER_MAGIC
+    uint16_t v = 1;  memcpy(b.data() + 4, &v, 2);          // version 1
+    uint16_t tot = (uint16_t)b.size(); memcpy(b.data() + 6, &tot, 2);
+    uint32_t gen = 3; memcpy(b.data() + 8, &gen, 4);
+    uint16_t db = (uint16_t)dexBytes; memcpy(b.data() + 12, &db, 2);
+    b[14] = REGION_COUNT;
+    b[15] = (uint8_t)badgeN;
+    b[16] = (uint8_t)nameN;
+    b[17] = 2;                                             // avatar
+    b[18] = 0;                                             // region KANTO
+    b[19] = 0;                    // THE RESERVED ZERO: "the fixed block is 42"
+    uint16_t badg = 0x00FF; memcpy(b.data() + 20, &badg, 2);
+    uint16_t badh = 0x0003; memcpy(b.data() + 22, &badh, 2);
+    uint16_t strk = 21;     memcpy(b.data() + 24, &strk, 2);
+    uint16_t bstk = 34;     memcpy(b.data() + 26, &bstk, 2);
+    uint32_t cday = 1000;   memcpy(b.data() + 28, &cday, 4);
+    uint16_t tmed = 7;      memcpy(b.data() + 32, &tmed, 2);
+    uint16_t mstn = 7;      memcpy(b.data() + 34, &mstn, 2);
+    uint16_t ghi = 41;      memcpy(b.data() + 36, &ghi, 2);
+    uint16_t shi = 52;      memcpy(b.data() + 38, &shi, 2);
+    uint16_t qhi = 13;      memcpy(b.data() + 40, &qhi, 2);
+    // the arrays begin at 42, NOT at 44 -- that is the whole point
+    size_t at = FIXED_V1;
+    std::vector<uint8_t> dex(dexBytes, 0);
+    dex[(25 - 1) >> 3] |= 1 << ((25 - 1) & 7);             // PIKACHU
+    memcpy(b.data() + at, dex.data(), dexBytes); at += dexBytes;   // dexReg
+    at += dexBytes;                                                // dexShinyReg
+    uint16_t jx = 0x000F; memcpy(b.data() + at, &jx, 2);            // badgesX[0]
+    at += 2 * badgeN;
+    at += 2 * badgeN;                                               // badgesHardX
+    at += 2 * REGION_COUNT;                                         // eggByRegion
+    memcpy(b.data() + at, "OLDHAND", 7);                            // trainerName
+    uint16_t crc = 0xFFFF;
+    for (size_t i = 0; i + 2 < b.size(); i++) {
+      crc ^= (uint16_t)b[i] << 8;
+      for (int k = 0; k < 8; k++)
+        crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021) : (uint16_t)(crc << 1);
+    }
+    memcpy(b.data() + b.size() - 2, &crc, 2);
+    pr.putBytes("plyA", b.data(), b.size());
+    pr.remove("mhi");            // and no legacy key for it either
+    pr.end();
+
+    Pet p; p.begin();
+    ck(!strcmp(p.trainerName, "OLDHAND"),
+       "a v1 player record still loads: the trainer name is intact");
+    ck(p.badges == 0x00FF && p.badgesHard == 0x0003, "with both Kanto ladders");
+    ck(p.badgeCountIn(1, false) == 4, "and the Johto badges after the scalars");
+    ck(p.badgeCountIn(GYM_REGIONS - 1, false) == 0 &&
+       p.badgeCountIn(GYM_REGIONS - 2, false) == 0,
+       "while the ladders that record never knew start empty, not inheriting");
+    ck(p.streak == 21 && p.bestStreak == 34, "the streak survives");
+    ck(p.gameHi == 41 && p.strHi == 52 && p.spdHi == 13,
+       "and all three of the older minigame records");
+    ck(p.isRegistered(25), "the Pokedex still lines up, so the arrays were not shifted");
+    ck(p.memoHi == 0,
+       "while the field that record never had reads as no-record-yet, not as dex bits");
   }
 
   printf("%s\n", bad?"FAILURES":"all good");

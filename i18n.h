@@ -125,8 +125,8 @@ enum StrId : uint8_t {
   S_EVO_SLOW,       // shown on the card while a creature carries that debt
   S_NEED_PACK,      // region chooser: this region's sprite pack is not on the SD
   // Letting a BANKED creature go for good, from the party or box detail sheet.
-  // The confirmation itself reuses S_RELEASE_FMT / S_YES / S_NO, which the live
-  // pet's own release dialog already owns -- the question is the same question.
+  // The confirmation reuses S_RELEASE_FMT / S_NO; its destructive action repeats
+  // S_RELEASE_BTN instead of the ambiguous generic YES.
   S_RELEASE_BTN,    // the button on the detail sheet
   S_RELEASE_GONE,   // ...and the warning under it: this one does not come back
   S_BOX_TAKE,       // box detail sheet: move this creature into the party
@@ -145,8 +145,33 @@ enum StrId : uint8_t {
   S_ITEM_USED,      // "Used %s"
   S_ITEM_NOUSE,     // the item was valid but had nothing to do
   S_FOUND_ITEM,     // a wild win's drop
-  S_FOCUS,          // party/box sheet: raise this one instead of the live pet
+  S_FOCUS,          // party sheet: make this one the active creature
   S_FOCUS_NOW,      // ...and the label once it already is the one being raised
+  // settings, page 2
+  S_BRIGHT_FMT,     // screen brightness level, e.g. "LIGHT 7"
+  S_RESET,          // the row, and the confirm's YES: start the game over
+  S_RESET_Q,        // "Erase everything?"
+  S_RESET_COST,     // what it costs, on screen BEFORE the tap
+  // Pokedex filters. RAISED and CAUGHT are different sets: the dex records what
+  // has been raised as the live creature, the party and box record what you HAVE.
+  S_FILT_ALL, S_FILT_RAISED, S_FILT_CAUGHT, S_FILT_SHINY,
+  S_FILT_NONE,      // the filter matched nothing, said out loud
+  // how the box is ordered on screen
+  S_SORT_SLOT, S_SORT_DEX, S_SORT_LVL,
+  // Personality, derived from the IVs and never stored. In the same order as the
+  // PERS_* enum in pet.h -- personalityName() indexes this list with it.
+  S_PERS_BOLD, S_PERS_STURDY, S_PERS_BRISK, S_PERS_HARDY, S_PERS_EAGER, S_PERS_CALM,
+  // Today's care checklist. Every one is read from state the save already holds,
+  // so nothing new is written and the list resets itself with the day.
+  S_GOALS, S_GOALS_FMT,
+  S_GOAL_CARED, S_GOAL_FED, S_GOAL_CLEAN, S_GOAL_HAPPY, S_GOAL_RESTED,
+  // the memory game
+  S_MEMO,           // the training-menu row
+  S_MEMO_FMT,       // the result: how long a sequence was remembered
+  S_MEMO_WATCH,     // the sequence is playing -- do not tap yet
+  S_MEMO_GO,        // ...and now repeat it
+  S_PLUS_JOY_FMT,   // "JOY +%u", the reward
+  S_BOX_PUT,        // party detail sheet: move this creature into the box
   STR_COUNT
 };
 

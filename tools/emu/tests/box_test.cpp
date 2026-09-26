@@ -82,6 +82,55 @@ int main(){
        "withdrawing into a free slot moves it without displacing anyone");
   }
 
+  // A SWAP IS ONE MOVE AND MUST COMMIT AS ONE.
+  //
+  // swapPartyBox() changed the party and the box, which used to be two separate
+  // NVS keys written one after the other. A cut between them left the creature
+  // that moved OUT of the box sitting in both places while the one that moved in
+  // was lost -- a duplicate and a loss from a single interrupted swap, which is
+  // the same fault as issue #3 and worse, because it invents a creature.
+  //
+  // The assertion is the INVARIANT rather than either outcome: whatever happens,
+  // each creature must appear exactly once across the pair. Both legal results
+  // satisfy it -- the swap happened, or it did not -- and only a mixture fails.
+  // A test pinned to one of the two outcomes would have to guess how far the
+  // write got.
+  {
+    nvs().clear();
+    Party r;
+    r.begin();
+    for (int i = 0; i < PARTY_SLOTS; i++) r.slots[i] = PartyMon();
+    for (int i = 0; i < BOX_SLOTS; i++) r.box[i] = PartyMon();
+    r.slots[0] = mk(6, 50);        // CHARIZARD in the party
+    r.box[0] = mk(25, 40);         // PIKACHU in the box
+    r.save();
+    r.boxSave();
+
+    // One successful write, then the power goes. Under the old two-write swap
+    // that is precisely the torn state; under a single-write pair it is either
+    // wholly done or wholly not.
+    nvsFailWritesAfter(1);
+    r.swapPartyBox(0, 0);
+    nvsResumeWrites();
+
+    Party loaded;
+    loaded.begin();
+    auto countOf = [&](int16_t dex) {
+      int n = 0;
+      for (int i = 0; i < PARTY_SLOTS; i++) if (loaded.slots[i].dex == dex) n++;
+      for (int i = 0; i < BOX_SLOTS; i++) if (loaded.box[i].dex == dex) n++;
+      return n;
+    };
+    printf("      after a cut mid-swap: %d x CHARIZARD, %d x PIKACHU\n",
+           countOf(6), countOf(25));
+    ck(countOf(6) == 1, "an interrupted swap does not lose or duplicate the party creature");
+    ck(countOf(25) == 1, "nor the box creature");
+    // And the pair has to be one of the two legal arrangements, not a blend.
+    bool before = loaded.slots[0].dex == 6 && loaded.box[0].dex == 25;
+    bool after = loaded.slots[0].dex == 25 && loaded.box[0].dex == 6;
+    ck(before || after, "the pair reads as either the state before the swap or the state after it");
+  }
+
   // A save whose BOX was written before PartyMon grew.
   //
   // Last, and self-contained: it seeds NVS itself and builds its own Party, so
@@ -94,6 +143,14 @@ int main(){
   // emptiness over the real one. The party has always migrated by length; the
   // box did not, and nothing noticed because the record had never grown.
   {
+    // Genuinely from scratch, which this block always CLAIMED to be and was not.
+    // It seeded only the "box" key, so once the pair gained a checkpoint the
+    // records left behind by the blocks above were newer than the legacy blob
+    // being seeded here -- and the checkpoint rightly won, which read as the
+    // migration having failed. CLAUDE.md § "a state a test leaves behind is the
+    // next test's input", caught by this migration breaking rather than by the
+    // block that caused it.
+    nvs().clear();
     const size_t oldStride = sizeof(PartyMon) - 12;   // any earlier, shorter layout
     uint8_t old[oldStride * BOX_SLOTS];
     memset(old, 0, sizeof(old));

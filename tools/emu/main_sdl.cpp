@@ -117,6 +117,16 @@ void nvsLoad(const char *path) {
     if (fread(&vl, 4, 1, f) != 1 || vl > 4096) break;
     std::vector<uint8_t> v(vl);
     if (vl && fread(v.data(), 1, vl, f) != vl) break;
+    // Keys outside the game's namespace are stored as "@namespace/key". A real
+    // NVS key is at most 15 characters and cannot contain either character, so
+    // this cannot collide with a key written by an older emulator build -- which
+    // is why the file format did not have to change to gain namespaces.
+    if (!k.empty() && k[0] == '@') {
+      size_t slash = k.find('/');
+      if (slash != std::string::npos)
+        nvsOther()[k.substr(1, slash - 1)][k.substr(slash + 1)] = v;
+      continue;
+    }
     nvs()[k] = v;
   }
   fclose(f);
@@ -124,12 +134,20 @@ void nvsLoad(const char *path) {
 void nvsSave(const char *path) {
   FILE *f = fopen(path, "wb");
   if (!f) return;
-  uint32_t n = nvs().size();
+  // Flattened first, so the count in the header covers every namespace. Writing
+  // nvs().size() and then more records than that is how a file becomes
+  // unreadable by its own loader.
+  std::vector<std::pair<std::string, const std::vector<uint8_t> *>> flat;
+  for (auto &kv : nvs()) flat.push_back({ kv.first, &kv.second });
+  for (auto &ns : nvsOther())
+    for (auto &kv : ns.second)
+      flat.push_back({ "@" + ns.first + "/" + kv.first, &kv.second });
+  uint32_t n = flat.size();
   fwrite(&n, 4, 1, f);
-  for (auto &kv : nvs()) {
-    uint32_t kl = kv.first.size(), vl = kv.second.size();
+  for (auto &kv : flat) {
+    uint32_t kl = kv.first.size(), vl = kv.second->size();
     fwrite(&kl, 4, 1, f); fwrite(kv.first.data(), 1, kl, f);
-    fwrite(&vl, 4, 1, f); if (vl) fwrite(kv.second.data(), 1, vl, f);
+    fwrite(&vl, 4, 1, f); if (vl) fwrite(kv.second->data(), 1, vl, f);
   }
   fclose(f);
 }
@@ -155,6 +173,9 @@ extern uint8_t btlMyAct;
 extern uint8_t btlTrainGain, btlTrainWhich;
 extern bool lanWantHost;
 extern bool gShowAllAvatars;
+// Unlocks the emulator-only console commands (MAX). The firmware compiles them
+// and never sets this; see the note beside it in TamaPoke.ino.
+extern bool gEmuDebug;
 #define PICK_LAN 0xFF
 uint8_t squadCap(uint8_t, bool);
 #include "link.h"
@@ -415,6 +436,10 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "--sprites") && i + 1 < argc) emuSetSpriteDir(argv[++i]);
     else if (!strcmp(argv[i], "--wipe")) { remove(save); }
   }
+  // This is the emulator, so the emulator-only console commands are available.
+  // Set HERE and nowhere else -- the firmware compiles them and leaves the flag
+  // false, which is what keeps both builds compiling the same sources.
+  gEmuDebug = true;
   // Audio preview: no SDL, no board -- just a file you can listen to.
   if (wav) return wavMain(wav, demo);
   if (shot) return shotMode(shot, shotOut, shotLvl, shotIv, shotDex);   // headless: no SDL at all

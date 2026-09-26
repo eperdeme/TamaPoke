@@ -30,6 +30,10 @@ static bool gRestarted = false;
 void FakeESP::restart(){ gRestarted = true; }   // not exit(): the test continues
 
 void setup(); void render(); void handleSerial();
+// The emulator-only command gate. Set by main_sdl.cpp on a real emulator run;
+// this test drives BOTH states, because the off state is the one that protects a
+// board and is therefore the one worth proving.
+extern bool gEmuDebug;
 extern Pet pet;
 
 static int bad=0;
@@ -183,6 +187,43 @@ int main(){
     runConsole({"TR -5 999 20"});
     ck(pet.trAtk == 0 && pet.trDef == pet.trMaxDef() && pet.trSpe == 20,
        "nonsense arguments clamp instead of wrapping");
+  }
+
+  // ---- MAX: the fully-raised creature in one command, EMULATOR ONLY.
+  //
+  // Two halves matter equally. That it works, and that it is INERT when
+  // gEmuDebug is false -- because the firmware compiles this branch (a runtime
+  // flag, not a #ifdef, so both builds compile the same sources) and a board
+  // must never honour it. A guard that is never tested in its OFF state is a
+  // guard nobody has checked.
+  {
+    pet.flushSave();
+    gEmuDebug = false;
+    runConsole({"IV 8 8 8 8", "TR 0 0 0", "LVL 5"});
+    const uint8_t lvlWas = pet.level();
+    std::string off = runConsole({"MAX"});
+    ck(pet.ivAtk == 8 && pet.level() == lvlWas,
+       "MAX does nothing at all on a board, where gEmuDebug is false");
+    ck(off.find("lvl=") == std::string::npos,
+       "and prints nothing, so it cannot look like it worked");
+
+    gEmuDebug = true;
+    std::string on = runConsole({"MAX"});
+    ck(pet.ivAtk == 31 && pet.ivDef == 31 && pet.ivSpe == 31 && pet.ivHp == 31,
+       "in the emulator it rolls every IV to the ceiling");
+    ck(pet.level() == MAX_LEVEL, "and takes the creature to the level cap");
+    // The ORDER is the point: training is capped by trMaxFor(iv), so raising the
+    // IVs has to happen first or the ceiling is computed against the old ones.
+    ck(pet.trAtk == pet.trMaxAtk() && pet.trDef == pet.trMaxDef() &&
+       pet.trSpe == pet.trMaxSpe(),
+       "with training at the ceiling those IVs actually allow");
+    ck(pet.careMistakes == 0, "and no care mistakes holding evolution back");
+    ck(pet.moveCount() > 0, "it knows moves, rather than walking in empty-handed");
+    ck(on.find("lvl=100") != std::string::npos, "and it reports what it did");
+    // Same rule as its siblings above: a console command that changed something
+    // must have WRITTEN it.
+    { Pet r; r.begin();
+      ck(r.ivAtk == 31 && r.level() == MAX_LEVEL, "MAX survives a reload"); }
   }
 
   printf("%s\n", bad?"FAILURES":"all good");

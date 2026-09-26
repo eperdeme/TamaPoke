@@ -1,6 +1,7 @@
 #include "audio.h"
 #include "gbsynth.h"
 #include "music.h"
+#include "cry.h"   // per-species chirps, synthesised rather than sampled
 #include "pin_config.h"
 #include <Arduino.h>
 #include <Wire.h>
@@ -22,6 +23,24 @@ static I2SClass i2s;
 static bool gReady = false;
 static bool gOn = true;
 static QueueHandle_t gQ = nullptr;
+
+// WHAT GOES ON THE EFFECT QUEUE.
+//
+// It used to be a bare uint8_t, which is exactly one byte too few to say WHICH
+// species is speaking -- so a per-species chirp had nowhere to put its dex number.
+// Widening the element is private to this file: sfxPlay() keeps its signature and
+// every one of its ~200 call sites is untouched.
+//
+// `dex` is meaningless unless kind == AUD_CRY, and the task never reads it
+// otherwise. A struct rather than two queues, so an effect and a cry cannot
+// overtake one another -- they are the same kind of interruption and belong in
+// one ordered line.
+enum : uint8_t { AUD_SFX = 0, AUD_CRY };
+struct AudioReq {
+  uint8_t kind;
+  uint8_t sfx;
+  int16_t dex;
+};
 
 // ---- I2C del códec ----
 static bool esW(uint8_t reg, uint8_t val) {
@@ -180,7 +199,7 @@ static void pump(uint32_t ms) {
 }
 
 static void audioTask(void *) {
-  uint8_t id;
+  AudioReq req;
   // where each music channel has got to, and when its current note ends
   uint16_t mi1 = 0, mi2 = 0;
   uint32_t at1 = 0, at2 = 0, clock = 0;
@@ -195,14 +214,31 @@ static void audioTask(void *) {
     // An effect always wins the melody voice. With three voices a cue that
     // mixed politely underneath would just be mud; cutting through is both
     // simpler and the right priority.
-    if (xQueueReceive(gQ, &id, wantAudio ? 0 : pdMS_TO_TICKS(40)) == pdTRUE) {
-      if (gOn && gReady && id < SFX_COUNT) {
+    if (xQueueReceive(gQ, &req, wantAudio ? 0 : pdMS_TO_TICKS(40)) == pdTRUE) {
+      if (gOn && gReady && req.kind == AUD_CRY) {
+        // A species chirp, built on the spot from DEX_TBL. Nothing is stored and
+        // nothing is looked up: see cry.h.
+        CryNote cn[CRY_NOTES];
+        const uint8_t n = crySynth(req.dex, cn);
+        if (n) {
+          if (!ampOn) { digitalWrite(PA, HIGH); delay(6); ampOn = true; }
+          for (uint8_t i = 0; i < n; i++) {
+            if (cn[i].noise)
+              gSyn.noise(cn[i].vol, cn[i].envDir, cn[i].envPeriod, cn[i].ms,
+                         cn[i].noisePeriod);
+            else
+              gSyn.note(0, cn[i].gbFreq, cn[i].duty, cn[i].vol, cn[i].envDir,
+                        cn[i].envPeriod, cn[i].ms);
+            pump(cn[i].ms);
+          }
+        }
+      } else if (gOn && gReady && req.kind == AUD_SFX && req.sfx < SFX_COUNT) {
         if (!ampOn) { digitalWrite(PA, HIGH); delay(6); ampOn = true; }
-        const SfxDef &d = SFX[id];
+        const SfxDef &d = SFX[req.sfx];
         for (uint8_t i = 0; i < d.len; i++) {
           uint16_t f = hzToGb(d.n[i].f);
           // percussion for the impact cues, a pulse for everything else
-          if (id == SFX_HIT || id == SFX_FAINT)
+          if (req.sfx == SFX_HIT || req.sfx == SFX_FAINT)
             gSyn.noise(13, -1, 2, d.n[i].ms, (uint16_t)(4 + i * 4));
           else if (f)
             gSyn.note(0, f, 1, 14, -1, 4, d.n[i].ms);
@@ -286,13 +322,22 @@ void audioBegin() {
   p.end();
 
   gReady = true;
-  gQ = xQueueCreate(8, sizeof(uint8_t));
+  gQ = xQueueCreate(8, sizeof(AudioReq));
   xTaskCreatePinnedToCore(audioTask, "audio", 4096, nullptr, 1, nullptr, 0);
   sfxPlay(SFX_HATCH);  // jingle de arranque (confirma que suena)
 }
 
 void sfxPlay(uint8_t id) {
-  if (gReady && gOn && gQ) xQueueSend(gQ, &id, 0);  // descarta si la cola esta llena
+  if (!gReady || !gOn || !gQ) return;
+  AudioReq r = { AUD_SFX, id, 0 };
+  xQueueSend(gQ, &r, 0);  // descarta si la cola esta llena
+}
+
+void audioCry(int16_t dex) {
+  if (!gReady || !gOn || !gQ) return;
+  if (dex < 1 || dex > DEX_COUNT) return;   // never queue a cry nothing can build
+  AudioReq r = { AUD_CRY, 0, dex };
+  xQueueSend(gQ, &r, 0);
 }
 
 void audioSetEnabled(bool on) {

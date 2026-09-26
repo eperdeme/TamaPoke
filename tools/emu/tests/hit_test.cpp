@@ -16,6 +16,7 @@
 #include "party.h"
 #include "battle.h"
 #include <cstdio>
+#include <cmath>
 uint32_t g_seed=4; FakeSerial Serial; FakeESP ESP; FakeWire Wire;
 volatile int g_touchX=0,g_touchY=0; volatile bool g_touchDown=false;
 void FakeESP::restart(){exit(0);}
@@ -32,6 +33,7 @@ void startBattle(int16_t dex, uint8_t lvl);
 int btlCellIndexAt(int16_t x, int16_t y);
 void partyButtonRects(int *boxTop, int *boxBot, int *closeTop, int *closeBot);
 void uiButtonHeights(int *out, int max, int *n);
+void uiRowHeights(int *out, int max, int *n);
 void gymHeaderRects(int *pillTop, int *pillBot, int *rowTop);
 int uiSleepButton(int *cx, int *cy);
 void uiEggPillRect(int *x, int *y, int *w, int *h, bool hitArea);
@@ -43,6 +45,17 @@ void uiConfirmRects(int *b1Top, int *b1Bot, int *b2Top, int *b2Bot);
 int uiSafeHalfWidth(int y);
 int uiTapFinger();
 int uiButtonHitR();
+// the memory game and the training menu, asked of the firmware not restated
+int uiMemoPads();
+int uiMemoPadR();
+void memoPadPos(int i, int *cx, int *cy);
+int memoPadAt(int16_t x, int16_t y);
+int uiTrainRows();
+int uiTrainRowH();
+int uiTrainRowTop(int i);
+int uiTrainPanelTop();
+int uiTrainPanelBot();
+int uiTrainPanelHalfW();
 int uiCareArcTop(int i);
 int uiHeaderNameBottom();
 void partySlotPos(int i, int *cx, int *cy);
@@ -145,8 +158,8 @@ int main(){
   // mistake: a button sized to fit its label rather than a finger. This holds
   // every primary control to one minimum so the fourth report does not happen.
   {
-    int h[8], n = 0;
-    uiButtonHeights(h, 8, &n);
+    int h[16], n = 0;
+    uiButtonHeights(h, 16, &n);
     int small = 0;
     for (int i = 0; i < n; i++) if (h[i] < 44) small++;
     printf("      button heights:");
@@ -228,8 +241,8 @@ int main(){
   {
     const int FINGER = uiTapFinger();
     const double PPMM = 466.0 / 1.75 / 25.4;
-    int h[8], n = 0;
-    uiButtonHeights(h, 8, &n);
+    int h[16], n = 0;
+    uiButtonHeights(h, 16, &n);
     int under = 0, tiny = 0;
     printf("      primary controls:");
     for (int i = 0; i < n; i++) printf(" %d(%.1fmm)", h[i], h[i] / PPMM);
@@ -239,6 +252,20 @@ int main(){
       if (h[i] < 44) tiny++;
     }
     ck(tiny == 0, "no control is below the hard floor");
+    // Full-width list rows, judged separately: see uiRowHeights() in the sketch.
+    // A 276 x 44 row is a far bigger target than a 44 px button, and five of them
+    // at UI_TAP_FINGER would need more panel than the display has -- so the rule
+    // for them is the hard floor, enforced rather than assumed.
+    {
+      int r[8], rn = 0;
+      uiRowHeights(r, 8, &rn);
+      int thin = 0;
+      printf("      list rows:");
+      for (int i = 0; i < rn; i++) printf(" %d", r[i]);
+      printf(" px\n");
+      for (int i = 0; i < rn; i++) if (r[i] < 44) thin++;
+      ck(thin == 0, "and no full-width list row is under the hard floor either");
+    }
     ck(under <= 3, "and no FOURTH control has dropped below the finger floor");
 
     // The home icons are round and their hit area is a DISC that is bigger than
@@ -396,10 +423,10 @@ int main(){
         }
       }
     }
-    ck(lB > lT && rB > rT, "both sheet buttons have a hit area at all");
-    ck((lB - lT) >= 44 && (rB - rT) >= 44,
-       "and both are at least UI_TAP_MIN tall -- BRING BACK used to be 38");
-    ck((lR - lL) >= 44 && (rR - rL) >= 44, "and at least UI_TAP_MIN across");
+     ck(lB > lT && rB > rT, "both sheet buttons have a hit area at all");
+     ck((lB - lT) >= 44 && (rB - rT) >= 44,
+       "and both are at least UI_TAP_MIN tall -- MAKE ACTIVE used to be 38");
+     ck((lR - lL) >= 44 && (rR - rL) >= 44, "and at least UI_TAP_MIN across");
     // RELEASE cannot be recovered from, so a finger sliding off BRING BACK must
     // land on nothing rather than on the destructive one.
     ck(rL > lR, "they do not overlap");
@@ -466,6 +493,67 @@ int main(){
       ck(!badgeArtExists(250, 0), "and a wildly out-of-range region too");
     }
     ck(!badgeArtExists(0, TRAINER_GYMS), "and an out-of-range gym index is refused");
+  }
+
+  // ---- the memory game's pads, and the training rows that launch it
+  //
+  // Four big circles on a ring. Two things can go wrong here and neither shows up
+  // in a screenshot: pads that OVERLAP, so one tap is inside two of them and the
+  // draw path and the tap path can disagree about which; and pads that reach off
+  // the round glass, which is the mistake the gym ladder made before
+  // uiSafeHalfWidthFor() existed.
+  {
+    const int r = uiMemoPadR();
+    int worstGap = 9999, offGlass = 0, tooSmall = 0;
+    for (int i = 0; i < uiMemoPads(); i++) {
+      int ax, ay;
+      memoPadPos(i, &ax, &ay);
+      const int reach = (int)sqrt((double)((ax - 233) * (ax - 233) +
+                                           (ay - 233) * (ay - 233))) + r;
+      if (reach > 233) offGlass++;
+      if (r * 2 < uiTapFinger()) tooSmall++;
+      for (int j = i + 1; j < uiMemoPads(); j++) {
+        int bx, by;
+        memoPadPos(j, &bx, &by);
+        const int d = (int)sqrt((double)((ax - bx) * (ax - bx) + (ay - by) * (ay - by)));
+        if (d - 2 * r < worstGap) worstGap = d - 2 * r;
+      }
+    }
+    printf("      memo pads: r=%d, closest gap %d px\n", r, worstGap);
+    ck(offGlass == 0, "every memory pad is fully on the glass");
+    ck(worstGap >= 0, "and no two of them overlap, so a tap is unambiguous");
+    ck(tooSmall == 0, "each is at least a finger across");
+    int wrong = 0;
+    for (int i = 0; i < uiMemoPads(); i++) {
+      int px, py;
+      memoPadPos(i, &px, &py);
+      if (memoPadAt((int16_t)px, (int16_t)py) != i) wrong++;
+    }
+    ck(wrong == 0, "and tapping a pad's centre resolves to that pad");
+    ck(memoPadAt(233, 233) < 0, "the middle belongs to the counter, not to a pad");
+  }
+  {
+    // The training menu grew a fourth row, so its pitch was retuned. The rows must
+    // not overlap each other and must stay inside the panel that draws them.
+    int overlap = 0, outside = 0;
+    for (int i = 0; i < uiTrainRows(); i++) {
+      const int top = uiTrainRowTop(i), bot = top + uiTrainRowH();
+      if (i && top < uiTrainRowTop(i - 1) + uiTrainRowH()) overlap++;
+      if (top < uiTrainPanelTop() || bot > uiTrainPanelBot()) outside++;
+    }
+    printf("      training rows: %d, panel %d..%d, last ends %d\n",
+           uiTrainRows(), uiTrainPanelTop(), uiTrainPanelBot(),
+           uiTrainRowTop(uiTrainRows() - 1) + uiTrainRowH());
+    ck(overlap == 0, "no two training rows overlap");
+    ck(outside == 0, "and every one of them is inside its own panel");
+    // Every corner of the panel must be on the glass -- the first attempt at
+    // fitting a fourth row made it 332 tall and hung the bottom pair off the bezel.
+    int off = 0;
+    for (int i = 0; i < 2; i++) {
+      const int y = i ? uiTrainPanelBot() : uiTrainPanelTop();
+      if (uiSafeHalfWidth(y) < uiTrainPanelHalfW()) off++;
+    }
+    ck(off == 0, "and the panel's own corners are on the glass");
   }
 done:
 

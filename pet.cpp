@@ -4,6 +4,7 @@
 #include "moves.h"
 #include "noart.h"   // speciesHasArt(): the egg pool skips what cannot be drawn
 #include "audio.h"
+#include "ckpt.h"   // the alternating CRC-checked record format, shared with party.cpp
 #include <stddef.h>
 
 // Reads a blob that may be LONGER than the array we are reading it into.
@@ -38,143 +39,6 @@ static void loadBlob(Preferences &p, const char *key, void *dst, size_t n) {
   free(tmp);
 }
 
-// ---------------------------------------------------------------------------
-// CHECKPOINTED RECORDS: how a save survives losing power halfway through.
-//
-// NVS writes one key at a time and Preferences commits on every put(), so a
-// save spread over ~50 keys is not atomic. A cut in the middle leaves the early
-// fields new and the later ones old, and what loads next boot is a creature
-// assembled from two different lives -- current Attack training beside older
-// Defence, Speed and species. That is issue #3.
-//
-// The fix is to write each logical record as ONE blob, guarded by a CRC, into
-// TWO keys used alternately. The newest complete blob wins; if the write that
-// was in flight never landed, the previous one is still whole. The legacy
-// scalar keys are still written for backups and for downgrades, but they are no
-// longer what the firmware believes.
-//
-// Every record here shares one layout:
-//
-//   off 0    u32  magic        -- identifies the record AND its wire format
-//   off 4    u16  version      -- informational; see the append-only rule
-//   off 6    u16  size         -- the WHOLE blob, trailing crc included
-//   off 8    u32  generation   -- monotonic; picks the newer of the two slots
-//   off 12   ...  body
-//   size-2   u16  crc          -- CRC-16/CCITT-FALSE over bytes [0, size-2)
-//
-// THE CRC SITS AT THE END, not in the header, so that `size` alone locates it.
-// That is what lets a record be read across a layout change: a reader takes the
-// body prefix it understands and leaves any field it has that the stored record
-// did not at its initialiser -- the same rule loadBlob() applies to the dex
-// bitmaps, for the same reason.
-//
-// SO THE BODY IS APPEND-ONLY. New fields go at the end, never inserted, exactly
-// as with move indices and the badge arrays (CLAUDE.md § "wearing an INDEX").
-// Inserting one silently reinterprets every save already on a device.
-//
-// If a change ever CANNOT be expressed that way, bump the MAGIC rather than the
-// version. That invalidates the record cleanly and loudly instead of quietly
-// misreading it, and it is one rule rather than a version check somebody has to
-// remember to relax. `version` is carried for diagnostics only.
-//
-// Why this matters more than it looks: rejecting a checkpoint means falling
-// back to the legacy keys, which is precisely the torn-write path all of this
-// exists to replace. A tolerant reader is what stops the next field anybody
-// adds from silently reintroducing issue #3 on every device in the field.
-static constexpr size_t CKPT_HDR = 12;   // magic, version, size, generation
-static constexpr size_t CKPT_CRC = 2;    // the trailing crc
-
-// Unaligned little-endian accessors. The blob is addressed by byte offset
-// rather than cast to a struct, so no field's placement depends on how the
-// compiler chose to pad anything.
-static inline uint16_t ckptRd16(const uint8_t *p) {
-  uint16_t v; memcpy(&v, p, 2); return v;
-}
-static inline uint32_t ckptRd32(const uint8_t *p) {
-  uint32_t v; memcpy(&v, p, 4); return v;
-}
-static inline void ckptWr16(uint8_t *p, uint16_t v) { memcpy(p, &v, 2); }
-static inline void ckptWr32(uint8_t *p, uint32_t v) { memcpy(p, &v, 4); }
-
-// CRC-16/CCITT-FALSE: init 0xFFFF, poly 0x1021, MSB first, no final xor.
-// save.cpp has its own copy for the EXPORT blob; that one is a wire format
-// shared with the host tools, so the duplication is deliberate.
-static uint16_t ckptCrc(const uint8_t *data, size_t n) {
-  uint16_t crc = 0xFFFF;
-  for (size_t i = 0; i < n; i++) {
-    crc ^= (uint16_t)data[i] << 8;
-    for (uint8_t bit = 0; bit < 8; bit++)
-      crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021)
-                           : (uint16_t)(crc << 1);
-  }
-  return crc;
-}
-
-// Fills in the header and the trailing crc over a body the caller has already
-// written. Returns the total length.
-static uint16_t ckptSeal(uint8_t *buf, size_t bodyEnd, uint32_t magic,
-                         uint16_t version, uint32_t generation) {
-  uint16_t total = (uint16_t)(bodyEnd + CKPT_CRC);
-  ckptWr32(buf + 0, magic);
-  ckptWr16(buf + 4, version);
-  ckptWr16(buf + 6, total);
-  ckptWr32(buf + 8, generation);
-  ckptWr16(buf + bodyEnd, ckptCrc(buf, bodyEnd));
-  return total;
-}
-
-// Reads and validates one checkpoint slot into `buf`. Returns the stored length
-// on success, 0 if the key is absent, too short, not this record, inconsistent
-// about its own size, or fails its CRC. `cap` must leave room for a record
-// written by a LATER build than this one -- getBytes() copies nothing at all
-// when the stored blob is larger than the buffer, so a tight buffer would turn
-// every downgrade into a legacy-key fallback.
-static uint16_t ckptRead(Preferences &prefs, const char *key, uint32_t magic,
-                         uint8_t *buf, size_t cap) {
-  size_t stored = prefs.getBytesLength(key);
-  if (stored < CKPT_HDR + CKPT_CRC) return 0;   // absent, or too short to be one
-  if (stored > cap) {
-    Serial.printf("save: %s is %u bytes, this build reads at most %u\n", key,
-                  (unsigned)stored, (unsigned)cap);
-    return 0;
-  }
-  if (prefs.getBytes(key, buf, cap) != stored) return 0;
-  if (ckptRd32(buf + 0) != magic) return 0;
-  if (ckptRd16(buf + 6) != stored) return 0;    // self-describing length must agree
-  if (ckptRd16(buf + stored - CKPT_CRC) != ckptCrc(buf, stored - CKPT_CRC)) return 0;
-  return (uint16_t)stored;
-}
-
-// Wrap-safe "is lhs newer than rhs": the counter is uint32_t and comparing it
-// directly would invert after 4 billion saves.
-static bool generationAfter(uint32_t lhs, uint32_t rhs) {
-  return (int32_t)(lhs - rhs) > 0;
-}
-
-// Reads whichever of the two slots is newest AND complete. Returns its length,
-// or 0 if neither validates. The winner is re-read rather than kept in a second
-// buffer: these blobs are hundreds of bytes and the loop task's stack is not
-// somewhere to spend that twice.
-static uint16_t ckptReadNewest(Preferences &prefs, const char *keyA,
-                               const char *keyB, uint32_t magic, uint8_t *buf,
-                               size_t cap) {
-  uint16_t nA = ckptRead(prefs, keyA, magic, buf, cap);
-  uint32_t genA = nA ? ckptRd32(buf + 8) : 0;
-  uint16_t nB = ckptRead(prefs, keyB, magic, buf, cap);
-  uint32_t genB = nB ? ckptRd32(buf + 8) : 0;
-  if (nB && (!nA || !generationAfter(genA, genB))) return nB;   // buf already holds B
-  if (!nA) return 0;
-  return ckptRead(prefs, keyA, magic, buf, cap);
-}
-
-// Which of the two slots a given generation belongs in. Odd -> A, even -> B, so
-// consecutive saves alternate and each one overwrites the OLDER copy. Since the
-// next generation is always (loaded + 1), its parity is always the opposite of
-// the slot it was loaded from: the fallback copy can never be the one being
-// overwritten. That invariant is the whole design, and powerloss_test pins it.
-static const char *ckptSlot(uint32_t generation, const char *a, const char *b) {
-  return (generation & 1) ? a : b;
-}
 
 // --- the creature ----------------------------------------------------------
 static constexpr uint32_t PET_CORE_MAGIC = 0x31504B54UL;  // "TKP1"
@@ -301,8 +165,21 @@ static bool readPetCore(Preferences &prefs, const char *key,
 // however big the table got -- applied inside one atomic blob instead of across
 // twenty-five separate writes.
 static constexpr uint32_t PLAYER_MAGIC = 0x31594B54UL;   // "TKY1"
-static constexpr uint16_t PLAYER_VERSION = 1;
-static constexpr size_t PLAYER_FIXED = 42;   // header + every scalar, before the arrays
+static constexpr uint16_t PLAYER_VERSION = 2;   // v2 appended memoHi; see below
+// Header + every scalar, before the arrays begin.
+//
+// THIS LENGTH NOW TRAVELS IN THE RECORD, at buf[19], for exactly the reason the
+// array dimensions already do. Appending a scalar moves where the arrays start,
+// and loadPlayerSnapshot() validates `need` against the stored body length -- so
+// simply raising this number would make every EXISTING record fail that check and
+// fall back to the legacy keys, which is the torn-write path the checkpoint exists
+// to replace. A v1 record has a reserved ZERO there, which is the sentinel for
+// "the fixed block was 42", so nothing already on a device needs to know.
+//
+// So a future scalar goes at the end of the block, this number moves, and both
+// directions keep working. No magic bump, no version check.
+static constexpr size_t PLAYER_FIXED_V1 = 42;
+static constexpr size_t PLAYER_FIXED = 44;   // v2: + memoHi at offset 42
 static constexpr size_t PLAYER_CAP = 512;
 static constexpr size_t PLAYER_DEX_BYTES = (DEX_COUNT + 7) / 8;
 // DERIVED from the tables, never restated: CLAUDE.md § "sizeof(PartyMon) is
@@ -315,24 +192,6 @@ static_assert(PLAYER_MAX <= PLAYER_CAP, "raise PLAYER_CAP for the player record"
 
 // A bounds-checked cursor over the variable tail of a blob. Overrunning sets
 // `bad` rather than running off the end of the buffer.
-struct CkptCursor {
-  uint8_t *buf;
-  size_t at;
-  size_t end;
-  bool bad = false;
-  void put(const void *src, size_t n) {
-    if (at + n > end) { bad = true; return; }
-    memcpy(buf + at, src, n);
-    at += n;
-  }
-  // Copies `stored` bytes out of the blob into a destination of `n`, keeping the
-  // PREFIX they share and stepping over the whole stored length either way.
-  void take(void *dst, size_t n, size_t stored) {
-    if (at + stored > end) { bad = true; return; }
-    memcpy(dst, buf + at, stored < n ? stored : n);
-    at += stored;
-  }
-};
 
 bool Pet::savePlayerSnapshot() {
   const uint32_t nextGen = playerGeneration + 1;
@@ -344,7 +203,10 @@ bool Pet::savePlayerSnapshot() {
   buf[16] = (uint8_t)sizeof(trainerName);
   buf[17] = avatar;
   buf[18] = region;
-  buf[19] = 0;                                    // reserved, keeps the scalars 2-byte aligned
+  // The length of the scalar block, i.e. where the arrays start. Was a reserved
+  // zero, which is precisely what makes it usable: every record already written
+  // reads 0 here and 0 means PLAYER_FIXED_V1.
+  buf[19] = (uint8_t)PLAYER_FIXED;
   ckptWr16(buf + 20, badges);
   ckptWr16(buf + 22, badgesHard);
   ckptWr16(buf + 24, streak);
@@ -355,6 +217,7 @@ bool Pet::savePlayerSnapshot() {
   ckptWr16(buf + 36, gameHi);
   ckptWr16(buf + 38, strHi);
   ckptWr16(buf + 40, spdHi);
+  ckptWr16(buf + 42, memoHi);                     // v2
 
   CkptCursor cur{ buf, PLAYER_FIXED, sizeof(buf) - CKPT_CRC };
   cur.put(dexReg, sizeof(dexReg));
@@ -393,7 +256,15 @@ bool Pet::loadPlayerSnapshot() {
   // record exists to prevent. A body LONGER than the dimensions describe is
   // fine and ignored: that is a later build's appended field.
   const size_t body = n - CKPT_CRC;
-  const size_t need = PLAYER_FIXED + 2 * dexBytes + 4 * badgeN + 2 * regionN + nameN;
+  // Where the arrays start, according to the RECORD rather than this build. A
+  // reserved zero means v1's 42; see the note above PLAYER_FIXED. Clamped, so a
+  // corrupt byte here cannot walk the cursor off into the arrays.
+  size_t fixed = buf[19] ? (size_t)buf[19] : PLAYER_FIXED_V1;
+  if (fixed < PLAYER_FIXED_V1 || fixed > body) {
+    Serial.println("save: player checkpoint scalar block length is not believable");
+    return false;
+  }
+  const size_t need = fixed + 2 * dexBytes + 4 * badgeN + 2 * regionN + nameN;
   if (!regionN || need > body) {
     Serial.println("save: player checkpoint dimensions do not match its length");
     return false;
@@ -412,8 +283,12 @@ bool Pet::loadPlayerSnapshot() {
   gameHi = ckptRd16(buf + 36);
   strHi = ckptRd16(buf + 38);
   spdHi = ckptRd16(buf + 40);
+  // Only if the record actually HAS it. A v1 record's offset 42 is the first byte
+  // of the Pokedex bitmap, so reading it unconditionally would invent a memory
+  // record out of dex bits.
+  if (fixed >= PLAYER_FIXED) memoHi = ckptRd16(buf + 42);
 
-  CkptCursor cur{ buf, PLAYER_FIXED, body };
+  CkptCursor cur{ buf, fixed, body };
   cur.take(dexReg, sizeof(dexReg), dexBytes);
   cur.take(dexShinyReg, sizeof(dexShinyReg), dexBytes);
   cur.take(badgesX, sizeof(badgesX), badgeN * 2);
@@ -506,21 +381,57 @@ static uint8_t dropTo(uint8_t v, uint8_t d, uint8_t fl) {
   return (v - fl > d) ? v - d : fl;
 }
 
+// See the essay above ClockVerdict in pet.h for why each of these is a refusal
+// rather than a clamp.
+ClockVerdict clockVerdict(uint32_t seen, uint32_t now, uint32_t *minsOut) {
+  if (minsOut) *minsOut = 0;
+  // Not a time. The old code assigned this to lastSeenEpoch before testing it,
+  // which is how an unreadable RTC permanently lost the reference.
+  if (now == 0) return CLK_REJECT;
+  if (now < CLOCK_EPOCH_FLOOR) return CLK_REJECT;
+  if (!seen) return CLK_REBASE;                 // first ever reading: adopt it
+  if (now + CLOCK_BACK_SLACK_SECS < seen) return CLK_REBASE;   // went backwards
+  if (now <= seen) return CLK_REBASE;           // inside the drift slack
+  const uint32_t mins = (now - seen) / 60;
+  if (mins < 2) return CLK_REBASE;              // nothing worth applying
+  if (mins > CLOCK_MAX_OFFLINE_MINS) return CLK_REBASE;   // a fault, not a holiday
+  if (minsOut) *minsOut = mins;
+  return CLK_APPLY;
+}
+
+// An explicit set: the player typing a time in SETTINGS, or a host sending TIME.
+// It deliberately does NOT judge plausibility -- somebody said so on purpose --
+// but it still will not adopt a non-time, because doing so is pure loss: the old
+// reference is discarded and nothing is stored in its place.
 void Pet::setClock(uint32_t nowEpoch) {
+  if (!nowEpoch) return;
   lastSeenEpoch = nowEpoch;
-  if (nowEpoch) save();  // persiste ya: un corte de luz no pierde la referencia
+  save();  // persiste ya: un corte de luz no pierde la referencia
 }
 
 void Pet::syncClock(uint32_t nowEpoch) {
-  uint32_t seen = lastSeenEpoch;
-  lastSeenEpoch = nowEpoch;
-  if (nowEpoch == 0) return;
-  uint32_t mins = (seen && nowEpoch > seen) ? (nowEpoch - seen) / 60 : 0;
-  if (mins < 2 || ceremony != CER_NONE || starterPick) {
-    save();  // primera vez, sin tiempo que aplicar o aun eligiendo inicial
+  uint32_t mins = 0;
+  const ClockVerdict verdict = clockVerdict(lastSeenEpoch, nowEpoch, &mins);
+  if (verdict == CLK_REJECT) {
+    // KEEP the reference. Nothing is written, so the next boot with a working
+    // clock measures from when the device was really last seen.
+    Serial.printf("clock: reading %u refused, keeping %u\n",
+                  (unsigned)nowEpoch, (unsigned)lastSeenEpoch);
     return;
   }
-  if (mins > 14UL * 24 * 60) mins = 14UL * 24 * 60;  // tope: 2 semanas
+  lastSeenEpoch = nowEpoch;
+  if (verdict == CLK_REBASE) {
+    // A real time, but not a measurable absence: adopt it and age NOTHING. This
+    // is where an implausible jump lands, and it costs the player nothing -- age,
+    // bond, training and medals are all untouched.
+    if (mins == 0) Serial.printf("clock: rebased to %u\n", (unsigned)nowEpoch);
+    save();
+    return;
+  }
+  if (ceremony != CER_NONE || starterPick) {
+    save();  // sin tiempo que aplicar o aun eligiendo inicial
+    return;
+  }
 
   for (uint32_t i = 0; i < mins; i++) {
     ageMinutes++;
@@ -1670,6 +1581,32 @@ uint8_t Pet::trainStrength(uint16_t hits) {
   return gain;
 }
 
+// The memory game. JOY AND BOND, no stat -- see the note in pet.h. Modelled on
+// play() rather than on the three trainers, and it obeys the same contract they
+// all do: nothing while an egg or a ceremony is in progress, the daily bond cap
+// still applies, the day is registered, and it saves.
+uint8_t Pet::playMemo(uint16_t best) {
+  if (ceremony != CER_NONE || isEgg()) return 0;
+  // A longer sequence is worth more, with a ceiling: the game gets harder on its
+  // own, so the reward does not also need to run away.
+  uint8_t gain = (uint8_t)(best * 4);
+  if (gain > 40) gain = 40;
+  const uint8_t before = joy;
+  joy = clamp100(joy + gain);
+  gain = joy - before;
+  // Concentration is tiring but not physical -- it costs less than the bag and
+  // burns no weight, which is what keeps this the game you play when the creature
+  // is too worn out for the others.
+  energy = dropTo(energy, 4, 5);
+  fullness = dropTo(fullness, 2, 5);
+  if (best >= 4) heartUntil = millis() + HEART_MS;
+  if (best > memoHi) memoHi = best;
+  addBond((uint8_t)(2 + best / 3));
+  registerCare();
+  save();
+  return gain;
+}
+
 void Pet::play() {
   if (ceremony != CER_NONE) return;
   if (isEgg() || sleeping) return;
@@ -1951,6 +1888,7 @@ void Pet::save() {
   prefs.putUShort("ghi", gameHi);
   prefs.putUShort("shi", strHi);
   prefs.putUShort("qhi", spdHi);
+  prefs.putUShort("mhi", memoHi);
   prefs.putString("nick", nick);
 }
 
@@ -2018,6 +1956,7 @@ void Pet::load() {
   gameHi = prefs.getUShort("ghi", 0);
   strHi = prefs.getUShort("shi", 0);
   spdHi = prefs.getUShort("qhi", 0);
+  memoHi = prefs.getUShort("mhi", 0);   // absent on an older save: no record yet
   prefs.getString("nick", nick, sizeof(nick));
   // Moves load last: relearnFromLevel() needs speciesId and ageMinutes, both of
   // which are read above. A save from before moves existed has no "mvs" key and

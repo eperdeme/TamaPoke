@@ -23,7 +23,17 @@
 #define SAVE_MAGIC3 'S'
 #define SAVE_VERSION 1
 #define SAVE_HDR 8
-#define SAVE_TRANSFER_MAX 4096  // shared EXPORT/IMPORT ceiling, including checkpoints
+// Shared EXPORT/IMPORT ceiling, including every checkpoint.
+//
+// Raised from 4096 when the party and box became one atomic record: that pair is
+// ~1.2 KB and both of its alternating slots are in the backup, which took a real
+// save from ~2.1 KB to ~4.5 KB. saveExport() returns 0 rather than truncating, so
+// outgrowing this turns EXPORT into "EXPORT FAIL" -- the backup simply stops
+// existing. save_test prints the margin and fails below a quarter spare.
+//
+// Costs two static buffers of this size in the sketch, which is why it is not
+// simply enormous.
+#define SAVE_TRANSFER_MAX 8192
 
 enum SaveKind : uint8_t {
   SK_U8 = 1, SK_I8, SK_BOOL, SK_U16, SK_I16, SK_U32, SK_BYTES, SK_STR,
@@ -48,3 +58,41 @@ bool saveImport(const uint8_t *in, size_t n);
 
 // Roughly what saveExport needs, for sizing a buffer.
 size_t saveExportSize();
+
+// ---------------------------------------------------------------------------
+// A FACTORY RESET THAT SURVIVES LOSING POWER PART WAY THROUGH IT.
+//
+// Emptying NVS is not one write, and the window either side of it is dangerous
+// in both directions. Before: the firmware still holds the old creature in RAM,
+// so anything that saves in that window writes it straight back into the store
+// that was just cleared -- saveInhibited guards the flush hooks, but not
+// Party::save() or Inventory::save(). After: a cut mid-clear leaves a store that
+// is neither the old save nor a new game, and nothing records which was intended.
+//
+// So the INTENT is recorded first, and the wipe happens at the TOP OF THE NEXT
+// BOOT, before anything has opened the game namespace or loaded a creature into
+// RAM. There is then no window at all: either the intent is there and the store
+// is emptied before any of it is read, or it is not and the save stands.
+//
+// The intent lives in a namespace of its OWN, and both halves of that are
+// load-bearing:
+//   * not "tamapoke", because clear() on that namespace would erase the very
+//     flag that records the wipe was asked for -- so a cut between the clear and
+//     the acknowledgement would leave a half-wiped save with no intent to finish
+//     it. Preferences::clear() empties one namespace, not the store.
+//   * not in SAVE_FIELDS, because a backup carrying it would arm a wipe on the
+//     device it was restored onto. saveExport/saveImport only ever open the game
+//     namespace, so this is true by construction rather than by remembering.
+#define RESET_NS "tpsys"
+
+void resetArm();        // record the intent; the caller then restarts
+bool resetArmed();
+void resetComplete();   // acknowledge it, once the wipe has actually happened
+
+// Empties the game namespace if a reset was asked for. Call FIRST in setup(),
+// before anything opens it. Returns true if it wiped.
+//
+// IDEMPOTENT: a cut between the clear and the acknowledgement simply repeats a
+// clear of an already-empty store on the next boot, which is why the intent is
+// cleared second and not first.
+bool resetRecover();
