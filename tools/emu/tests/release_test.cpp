@@ -155,13 +155,32 @@ int main(){
     ck(party.boxCount()==0, "and the box slot is freed");
   }
 
+  // ---- a full party still opens the box sheet before asking who steps out
+  {
+    clearAll();
+    for (int i=0;i<PARTY_SLOTS;i++) party.slots[i]=mon(10+i,30+i,"PARTY");
+    party.box[0]=mon(143,40,"SNORLAX");
+    party.save();
+    party.boxSave();
+    partyOpen=true; boxOpen=true;
+    boxTap(SLOT_X(0), SLOT_Y(0));
+    ck(boxDetail==1 && boxOpen, "a full party still opens the boxed creature's sheet");
+    ck(boxSel==0, "and does not ask for a replacement before TO PARTY is pressed");
+    boxTap(primaryX, primaryY);                   // TO PARTY
+    ck(!boxOpen && boxDetail==0 && boxSel==1,
+       "TO PARTY then opens the party replacement picker");
+    int16_t oldPartyDex=party.slots[2].dex;
+    partyTap(SLOT_X(2), SLOT_Y(2));
+    ck(party.slots[2].dex==143 && party.box[0].dex==oldPartyDex,
+       "choosing a party slot exchanges the two creatures");
+    ck(boxSel==0, "and clears the pending replacement");
+  }
+
   // ---- MAKE ACTIVE, tapped where a thumb actually lands
   //
-  // Never covered before: the party section above hatches a creature, so
-  // pet.isEgg() is false and BRING BACK correctly denies. With an egg waiting --
-  // the state a new board is set up in -- it must work, AND it must work from
-  // the panel's centre line, which is where the button used to be drawn
-  // full-width and where a thumb goes by default.
+  // With an egg waiting it must work, AND it must work from the panel's centre
+  // line, which is where the old action was drawn full-width and where a thumb
+  // goes by default.
   {
     clearAll();
     party.slots[0] = mon(3, 100, "");

@@ -9,6 +9,7 @@ Party party;
 // Same NVS namespace as the pet on purpose: WIPE (Pet::factoryReset) calls
 // clear() on it, and a factory reset that left the party behind would be a lie.
 void Party::begin() {
+  bool boxNeedsRewrite = false;
   // Start from empty: getBytes() leaves the destination untouched when the key
   // is missing, so without this a reload after a wipe would keep showing the
   // old party out of RAM.
@@ -63,33 +64,41 @@ void Party::begin() {
   size_t boxStored = prefs.getBytesLength("box");
   if (boxStored == sizeof(box)) {
     prefs.getBytes("box", box, sizeof(box));
-  } else if (boxStored > sizeof(box) && boxStored % sizeof(PartyMon) == 0) {
-    // Same as the party above: a later build with more box slots. Keep the
-    // first BOX_SLOTS rather than dropping the whole box on the floor, which is
-    // what happened before -- getBytes refuses an oversized blob outright.
+  } else if (boxStored && boxStored % BOX_V323_SLOTS == 0 &&
+             boxStored / BOX_V323_SLOTS <= sizeof(PartyMon)) {
+    // Every legacy box through v3.23 had 18 records. Test that dimension BEFORE
+    // dividing by today's 36 slots: 18 current-size records are also divisible
+    // by 36 bytes, which otherwise invents 36 half-records on upgrade.
+    const size_t oldStride = boxStored / BOX_V323_SLOTS;
     uint8_t *tmp = (uint8_t *)malloc(boxStored);
     if (tmp) {
-      if (prefs.getBytes("box", tmp, boxStored) == boxStored)
-        memcpy(box, tmp, sizeof(box));
+      if (prefs.getBytes("box", tmp, boxStored) == boxStored) {
+        for (int i = 0; i < BOX_V323_SLOTS; i++)
+          memcpy(&box[i], tmp + i * oldStride, oldStride);
+        boxNeedsRewrite = true;
+      }
       free(tmp);
     }
-  } else if (boxStored && boxStored % BOX_SLOTS == 0 && boxStored < sizeof(box)) {
-    // A SHORTER stride, i.e. a blob written before PartyMon grew. The party
-    // above has always had this path; the box did not, so the first time the
-    // record gained a field every stored box would have read as empty and been
-    // overwritten by the next boxSave(). Same migration, same reasoning.
-    size_t oldStride = boxStored / BOX_SLOTS;
-    uint8_t old[sizeof(box)];
-    prefs.getBytes("box", old, boxStored);
-    for (int i = 0; i < BOX_SLOTS; i++)
-      memcpy(&box[i], old + i * oldStride, oldStride);
-    boxSave();   // rewrite in the current layout so this only happens once
+  } else if (boxStored && boxStored % sizeof(PartyMon) == 0) {
+    // A current-stride blob from a build with a different slot count. Preserve
+    // the shared prefix in either direction; a downgrade must not erase slots
+    // it cannot display, so only the smaller-to-larger case is rewritten below.
+    uint8_t *tmp = (uint8_t *)malloc(boxStored);
+    if (tmp) {
+      if (prefs.getBytes("box", tmp, boxStored) == boxStored) {
+        const size_t copy = boxStored < sizeof(box) ? boxStored : sizeof(box);
+        memcpy(box, tmp, copy);
+        boxNeedsRewrite = boxStored < sizeof(box);
+      }
+      free(tmp);
+    }
   }
   // The checkpoint is the truth about the pair; everything above is the
   // migration path for a save written before it existed, and what a backup
   // restores. It goes LAST so it overwrites those reads, and the sanity clamps
   // below are re-applied because it bypassed the ones each branch already did.
-  if (!loadPair() && (prefs.isKey("pbA") || prefs.isKey("pbB")))
+  const bool pairLoaded = loadPair();
+  if (!pairLoaded && (prefs.isKey("pbA") || prefs.isKey("pbB")))
     Serial.println("save: BOTH party checkpoints failed; using legacy keys");
 
   for (auto &s : slots) {
@@ -100,6 +109,10 @@ void Party::begin() {
     if (s.dex < 1 || s.dex > DEX_COUNT) s.dex = 0;
     s.nick[sizeof(s.nick) - 1] = 0;
   }
+  // Rewrite only after the checkpoint has had the last word. Doing this in the
+  // legacy branch above could overwrite one half of a newer checkpoint before
+  // it was read. A future larger checkpoint is deliberately left untouched.
+  if (boxNeedsRewrite && (!pairLoaded || loadedPairBoxSlots < BOX_SLOTS)) persist();
 }
 
 // ---------------------------------------------------------------------------
@@ -155,14 +168,15 @@ bool Party::savePair() {
   uint16_t total = ckptSeal(buf, cur.at, PAIR_MAGIC, PAIR_VERSION, nextGen);
   const char *key = ckptSlot(nextGen, "pbA", "pbB");
   if (prefs.putBytes(key, buf, total) != total) return false;
-  uint8_t back[PAIR_CAP];
-  if (ckptRead(prefs, key, PAIR_MAGIC, back, sizeof(back)) != total ||
-      ckptRd32(back + 8) != nextGen) return false;
+    memset(buf, 0, sizeof(buf));
+    if (ckptRead(prefs, key, PAIR_MAGIC, buf, sizeof(buf)) != total ||
+      ckptRd32(buf + 8) != nextGen) return false;
   pairGeneration = nextGen;
   return true;
 }
 
 bool Party::loadPair() {
+  loadedPairBoxSlots = 0;
   // A RECORD FROM A LATER BUILD IS LONGER THAN OURS, AND MUST STILL BE READ.
   //
   // Preferences::getBytes copies NOTHING when the stored blob exceeds the
@@ -221,6 +235,7 @@ bool Party::loadPairFrom(uint8_t *buf, size_t cap) {
     return false;
   }
   pairGeneration = ckptRd32(buf + 8);
+  loadedPairBoxSlots = (uint8_t)boxN;
   CkptCursor cur{ buf, PAIR_FIXED, body };
   // Per-record prefix copy, so a stored PartyMon shorter than this build's lands
   // in the front of each slot and the tail keeps its initialiser -- the same

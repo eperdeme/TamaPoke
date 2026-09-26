@@ -40,7 +40,7 @@
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
-#define FW_VERSION "3.23"
+#define FW_VERSION "3.24"
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
   LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -1471,7 +1471,7 @@ void handleSerial() {
     Serial.println("DONE");
   } else if (line.startsWith("FOCUS ")) {
     // FOCUS <slot>: swap the creature on the main screen with a party slot,
-    // which is the console half of the RAISE THIS ONE button.
+    // which is the console half of the MAKE ACTIVE button.
     int s = -1;
     if (sscanf(line.c_str() + 6, "%d", &s) == 1 && s >= 0 && s < PARTY_SLOTS &&
         !party.slots[s].empty()) {
@@ -1884,8 +1884,7 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
   //
   // A box creature still goes to the party first: one rule per screen, and the
   // swap is then offered from the party sheet like any other member.
-  bool leftOk = fromBox ? (party.firstFree() >= 0)
-                        : (pet.ceremony == CER_NONE && !pet.awaitingStarter());
+  bool leftOk = fromBox || (pet.ceremony == CER_NONE && !pet.awaitingStarter());
   const char *leftLbl = fromBox ? T(S_BOX_TAKE) : T(S_FOCUS);
   const char *rightLbl = fromBox ? T(S_RELEASE_BTN) : T(S_BOX_PUT);
   gfx->fillRoundRect(PDET_L_X, PDET_BTN_Y, PDET_L_W, PDET_BTN_H, 10,
@@ -2117,7 +2116,7 @@ void partyTap(int16_t x, int16_t y) {
     // The confirm is modal: while it is up nothing else on the sheet responds,
     // or a miss on YES would fall through to the move rows underneath it.
     if (releaseConfirm) { monSheetConfirmTap(x, y, false); return; }
-    if (monSheetBtn(x, y, true)) {           // RAISE THIS ONE
+    if (monSheetBtn(x, y, true)) {           // MAKE ACTIVE
       if (pet.ceremony != CER_NONE || pet.awaitingStarter()) { sfxPlay(SFX_DENY); return; }
       focusSwap((uint8_t)(partyDetail - 1));
       partyDetail = 0;
@@ -7231,8 +7230,8 @@ static bool boxSortAfter(uint8_t a, uint8_t b) {
 // party; reordering the array would rewrite the largest blob in the store every
 // time somebody glanced at the box, and boxDetail/boxSel/boxSwapFrom all carry
 // REAL indices into it, so a sort landing mid-gesture would retarget a pending
-// swap onto a different creature. Sorting the LOOK costs one pass over 18 entries
-// and cannot lose anything.
+// swap onto a different creature. Sorting the LOOK costs one pass over BOX_SLOTS
+// entries and cannot lose anything.
 //
 // box_test asserts this is a BIJECTION for every mode, because the one bug class
 // that matters here is two visual cells resolving to the same real slot -- which
@@ -7242,7 +7241,7 @@ uint8_t boxSlotFor(uint8_t visual) {
   if (boxSort == BSORT_SLOT) return visual;
   uint8_t order[BOX_SLOTS];
   for (uint8_t i = 0; i < BOX_SLOTS; i++) order[i] = i;
-  // Insertion sort: eighteen entries, and STABLE, which is what makes equal keys
+  // Insertion sort: few entries, and STABLE, which is what makes equal keys
   // resolve to a deterministic order instead of one the algorithm chose.
   for (uint8_t i = 1; i < BOX_SLOTS; i++) {
     const uint8_t v = order[i];
@@ -7309,7 +7308,13 @@ void boxTap(int16_t x, int16_t y) {
     if (releaseConfirm) { monSheetConfirmTap(x, y, true); return; }
     if (monSheetBtn(x, y, true)) {          // TO PARTY
       int free = party.firstFree();
-      if (free < 0) { sfxPlay(SFX_DENY); return; }
+      if (free < 0) {
+        boxSel = boxDetail;
+        boxDetail = 0;
+        boxOpen = false;
+        sfxPlay(SFX_TAP);
+        return;
+      }
       party.swapPartyBox((uint8_t)free, boxDetail - 1);
       boxDetail = 0;
       boxSel = 0;
@@ -7360,12 +7365,6 @@ void boxTap(int16_t x, int16_t y) {
     // lot to happen from one tap and left nowhere to put RELEASE; the sheet
     // offers TO PARTY explicitly and shows what you are about to move.
     if (party.box[idx].empty()) { sfxPlay(SFX_DENY); return; }
-    if (party.firstFree() < 0) {
-      boxSel = idx + 1;          // party is full: go choose who steps out
-      boxOpen = false;
-      sfxPlay(SFX_TAP);
-      return;
-    }
     boxDetail = idx + 1;
     releaseConfirm = false;
     sfxPlay(SFX_TAP);

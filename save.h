@@ -25,15 +25,15 @@
 #define SAVE_HDR 8
 // Shared EXPORT/IMPORT ceiling, including every checkpoint.
 //
-// Raised from 4096 when the party and box became one atomic record: that pair is
-// ~1.2 KB and both of its alternating slots are in the backup, which took a real
-// save from ~2.1 KB to ~4.5 KB. saveExport() returns 0 rather than truncating, so
-// outgrowing this turns EXPORT into "EXPORT FAIL" -- the backup simply stops
-// existing. save_test prints the margin and fails below a quarter spare.
+// Raised from 4096 when the party and box became one atomic record, then from
+// 8192 when the box doubled to 36 slots. saveExport() returns 0 rather than
+// truncating, so outgrowing this turns EXPORT into "EXPORT FAIL" -- the backup
+// simply stops existing. save_test prints the margin and fails below a quarter
+// spare.
 //
 // Costs two static buffers of this size in the sketch, which is why it is not
 // simply enormous.
-#define SAVE_TRANSFER_MAX 8192
+#define SAVE_TRANSFER_MAX 12288
 
 enum SaveKind : uint8_t {
   SK_U8 = 1, SK_I8, SK_BOOL, SK_U16, SK_I16, SK_U32, SK_BYTES, SK_STR,

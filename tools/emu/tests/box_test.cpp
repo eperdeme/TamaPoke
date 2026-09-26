@@ -19,6 +19,7 @@ static PartyMon mk(int dex,int lvl){ PartyMon m; m.dex=dex; m.level=lvl;
   m.ivAtk=m.ivDef=m.ivSpe=m.ivHp=20; return m; }
 
 int main(){
+  ck(BOX_SLOTS == BOX_V323_SLOTS * 2, "the v3.24 box doubles from 18 to 36 slots");
   // a save from BEFORE the box existed: party key only, no box key
   { Preferences seed; seed.begin("tamapoke", false);
     PartyMon old[PARTY_SLOTS];
@@ -30,6 +31,25 @@ int main(){
   for (int i=0;i<PARTY_SLOTS;i++) if (p.slots[i].dex != 1+i*20) kept=false;
   ck(kept, "a pre-box save keeps its whole party");
   ck(p.boxCount()==0, "and comes up with an empty box, not garbage");
+
+  // v3.23's box was 18 current-size records. Once BOX_SLOTS doubled, dividing
+  // this length by the new slot count inferred a half-size stride and corrupted
+  // every record. The historical count is part of the save format, not a copy
+  // of today's layout.
+  {
+    nvs().clear();
+    PartyMon old[BOX_V323_SLOTS];
+    for (int i=0;i<BOX_V323_SLOTS;i++) old[i]=mk(40+i, 20+i);
+    Preferences seed; seed.begin("tamapoke", false);
+    seed.putBytes("box", old, sizeof(old));
+    seed.end();
+    Party grown; grown.begin();
+    bool keptAll=true, newSlotsEmpty=true;
+    for (int i=0;i<BOX_V323_SLOTS;i++) if (grown.box[i].dex != 40+i) keptAll=false;
+    for (int i=BOX_V323_SLOTS;i<BOX_SLOTS;i++) if (!grown.box[i].empty()) newSlotsEmpty=false;
+    ck(keptAll, "an 18-slot v3.23 box keeps every creature after growing");
+    ck(newSlotsEmpty, "and the 18 new slots start empty");
+  }
 
   // deposit: party slot 0 <-> empty box slot 0
   int16_t was = p.slots[0].dex;
@@ -152,9 +172,9 @@ int main(){
     // block that caused it.
     nvs().clear();
     const size_t oldStride = sizeof(PartyMon) - 12;   // any earlier, shorter layout
-    uint8_t old[oldStride * BOX_SLOTS];
+    uint8_t old[oldStride * BOX_V323_SLOTS];
     memset(old, 0, sizeof(old));
-    for (int i=0;i<BOX_SLOTS;i++) {
+    for (int i=0;i<BOX_V323_SLOTS;i++) {
       PartyMon m = mk(30+i, 25+i);
       memcpy(old + i*oldStride, &m, oldStride);   // the leading fields only
     }
@@ -163,8 +183,8 @@ int main(){
     seed.end();
     Party g; g.begin();
     bool all = true;
-    for (int i=0;i<BOX_SLOTS;i++) if (g.box[i].dex != 30+i) all=false;
-    ck(g.boxCount()==BOX_SLOTS, "a box written at an older, shorter stride is not lost");
+    for (int i=0;i<BOX_V323_SLOTS;i++) if (g.box[i].dex != 30+i) all=false;
+    ck(g.boxCount()==BOX_V323_SLOTS, "a box written at an older, shorter stride is not lost");
     ck(all, "and every record lands at the right offset");
     ck(!g.box[0].hasCareState(),
        "a migrated record admits it predates care state rather than faking it");

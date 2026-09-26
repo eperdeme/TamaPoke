@@ -3,7 +3,7 @@
 [![Flash in browser](https://img.shields.io/badge/flash-in%20browser-FF6B00?logo=googlechrome&logoColor=white)](https://eperdeme.github.io/TamaPoke/web/)
 [![MakerWorld](https://img.shields.io/badge/MakerWorld-3D%20case-00AE42?logo=bambulab&logoColor=white)](https://makerworld.com/es/models/2937822-tamapoke-a-pokemon-pokeball-tamagotchi)
 ![Board](https://img.shields.io/badge/board-ESP32--S3%20round%20AMOLED-E7352C?logo=espressif&logoColor=white)
-![Firmware](https://img.shields.io/badge/firmware-v3.23-8A2BE2)
+![Firmware](https://img.shields.io/badge/firmware-v3.24-8A2BE2)
 ![Code](https://img.shields.io/badge/code-MIT-blue)
 ![Languages](https://img.shields.io/badge/languages-6-FFCB05)
 [![Stars](https://img.shields.io/github/stars/DylanPDao/TamaPoke?style=flat&logo=github&color=yellow)](https://github.com/DylanPDao/TamaPoke/stargazers)
@@ -256,6 +256,8 @@ brings ELECTIVIRE, MAGMORTAR and RHYPERIOR waiting on exactly the same thing.
   **joins your party** (6 slots), keeping its species, nickname, shiny status, IVs,
   training, moves, the level it reached **and its whole care state**. It is frozen
   *while stored*: it does not age or train until you raise it again.
+- The **Box holds 36 Pokemon** across six pages. An existing 18-slot Box keeps
+  every creature in place and gains 18 empty slots after updating.
 - **Choosing who you raise.** Tap a party slot and press **MAKE ACTIVE**. It is a
   true *exchange* — the creature on the main screen takes the slot the newcomer
   vacates — so it needs no free slot and nothing is ever lost. Both keep their
@@ -271,7 +273,7 @@ brings ELECTIVIRE, MAGMORTAR and RHYPERIOR waiting on exactly the same thing.
   retire** — see "Retiring a creature early" below.
 - **Letting one go for good.** Move a party member to the box, open its sheet,
   then press **RELEASE**. It removes that creature permanently and asks first.
-  the creature does not fall through into the box — this is the one way to free
+  The creature does not fall through into the box — this is the one way to free
   a slot without something taking its place. A box slot now opens the same sheet
   rather than jumping straight into the party, and **TO PARTY** does that.
 - With a full party you're taken straight to the party screen to pick who the

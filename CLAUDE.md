@@ -811,16 +811,17 @@ the volume curve. The amplitude scale in particular (`500 * vol`) is a guess at
 what sounds linear. This is part of what the soak test is for.
 
 **B. Storage and the box -- DONE.**
-- The box is 18 slots (3 pages of 6) under its OWN NVS key, not a bigger party
-  blob. That was deliberate: growing the party blob changes its stride, and the
-  length-based migration in `begin()` cannot tell a stride change from a
-  slot-count change, so an existing party would have been read back misaligned.
-  A separate key is purely additive and cannot corrupt anything -- `box_test`
-  checks a pre-box save keeps its whole party and comes up with an empty box.
+- The box is 36 slots (6 pages of 6). Party and box share one dimensional,
+  CRC-checked checkpoint so a swap is atomic; the old separate keys remain for
+  backup and downgrade compatibility. `BOX_V323_SLOTS` pins the historical
+  18-slot legacy layout so increasing the count cannot be mistaken for a stride
+  change. `box_test` checks pre-box, 18-slot and shorter-record migrations.
 - `swapPartyBox()` is one call for deposit, withdraw and exchange, since any of
   the two slots may be empty. Reached by tapping a party slot then BOX.
-- Room to grow: 6 + 18 records is 720 B against a ~4000 B single-blob limit, so
-  the box could reach ~120 before it would need splitting.
+- Room to grow is now constrained by the whole save, not only one blob. A
+  128-slot box would require ~6.1 KB for one copy, ~12.9 KB for the alternating
+  pair checkpoints, and ~6.1 KB for the downgrade copy before any other save
+  data or NVS overhead. That cannot fit safely in the 20 KB NVS partition.
 - A farewell now falls through party -> box, and only a full party AND a full
   box makes the player choose who to replace. That is what the box is for.
 
@@ -978,11 +979,8 @@ confirm their licence or replace them.
    every ending; tap the title on the player card to set it. The keyboard now
    takes a target (`KB_PET` / `KB_TRAINER`) rather than hardcoding
    `pet.rename()` on commit, so two callers can share it.
-3. **Box 6 -> 18** (3 pages of 6). `S_PARTY_FMT` hardcodes "%u/6" in all six
-   languages, the party screen needs paging, and **`Party::begin()` must be
-   re-keyed off `sizeof(PartyMon)` first** -- it infers the old record size as
-   `stored / PARTY_SLOTS`, right when the stride grows and wrong when the slot
-   count does, so 180 bytes over 18 slots would infer a 10-byte record.
+3. ~~Box 6 -> 18~~ **done**, and grown to 36 in v3.24; see § "B. Storage and
+   the box" for the migration that keys the legacy blob off `BOX_V323_SLOTS`.
 4. **Peer-to-peer** (see below) -- the biggest, and the only one needing a
    hardware subsystem that has never been brought up.
 
@@ -1572,9 +1570,10 @@ and pairing UX on a touch-only screen.
 
 `sizeof(PartyMon)` is **48 bytes** now (it was 30 when this was written; `moves[]`
 and then the care block were appended) and the NVS partition is 20 KB (`0x5000`).
-So the arithmetic has moved: the current box of 18 is 864 bytes, a box of 80 is
-3840 and still inside the ~4000-byte single-blob figure, and 100 (4800) already
-exceeds it and would need splitting across two keys. **Derive these from
+So the arithmetic has moved: the current box of 36 is 1728 bytes and the atomic
+party-plus-box record is about 2 KB. A box of 128 is 6144 bytes before its party,
+header or second checkpoint copy, so it needs a different storage design rather
+than another constant change. **Derive these from
 `sizeof(PartyMon)` when the time comes rather than trusting the numbers in this
 paragraph** -- they have been wrong once already, which is § "sizeof(PartyMon) is
 load-bearing in four places" wearing a doc instead of code. RAM is a non-issue.
@@ -1582,10 +1581,10 @@ load-bearing in four places" wearing a doc instead of code. RAM is a non-issue.
 Check the headroom too, not just the blob limit: see § "NVS can run out". A box
 that fits one blob can still be the thing that fills the partition.
 
-**Fix the migration first.** `Party::begin()` infers the old record size as
-`stored / PARTY_SLOTS`, which is right when the stride grows but wrong when the
-slot count does: 180 stored bytes over 30 slots would infer a 6-byte record and
-destroy the party. Key it off `sizeof(PartyMon)` before changing PARTY_SLOTS.
+**The migration is keyed to both facts now.** Current-stride records are
+recognised by `sizeof(PartyMon)`, while pre-v3.24 boxes use the explicit
+`BOX_V323_SLOTS` dimension. Never infer an old stride by dividing by today's
+slot count.
 
 Note on (6): the battle screen is a 2x2 move grid, not four stacked rows --
 the round panel has to fit both creatures, both HP bars and the menu. The only

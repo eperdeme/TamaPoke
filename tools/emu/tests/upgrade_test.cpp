@@ -264,7 +264,7 @@ int main(){
          !strcmp(pq2.slots[0].nick, "ICER"),
          "a pair CHECKPOINT from a build with more slots keeps its first six");
       ck(pq2.box[0].dex == 9 && pq2.box[0].level == 55,
-         "and the first eighteen of its box");
+         "and the supported prefix of its box");
     }
 
     Pet q; q.begin();

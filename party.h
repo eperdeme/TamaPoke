@@ -9,12 +9,11 @@
 // A runaway does not: it is the game's one punishing outcome, and letting a
 // neglected pet come back as a team member would take the sting out of it.
 #define PARTY_SLOTS 6
-// The box: storage beyond the six that fight. Deliberately a SEPARATE NVS key
-// rather than a bigger party blob -- growing that blob would change its stride
-// and the length-based migration in begin() cannot tell a stride change from a
-// slot-count change, so an existing party would be read back misaligned. A new
-// key is purely additive and cannot corrupt anything.
-#define BOX_SLOTS 18
+// v3.23 and every earlier box had 18 slots. Keep that dimension explicit: a
+// legacy blob's length alone cannot distinguish fewer current-size records from
+// more shorter records once the box grows.
+#define BOX_V323_SLOTS 18
+#define BOX_SLOTS 36
 #define MOVE_SLOTS 4    // the same four every trainer gets in the real games
 
 // A stored creature -- one of the six that fight, or one in the box.
@@ -120,6 +119,7 @@ private:
   // succeeded and another's did not, a shared counter would advance anyway and
   // the next write would land on the slot holding the only complete copy.
   uint32_t pairGeneration = 0;
+  uint8_t loadedPairBoxSlots = 0;
   // And the journal gets its OWN again, for the same reason.
   uint32_t focusGeneration = 0;
   // The checkpoint plus both legacy blobs, exactly once. save() and boxSave()
