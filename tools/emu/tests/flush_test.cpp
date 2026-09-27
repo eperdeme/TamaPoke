@@ -36,6 +36,7 @@ extern uint8_t clockPage, playerPage;
 void startGame(); void startSack(); void startSpeedGame(); void startMemoGame();
 extern Party party;
 void startBattle(int16_t dex, uint8_t lvl);
+extern uint32_t sdTransferAt;
 
 static int bad = 0;
 static void clearAll(){
@@ -117,6 +118,14 @@ int main(){
   clearAll(); partyOpen=true; partyDetail=1; releaseConfirm=true;  check("partyconfirm");
   clearAll(); partyOpen=true; boxOpen=true; boxDetail=1;           check("boxsheet");
   clearAll(); partyOpen=true; boxOpen=true; boxDetail=1; releaseConfirm=true; check("boxconfirm");
+
+  // The transfer screen stands in for whatever was up while a pack streams in,
+  // so it flushes and names itself like any other -- and never covers a fight.
+  sdTransferAt = millis();
+  clearAll();                       check("transfer");
+  clearAll();                       crumbIs("transfer");
+  clearAll(); startBattle(9,50);    crumbIs("battle");
+  sdTransferAt = 0;
 
   clearAll();                       crumbIs("main");
   clearAll(); trainOpen=true;       crumbIs("train");

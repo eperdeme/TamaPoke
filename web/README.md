@@ -55,8 +55,12 @@ python3 -m http.server 8000
    against the CRC in `paks.json` and labels it Current, Update available,
    Installed / unversioned, or Not installed.
 3. **Select needed** excludes current packs. Install the remaining choices over
-   USB (progress bar, ~8–10 min per 40 MB). Close the step-1 install dialog
-   first: only one program can use the port at a time.
+   USB (progress bar; measured at about 6 minutes per 40 MB on v3.25 firmware,
+   and roughly two and a half times that on older firmware, which spent about two
+   seconds between every pair of files). Close the step-1 install dialog
+   first: only one program can use the port at a time. While files arrive the
+   board shows a transfer screen and pauses the game, which comes back by itself
+   a few seconds after the last file.
 4. Use **Download save** before an upgrade. **Restore save** accepts that same
    `.tpsave`, streams its `IMPORT` commands with flow control, and lets the
    firmware validate the whole checksum before NVS is changed.
@@ -127,6 +131,14 @@ installed; a standalone custom upload still invalidates all markers. The page
 also remembers exact hashes it verified during the current session and repairs
 those markers after a successful batch, which preserves correct status when
 installing several regions through older v3.16 firmware.
+
+Because of that shared file, adding a region changes EVERY pack's CRC while not
+one of their sprites changes. `pack_bundle.py` therefore compares each rebuilt
+pack with the one it replaces and, when every region file is byte-identical and
+the region's own thumbnails are too, records the old CRC under `equivalent` in
+`paks.json`. A card carrying an equivalent marker is shown as Current. Without
+this, the Galar and Paldea packs would have asked every player to re-send the
+other seven regions -- about 230 MB -- to change nothing on screen.
 
 ## Hosting the sprites
 

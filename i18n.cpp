@@ -50,7 +50,7 @@ static const char *const STRINGS[LANG_COUNT][STR_COUNT] = {
  "ELEGIDOS %u/%u", "LUCHAR", "BLOQUEADO", "POKEMON", "%s derrotado!", "MEDALLA NUEVA!", "VOL %u", "CAJA %u/%u", "cambiar con %s: elige hueco", "CAJA", "TRAER", "solo con un huevo", "COMBATE LAN", "CREAR", "UNIRSE", "buscando...", "listo!", "version distinta", "crear o unirse", "rival: %u mons", "el rival se fue", "esperando al rival...", "OTRA VEZ", "HUIR", "de que region viene el huevo", "%s +%u", "ya no puede entrenar mas", "ELIGE TU REGION", "RETIRAR", "Retirarla ya?", "la siguiente evoluciona un dia mas tarde", "evoluciona un dia mas tarde",   "FALTA PACK", "SOLTAR", "se va para siempre", "AL EQUIPO", "no se unira a tu equipo",
     "MOCHILA", "MOCHILA VACIA", "EXPLORAR", "Aparece un %s salvaje!", "%s ha huido!",
     "Has escapado!", "No has podido escapar!", "Lanzas una %s", "%s capturado!", "Se ha soltado!",
-    "Usas %s", "No ha hecho nada", "Encuentras %s!", "ACTIVAR", "CRIANDO", "LUZ %u", "REINICIAR", "Borrar todo?", "cada bicho, medalla y record se pierde", "TODOS", "CRIADOS", "EN MANO", "SHINY", "nada con este filtro", "HUECO", "NUMERO", "NIVEL", "AUDAZ", "FIRME", "VIVAZ", "RECIO", "ANIMOSO", "SERENO", "HOY", "%u/%u hoy", "cuidado hoy", "bien comido", "limpio", "contento", "descansado", "MEMORIA", "SECUENCIA %u", "MIRA", "TU TURNO", "ANIMO +%u", "A LA CAJA", },
+    "Usas %s", "No ha hecho nada", "Encuentras %s!", "ACTIVAR", "CRIANDO", "LUZ %u", "REINICIAR", "Borrar todo?", "cada bicho, medalla y record se pierde", "TODOS", "CRIADOS", "EN MANO", "SHINY", "nada con este filtro", "HUECO", "NUMERO", "NIVEL", "AUDAZ", "FIRME", "VIVAZ", "RECIO", "ANIMOSO", "SERENO", "HOY", "%u/%u hoy", "cuidado hoy", "bien comido", "limpio", "contento", "descansado", "MEMORIA", "SECUENCIA %u", "MIRA", "TU TURNO", "ANIMO +%u", "A LA CAJA", "RECIBIENDO SPRITES", "%u archivos", "el juego vuelve al terminar", },
   // ---------------- EN ----------------
   {
     "Evolving!", "Yum yum!", "It likes it!", "It's hungry!", "Needs a bath!",
@@ -93,7 +93,7 @@ static const char *const STRINGS[LANG_COUNT][STR_COUNT] = {
    "NEEDS PACK", "RELEASE", "gone for good", "TO PARTY", "it will not join your party",
     "BAG", "BAG EMPTY", "EXPLORE", "A wild %s appeared!", "%s fled!",
     "You got away!", "You could not get away!", "You threw a %s", "%s was caught!", "It broke free!",
-    "Used %s", "It had no effect", "Found %s!", "MAKE ACTIVE", "RAISING", "LIGHT %u", "RESET GAME", "Erase everything?", "every creature, badge and record is gone", "ALL", "RAISED", "CAUGHT", "SHINY", "nothing matches this filter", "SLOT", "NUMBER", "LEVEL", "BOLD", "STURDY", "BRISK", "HARDY", "EAGER", "CALM", "TODAY", "%u/%u today", "cared for today", "well fed", "clean", "happy", "rested", "MEMORY", "SEQUENCE %u", "WATCH", "YOUR TURN", "JOY +%u", "TO BOX", },
+    "Used %s", "It had no effect", "Found %s!", "MAKE ACTIVE", "RAISING", "LIGHT %u", "RESET GAME", "Erase everything?", "every creature, badge and record is gone", "ALL", "RAISED", "CAUGHT", "SHINY", "nothing matches this filter", "SLOT", "NUMBER", "LEVEL", "BOLD", "STURDY", "BRISK", "HARDY", "EAGER", "CALM", "TODAY", "%u/%u today", "cared for today", "well fed", "clean", "happy", "rested", "MEMORY", "SEQUENCE %u", "WATCH", "YOUR TURN", "JOY +%u", "TO BOX", "RECEIVING SPRITES", "%u files", "the game resumes when done", },
   // ---------------- FR ----------------
   {
     "Il evolue!", "Miam miam!", "Il aime ca!", "Il a faim!", "Besoin d'un bain!",
@@ -135,7 +135,7 @@ static const char *const STRINGS[LANG_COUNT][STR_COUNT] = {
    "PACK REQUIS", "RELACHER", "parti pour de bon", "A L EQUIPE", "ne rejoindra pas l equipe",
     "SAC", "SAC VIDE", "EXPLORER", "Un %s sauvage apparait!", "%s a fui!",
     "Tu as pris la fuite!", "Impossible de fuir!", "Tu lances une %s", "%s est capture!", "Il s est libere!",
-    "Tu utilises %s", "Aucun effet", "Tu trouves %s!", "RENDRE ACTIF", "EN ELEVAGE", "LUMIERE %u", "REINITIALISER", "Tout effacer?", "chaque creature, badge et record est perdu", "TOUS", "ELEVES", "EN MAIN", "SHINY", "rien avec ce filtre", "CASE", "NUMERO", "NIVEAU", "AUDACE", "SOLIDE", "VIF", "ROBUSTE", "ARDENT", "CALME", "AUJOURD HUI", "%u/%u aujourd hui", "soigne aujourd hui", "bien nourri", "propre", "content", "repose", "MEMOIRE", "SEQUENCE %u", "REGARDE", "A TOI", "JOIE +%u", "A LA BOITE", },
+    "Tu utilises %s", "Aucun effet", "Tu trouves %s!", "RENDRE ACTIF", "EN ELEVAGE", "LUMIERE %u", "REINITIALISER", "Tout effacer?", "chaque creature, badge et record est perdu", "TOUS", "ELEVES", "EN MAIN", "SHINY", "rien avec ce filtre", "CASE", "NUMERO", "NIVEAU", "AUDACE", "SOLIDE", "VIF", "ROBUSTE", "ARDENT", "CALME", "AUJOURD HUI", "%u/%u aujourd hui", "soigne aujourd hui", "bien nourri", "propre", "content", "repose", "MEMOIRE", "SEQUENCE %u", "REGARDE", "A TOI", "JOIE +%u", "A LA BOITE", "RECEPTION DES SPRITES", "%u fichiers", "le jeu reprend a la fin", },
   // ---------------- DE ----------------
   {
     "Entwickelt sich!", "Mampf mampf!", "Gefaellt ihm!", "Hat Hunger!", "Braucht ein Bad!",
@@ -177,7 +177,7 @@ static const char *const STRINGS[LANG_COUNT][STR_COUNT] = {
    "PACK FEHLT", "FREILASSEN", "fuer immer weg", "INS TEAM", "kommt nicht ins team",
     "BEUTEL", "BEUTEL LEER", "ERKUNDEN", "Ein wildes %s erscheint!", "%s ist geflohen!",
     "Du bist entkommen!", "Flucht gescheitert!", "Du wirfst einen %s", "%s gefangen!", "Es ist entkommen!",
-    "%s benutzt", "Keine Wirkung", "%s gefunden!", "AKTIV MACHEN", "WIRD AUFGEZOGEN", "LICHT %u", "ZURUCKSETZEN", "Alles loschen?", "jedes Wesen, Orden und Rekord ist weg", "ALLE", "AUFGEZOGEN", "DABEI", "SHINY", "nichts mit diesem Filter", "PLATZ", "NUMMER", "LEVEL", "KUEHN", "ROBUST", "FLINK", "ZAEH", "EIFRIG", "RUHIG", "HEUTE", "%u/%u heute", "heute gepflegt", "gut genaehrt", "sauber", "gluecklich", "ausgeruht", "MERKEN", "FOLGE %u", "SCHAU", "DU BIST DRAN", "FREUDE +%u", "IN DIE BOX", },
+    "%s benutzt", "Keine Wirkung", "%s gefunden!", "AKTIV MACHEN", "WIRD AUFGEZOGEN", "LICHT %u", "ZURUCKSETZEN", "Alles loschen?", "jedes Wesen, Orden und Rekord ist weg", "ALLE", "AUFGEZOGEN", "DABEI", "SHINY", "nichts mit diesem Filter", "PLATZ", "NUMMER", "LEVEL", "KUEHN", "ROBUST", "FLINK", "ZAEH", "EIFRIG", "RUHIG", "HEUTE", "%u/%u heute", "heute gepflegt", "gut genaehrt", "sauber", "gluecklich", "ausgeruht", "MERKEN", "FOLGE %u", "SCHAU", "DU BIST DRAN", "FREUDE +%u", "IN DIE BOX", "EMPFANGE SPRITES", "%u Dateien", "danach geht es weiter", },
   // ---------------- IT ----------------
   {
     "Si evolve!", "Gnam gnam!", "Gli piace!", "Ha fame!", "Vuole un bagno!",
@@ -219,7 +219,7 @@ static const char *const STRINGS[LANG_COUNT][STR_COUNT] = {
    "MANCA PACK", "LIBERA", "via per sempre", "AL GRUPPO", "non entrera nel gruppo",
     "ZAINO", "ZAINO VUOTO", "ESPLORA", "Appare un %s selvatico!", "%s e fuggito!",
     "Sei riuscito a fuggire!", "Non sei riuscito a fuggire!", "Lanci una %s", "%s catturato!", "Si e liberato!",
-    "Usi %s", "Nessun effetto", "Trovi %s!", "RENDI ATTIVO", "IN ALLEVAMENTO", "LUCE %u", "AZZERA", "Cancellare tutto?", "ogni creatura, medaglia e record va perso", "TUTTI", "ALLEVATI", "CON TE", "SHINY", "nulla con questo filtro", "POSTO", "NUMERO", "LIVELLO", "AUDACE", "SOLIDO", "LESTO", "TENACE", "ARDITO", "CALMO", "OGGI", "%u/%u oggi", "curato oggi", "ben nutrito", "pulito", "contento", "riposato", "MEMORIA", "SEQUENZA %u", "GUARDA", "TOCCA A TE", "GIOIA +%u", "NEL BOX", },
+    "Usi %s", "Nessun effetto", "Trovi %s!", "RENDI ATTIVO", "IN ALLEVAMENTO", "LUCE %u", "AZZERA", "Cancellare tutto?", "ogni creatura, medaglia e record va perso", "TUTTI", "ALLEVATI", "CON TE", "SHINY", "nulla con questo filtro", "POSTO", "NUMERO", "LIVELLO", "AUDACE", "SOLIDO", "LESTO", "TENACE", "ARDITO", "CALMO", "OGGI", "%u/%u oggi", "curato oggi", "ben nutrito", "pulito", "contento", "riposato", "MEMORIA", "SEQUENZA %u", "GUARDA", "TOCCA A TE", "GIOIA +%u", "NEL BOX", "RICEZIONE SPRITE", "%u file", "il gioco riprende alla fine", },
   // ---------------- PT ----------------
   {
     "Evoluindo!", "Nham nham!", "Ele gosta!", "Esta com fome!", "Precisa de banho!",
@@ -261,7 +261,7 @@ static const char *const STRINGS[LANG_COUNT][STR_COUNT] = {
    "FALTA PACK", "SOLTAR", "vai para sempre", "A EQUIPA", "nao entrara na equipa",
     "MOCHILA", "MOCHILA VAZIA", "EXPLORAR", "Um %s selvagem aparece!", "%s fugiu!",
     "Conseguiste fugir!", "Nao conseguiste fugir!", "Lancas uma %s", "%s capturado!", "Escapou!",
-    "Usas %s", "Sem efeito", "Encontras %s!", "TORNAR ATIVO", "A CRIAR", "LUZ %u", "REINICIAR", "Apagar tudo?", "cada criatura, medalha e record perde-se", "TODOS", "CRIADOS", "NA MAO", "SHINY", "nada com este filtro", "LUGAR", "NUMERO", "NIVEL", "AUDAZ", "FIRME", "AGIL", "RIJO", "ANIMADO", "CALMO", "HOJE", "%u/%u hoje", "cuidado hoje", "bem alimentado", "limpo", "contente", "descansado", "MEMORIA", "SEQUENCIA %u", "OLHA", "E A TUA VEZ", "ANIMO +%u", "PARA A CAIXA", },
+    "Usas %s", "Sem efeito", "Encontras %s!", "TORNAR ATIVO", "A CRIAR", "LUZ %u", "REINICIAR", "Apagar tudo?", "cada criatura, medalha e record perde-se", "TODOS", "CRIADOS", "NA MAO", "SHINY", "nada com este filtro", "LUGAR", "NUMERO", "NIVEL", "AUDAZ", "FIRME", "AGIL", "RIJO", "ANIMADO", "CALMO", "HOJE", "%u/%u hoje", "cuidado hoje", "bem alimentado", "limpo", "contente", "descansado", "MEMORIA", "SEQUENCIA %u", "OLHA", "E A TUA VEZ", "ANIMO +%u", "PARA A CAIXA", "A RECEBER SPRITES", "%u ficheiros", "o jogo volta no fim", },
 };
 
 // Nombres de medalla en sus tres longitudes [idioma][medalla].

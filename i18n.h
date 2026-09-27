@@ -172,6 +172,8 @@ enum StrId : uint8_t {
   S_MEMO_GO,        // ...and now repeat it
   S_PLUS_JOY_FMT,   // "JOY +%u", the reward
   S_BOX_PUT,        // party detail sheet: move this creature into the box
+  // shown while a sprite pack streams in over USB
+  S_XFER, S_XFER_FMT, S_XFER_HINT,
   STR_COUNT
 };
 

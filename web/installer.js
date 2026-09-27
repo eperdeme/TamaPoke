@@ -7,6 +7,14 @@ const titleCase = (value) => value.charAt(0).toUpperCase() + value.slice(1);
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const PACK_QUERY_TIMEOUT_MS = 20000;
 const PACK_COMMIT_TIMEOUT_MS = 30000;
+// Web Serial defaults to a 255-byte buffer, which splits every 2 KB block into
+// nine hand-offs between the page and the browser.
+const SERIAL_OPTIONS = { baudRate: 115200, bufferSize: 16384 };
+// The board acks each 2 KB block. Three in flight hide the round trip behind the
+// SD write, and that is safe on every firmware: all have an 8 KB receive buffer,
+// and the board's USB driver DROPS what does not fit rather than pushing back.
+const PUT_BLOCK = 2048;
+const PUT_WINDOW = 3;
 
 let editions = [];
 let packs = {};
@@ -219,6 +227,14 @@ function sortedPacks() {
   return Object.entries(packs).sort((left, right) => left[1].index - right[1].index);
 }
 
+// `equivalent` lists older builds of a pack whose sprites are byte-identical to
+// this one (tools/pack_bundle.py proves it). They differ only in the shared
+// thumbs.bin, which every pack carries, so re-sending one changes nothing it draws.
+function packIsCurrent(meta, installed) {
+  return installed === meta.crc32.toLowerCase()
+    || (meta.equivalent || []).some((crc) => crc.toLowerCase() === installed);
+}
+
 function renderPacks() {
   const host = byId('regions');
   host.textContent = '';
@@ -389,7 +405,7 @@ function statusFor(meta) {
   if (!packProtocol) return { text: 'Version unknown', kind: 'update', needed: false };
   if (!sdAvailable) return { text: 'No SD card', kind: 'update', needed: false };
   const installed = installedPacks.get(meta.index) || 'missing';
-  if (installed === meta.crc32.toLowerCase()) return { text: 'Current', kind: 'current', needed: false };
+  if (packIsCurrent(meta, installed)) return { text: 'Current', kind: 'current', needed: false };
   if (installed === 'legacy') return { text: 'Installed / unversioned', kind: 'update', needed: false };
   if (/^[0-9a-f]{8}$/.test(installed)) return { text: 'Update available', kind: 'update', needed: true };
   return { text: 'Not installed', kind: 'missing', needed: true };
@@ -468,11 +484,11 @@ async function queryInstalledPacks() {
       if (match) installedPacks.set(Number(match[1]), match[2].toLowerCase());
     }
     for (const [, meta] of sortedPacks()) {
-      if (installedPacks.get(meta.index) === meta.crc32.toLowerCase())
-        verifiedPacks.set(meta.index, meta.crc32.toLowerCase());
+      const installed = installedPacks.get(meta.index);
+      if (packIsCurrent(meta, installed)) verifiedPacks.set(meta.index, installed);
     }
     if (sdAvailable) {
-      const current = sortedPacks().filter((entry) => installedPacks.get(entry[1].index) === entry[1].crc32.toLowerCase()).length;
+      const current = sortedPacks().filter((entry) => packIsCurrent(entry[1], installedPacks.get(entry[1].index))).length;
       log(`SD inspected: ${current} of ${Object.keys(packs).length} published packs are current.`);
     } else {
       log('The board reports no mounted microSD card.');
@@ -534,8 +550,16 @@ function verifyPak(meta, buffer) {
 async function sendOne(name, data) {
   await writeLine(`PUT ${name} ${data.length}`);
   if ((await waitForAny(['OK', 'ERR'])) !== 'OK') return false;
-  for (let offset = 0; offset < data.length; offset += 2048) {
-    await writer.write(data.slice(offset, offset + 2048));
+  let unacked = 0;
+  for (let offset = 0; offset < data.length; offset += PUT_BLOCK) {
+    if (unacked === PUT_WINDOW) {
+      if ((await waitForAny(['#', 'ERR'])) !== '#') return false;
+      unacked--;
+    }
+    await writer.write(data.slice(offset, offset + PUT_BLOCK));
+    unacked++;
+  }
+  for (; unacked > 0; unacked--) {
     if ((await waitForAny(['#', 'ERR'])) !== '#') return false;
   }
   return (await waitForAny(['DONE', 'ERR'], 30000)) === 'DONE';
@@ -547,7 +571,9 @@ async function sendOneRetrying(name, data) {
     if (attempt < 3) {
       log(`Retrying ${name} (${attempt}/2)`);
       readQueue = [];
-      await pause(250);
+      // Longer than the board's 1 s line timeout, so blocks still in flight from
+      // the failed attempt are read off as junk before the retry's PUT arrives.
+      await pause(1200);
     }
   }
   return false;
@@ -861,7 +887,7 @@ async function backupBeforeInstall() {
     if (!writer) {
       log('Connecting to read the current save...');
       port = await navigator.serial.requestPort();
-      await port.open({ baudRate: 115200 });
+      await port.open(SERIAL_OPTIONS);
       reader = port.readable.getReader();
       writer = port.writable.getWriter();
       readCarry = '';
@@ -924,7 +950,7 @@ byId('connect').addEventListener('click', async () => {
   try {
     setBusy(true);
     port = await navigator.serial.requestPort();
-    await port.open({ baudRate: 115200 });
+    await port.open(SERIAL_OPTIONS);
     reader = port.readable.getReader();
     writer = port.writable.getWriter();
     readCarry = '';

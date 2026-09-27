@@ -72,3 +72,8 @@ extern bool sdDirty;  // true tras recibir archivos: recargar sprite
 // until the board was rebooted, which looked exactly like the download failing.
 // The main loop rescans when this is set; the transfer itself is never delayed.
 extern bool sdArtDirty;
+// millis() when the last PUT finished, 0 once its pack commits. While recent, the
+// sketch's transferMode() stands the game aside so the board spends its time on the card.
+extern uint32_t sdTransferAt;
+extern uint16_t sdTransferFiles;   // files received in the current transfer
+#define SD_TRANSFER_IDLE_MS 3000

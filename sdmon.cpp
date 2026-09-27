@@ -7,6 +7,8 @@
 bool sdReady = false;
 bool sdDirty = false;
 bool sdArtDirty = false;
+uint32_t sdTransferAt = 0;
+uint16_t sdTransferFiles = 0;
 SdThumbs thumbs;
 
 bool PmdMon::load(int16_t dexNum, bool shiny) {
@@ -14,7 +16,9 @@ bool PmdMon::load(int16_t dexNum, bool shiny) {
   // everything from 256 up wrapped into Kanto: MARSHTOMP (258) opened
   // p002.bin and drew an IVYSAUR. Same trap that caught DexEntry::evolvesTo
   // and TrainerMon::dex when the expansion landed.
-  if (dexNum < 1 || dexNum > 999) return false;
+  // DEX_COUNT, not 999: the emulator's twin was fixed and this was not, so
+  // dex 1000-1025 never loaded on a board.
+  if (dexNum < 1 || dexNum > DEX_COUNT) return false;
   unload();
   if (!sdReady) return false;
 
@@ -166,7 +170,7 @@ bool sdBegin() {
 }
 
 bool SdMon::load(int16_t dexNum, bool shiny) {
-  if (dexNum < 1 || dexNum > 999) return false;
+  if (dexNum < 1 || dexNum > DEX_COUNT) return false;
   unload();
   if (!sdReady) return false;
 
@@ -259,7 +263,8 @@ static bool validPackRegion(int region) {
 static int8_t activePackRegion = -1;
 
 static void invalidatePackMarker(uint8_t region) {
-  if (!validPackRegion(region)) return;
+  // PACK BEGIN already removed the active region's marker, and only COMMIT recreates it.
+  if (!validPackRegion(region) || region == activePackRegion) return;
   char marker[28];
   packMarkerPath(region, marker, sizeof(marker));
   SD_MMC.remove(marker);
@@ -292,6 +297,7 @@ bool sdSerialCommand(const String &line) {
       return true;
     }
     if (!path.startsWith("/")) path = "/" + path;
+    if (!sdTransferAt || millis() - sdTransferAt >= SD_TRANSFER_IDLE_MS) sdTransferFiles = 0;
     invalidatePackForPath(path);
     File f = SD_MMC.open(path, FILE_WRITE);
     if (!f) {
@@ -312,12 +318,18 @@ bool sdSerialCommand(const String &line) {
     }
     f.close();
     Serial.setTimeout(1000);
-    sdDirty = (remaining == 0);
+    // Set, never cleared: during a transfer the reload waits, and a later failed PUT
+    // must not cancel it.
+    if (remaining == 0) sdDirty = true;
     // A pack file just landed, so which regions are playable may have changed.
     // Flag it rather than rescanning here: this runs between the last data block
     // and the DONE the host is waiting on, and 15 file opens belong nowhere near
     // that. loop() picks it up.
-    if (remaining == 0) sdArtDirty = true;
+    if (remaining == 0) {
+      sdArtDirty = true;
+      sdTransferFiles++;
+    }
+    sdTransferAt = millis();
     Serial.println(remaining == 0 ? "DONE" : "ERR");
     return true;
   } else if (line == "PACKS") {
@@ -355,6 +367,7 @@ bool sdSerialCommand(const String &line) {
     Serial.println("DONE");
     return true;
   } else if (line.startsWith("PACK COMMIT ")) {
+    sdTransferAt = 0;   // the stream this pack arrived in is over, whatever happens next
     int region = -1;
     char crc[9] = {0}, extra = 0;
     int fields = sscanf(line.c_str() + 12, "%d %8s %c", &region, crc, &extra);

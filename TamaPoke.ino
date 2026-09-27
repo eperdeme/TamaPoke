@@ -264,7 +264,7 @@ enum : uint8_t {
   SCR_STARTER = 0, SCR_REGION, SCR_GALLERY, SCR_DEXPICK, SCR_MOVEPICK, SCR_BOX,
   SCR_PARTY, SCR_KEYBOARD, SCR_CARD, SCR_PLAYER, SCR_CLOCK, SCR_GYM, SCR_GYMPICK,
   SCR_EXPLORE, SCR_LAN, SCR_PICK, SCR_BATTLE, SCR_WIN, SCR_LEARN, SCR_TRAIN, SCR_MENU,
-  SCR_BAGSCR, SCR_GAME, SCR_MAIN, SCR_COUNT
+  SCR_BAGSCR, SCR_GAME, SCR_MAIN, SCR_TRANSFER, SCR_COUNT
 };
 extern const char *const SCREEN_NAME[SCR_COUNT];   // const is internal linkage in C++
 
@@ -342,7 +342,7 @@ const char *const SCREEN_NAME[SCR_COUNT] = {
   "starter", "region", "gallery", "dexpick", "movepick", "box",
   "party", "keyboard", "card", "player", "clock", "gym", "gympick",
   "explore", "lan", "pick", "battle", "win", "learn", "train", "menu",
-  "bag", "minigame", "main"
+  "bag", "minigame", "main", "transfer"
 };
 
 // Badge art for a region, or nullptr when that region has none yet.
@@ -1130,9 +1130,19 @@ void setup() {
   lastInteract = millis();
 }
 
+// A sprite pack is streaming in over USB. The game stands aside -- no game frames,
+// no taps, no per-file sprite reload or region rescan -- so the board spends its
+// time on the card. Never over a fight or a minigame: their render paths pump the
+// link and apply training, so those keep the old, slower behaviour.
+bool transferMode() {
+  return sdTransferAt && millis() - sdTransferAt < SD_TRANSFER_IDLE_MS &&
+         !battleOpen && !lan.live() && !gameOpen && !sackOpen && !spdOpen && !memoOpen;
+}
+
 // carga/descarga el sprite de SD cuando cambia la especie
 void ensureMon() {
-  if (pet.speciesId == monFor && monShinyFor == pet.shiny && !sdDirty) return;
+  bool sdReload = sdDirty && !transferMode();
+  if (pet.speciesId == monFor && monShinyFor == pet.shiny && !sdReload) return;
   sdDirty = false;
   // A NEW CREATURE IS ON THE PANEL: let it speak. This one hook covers hatching,
   // evolving and swapping the focused creature, because all three arrive here --
@@ -1190,8 +1200,9 @@ void loop() {
   // computed once in sdBegin(), so without this the region a player just spent ten
   // minutes downloading stayed greyed out reading NEEDS PACK until they rebooted --
   // indistinguishable, from the player's side, from the download having failed.
-  // Quietly, because the host is still parsing this serial stream.
-  if (sdArtDirty) {
+  // Quietly, because the host is still parsing this serial stream -- and once per
+  // transfer rather than after every file, which cost 27 lookups in /mons each time.
+  if (sdArtDirty && !transferMode()) {
     sdArtDirty = false;
     sdScanRegionArt(false);
   }
@@ -1286,6 +1297,8 @@ void loop() {
   uint32_t period = (gameOpen || sackOpen || spdOpen || memoOpen) ? 85 : 100;
   if (gBrightNow == 0 && !battleOpen && !gameOpen && !sackOpen && !spdOpen && !memoOpen)
     period = 500;
+  // The one pause, and transferMode() already excludes the fights and minigames above.
+  if (transferMode()) period = 1000;
   if (now - lastRender >= period) {
     lastRender = now;
     render();
@@ -1700,7 +1713,7 @@ void handleTouch() {
     rimA0 = uiRimAngle(x, y);
     rimSteps = 0;
     rimMoved = false;
-    swallowGesture = (dimStage > 0) || screenOff;  // si estaba a oscuras, solo despierta
+    swallowGesture = (dimStage > 0) || screenOff || transferMode();  // waking or mid-transfer: no action
     if (screenOff) pet.setScreenOff(false);        // waking the screen wakes it
     screenOff = false;
     lastInteract = millis();
@@ -2763,6 +2776,7 @@ RTC_NOINIT_ATTR uint32_t gCrumbHeap;
 
 // Which screen is on the panel RIGHT NOW, in the same order render() tests.
 uint8_t uiCurrentScreen() {
+  if (transferMode()) return SCR_TRANSFER;
   if (pet.awaitingStarter()) return starterRegionDone ? SCR_STARTER : SCR_REGION;
   if (galleryOpen) return galleryPick ? SCR_DEXPICK : SCR_GALLERY;
   if (movePickOpen) return SCR_MOVEPICK;
@@ -3106,8 +3120,31 @@ void bootReport() {
   gCrumbMagic = 0;   // one report per crash, not on every later boot
 }
 
+// Dark on purpose: it can sit on an AMOLED for the length of a whole install.
+void renderTransfer() {
+  gfx->fillScreen(RGB565_BLACK);
+  gfx->setTextColor(UI_INK_NIGHT);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - (int)strlen(T(S_XFER)) * 6, 160);
+  gfx->print(T(S_XFER));
+  char n[32];
+  snprintf(n, sizeof(n), T(S_XFER_FMT), (unsigned)sdTransferFiles);
+  gfx->setTextSize(3);
+  gfx->setCursor(CX - (int)strlen(n) * 9, 212);
+  gfx->print(n);
+  gfx->setTextColor(UI_SCROLL_NIGHT);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - (int)strlen(T(S_XFER_HINT)) * 6, 290);
+  gfx->print(T(S_XFER_HINT));
+  gfx->flush();
+}
+
 void render() {
   crumbDrop();   // so a crash can name the screen it happened on
+  if (transferMode()) {
+    renderTransfer();
+    return;
+  }
   if (pet.awaitingStarter()) {  // primera partida: region y luego inicial
     if (!starterRegionDone) renderRegionPick(RPICK_FOR_START);
     else renderStarterSelect();

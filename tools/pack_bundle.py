@@ -41,7 +41,17 @@ GITHUB_LIMIT = 100 * 1024 * 1024
 INDEX = os.path.join(WEB, 'paks.json')
 
 
-def write_index():
+def crc_of(blob):
+    return format(zlib.crc32(blob) & 0xFFFFFFFF, '08x')
+
+
+def read_index():
+    if not os.path.exists(INDEX):
+        return {}
+    return json.load(open(INDEX)).get('regions', {})
+
+
+def write_index(equivalent=None):
     """Describe every pack that exists, for the installer to verify against.
 
     Separate from write_pak() and callable on its own, because it must be
@@ -52,7 +62,11 @@ def write_index():
     The sizes here are what the buttons are LABELLED with. They used to be typed
     into the HTML by hand and had already drifted: Alola read "~24 MB" for a
     27.5 MB pack. Derive it; never restate it.
+
+    `equivalent` comes from main(); called on its own, a region keeps the list
+    it already had only if the file is still exactly the one it was proved for.
     """
+    previous = read_index()
     regions = {}
     for index, (name, _lo, _hi) in enumerate(REGIONS):
         path = os.path.join(WEB, f'sprites-{name}.pak')
@@ -60,12 +74,20 @@ def write_index():
             continue
         blob = open(path, 'rb').read()
         count = struct.unpack('<H', blob[4:6])[0] if blob[:4] == b'TPAK' else 0
+        crc = crc_of(blob)
         regions[name] = {
             'index': index,
             'bytes': len(blob),
-            'crc32': format(zlib.crc32(blob) & 0xFFFFFFFF, '08x'),
+            'crc32': crc,
             'sprites': count,
         }
+        if equivalent is not None and name in equivalent:
+            same = equivalent[name]
+        else:
+            old = previous.get(name, {})
+            same = old.get('equivalent', []) if old.get('crc32') == crc else []
+        if same:
+            regions[name]['equivalent'] = same
     with open(INDEX, 'w') as f:
         json.dump({'schema': 1, 'regions': regions}, f, indent=2)
         f.write('\n')
@@ -77,6 +99,65 @@ def dex_of(path):
     base = os.path.basename(path)
     digits = ''.join(c for c in base if c.isdigit())
     return int(digits) if digits else 0
+
+
+def parse_pak(blob):
+    count = struct.unpack('<H', blob[4:6])[0]
+    p, index = 6, []
+    for _ in range(count):
+        n = blob[p]
+        name = blob[p + 1:p + 1 + n].decode()
+        index.append((name, struct.unpack('<I', blob[p + 1 + n:p + 5 + n])[0]))
+        p += 5 + n
+    files = {}
+    for name, size in index:
+        files[name] = blob[p:p + size]
+        p += size
+    return files
+
+
+def thumb(tpth, dex):
+    """One species' blob out of a TPTH thumbs.bin, or None past its end."""
+    count = struct.unpack('<H', tpth[4:6])[0]
+    if not 1 <= dex <= count:
+        return None
+    offs = struct.unpack_from(f'<{count}I', tpth, 6)
+    return tpth[offs[dex - 1]:offs[dex] if dex < count else len(tpth)]
+
+
+def draws_the_same(old, new, lo, hi):
+    """Would a card holding `old` show exactly what `new` would, for this region?
+
+    Every region file must be byte-identical. The shared thumbs.bin may differ --
+    it grows each time a region is added -- but not in this region's own entries.
+    """
+    a, b = parse_pak(old), parse_pak(new)
+    for name in set(a) | set(b):
+        if dex_of(name) or not name.endswith('thumbs.bin'):
+            if a.get(name) != b.get(name):
+                return False
+        elif name not in a or name not in b or any(
+                thumb(a[name], d) != thumb(b[name], d) for d in range(lo, hi + 1)):
+            return False
+    return True
+
+
+def carried_equivalents(entry, old, new, lo, hi):
+    """Older CRCs a card can hold for this region and still draw the current pack.
+
+    This is what stops a new region from telling every player to re-send all the
+    others: adding one rewrites thumbs.bin, so every pack's CRC changes while not
+    one sprite does.
+    """
+    if old is None:
+        return []
+    old_crc = crc_of(old)
+    prior = entry.get('equivalent', []) if entry and entry.get('crc32') == old_crc else []
+    if old == new:
+        return prior
+    if draws_the_same(old, new, lo, hi):
+        return prior + ([old_crc] if old_crc not in prior else [])
+    return []
 
 
 def write_pak(out, files):
@@ -110,6 +191,8 @@ def main():
     # sprite in the gallery, and no silhouettes. It costs 415 KB against a 27-40
     # MB pack, so there is nothing to weigh up.
     shared = [f for f in files if dex_of(f) == 0]
+    previous = read_index()
+    equivalent = {}
     made = 0
     for name, lo, hi in REGIONS:
         mine = [f for f in files if lo <= dex_of(f) <= hi]
@@ -119,7 +202,10 @@ def main():
             print(f'{name}: no sprites packed yet, skipped')
             continue
         out = os.path.join(WEB, f'sprites-{name}.pak')
+        old = open(out, 'rb').read() if os.path.exists(out) else None
         total = write_pak(out, mine)
+        equivalent[name] = carried_equivalents(previous.get(name), old,
+                                               open(out, 'rb').read(), lo, hi)
         size = os.path.getsize(out)
         flag = '  !! OVER GITHUB LIMIT' if size > GITHUB_LIMIT else ''
         print(f'{os.path.normpath(out)}: {len(mine)} sprites, '
@@ -129,7 +215,7 @@ def main():
         raise SystemExit('nothing packed')
     packed = sum(1 for _ in glob.glob(os.path.join(MONS, '*.bin')))
     print(f'{len(shared)} shared file(s) went into EVERY pack, so any single region works alone')
-    write_index()
+    write_index(equivalent)
 
 
 if __name__ == '__main__':

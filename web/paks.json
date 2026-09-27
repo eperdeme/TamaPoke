@@ -3,45 +3,78 @@
   "regions": {
     "kanto": {
       "index": 0,
-      "bytes": 42440298,
-      "crc32": "4c625d85",
-      "sprites": 303
+      "bytes": 42650410,
+      "crc32": "8d98e960",
+      "sprites": 303,
+      "equivalent": [
+        "4c625d85"
+      ]
     },
     "johto": {
       "index": 1,
-      "bytes": 28989371,
-      "crc32": "b89e10d2",
-      "sprites": 201
+      "bytes": 29199483,
+      "crc32": "9bf97d86",
+      "sprites": 201,
+      "equivalent": [
+        "b89e10d2"
+      ]
     },
     "hoenn": {
       "index": 2,
-      "bytes": 40490974,
-      "crc32": "0cd83ee2",
-      "sprites": 271
+      "bytes": 40701086,
+      "crc32": "a8c550e7",
+      "sprites": 271,
+      "equivalent": [
+        "0cd83ee2"
+      ]
     },
     "sinnoh": {
       "index": 3,
-      "bytes": 34919634,
-      "crc32": "22ffc9a6",
-      "sprites": 215
+      "bytes": 35129746,
+      "crc32": "c988e64d",
+      "sprites": 215,
+      "equivalent": [
+        "22ffc9a6"
+      ]
     },
     "unova": {
       "index": 4,
-      "bytes": 42050748,
-      "crc32": "ed0d42b0",
-      "sprites": 286
+      "bytes": 42260860,
+      "crc32": "04c38a8b",
+      "sprites": 286,
+      "equivalent": [
+        "ed0d42b0"
+      ]
     },
     "kalos": {
       "index": 5,
-      "bytes": 22043168,
-      "crc32": "9c0d2b13",
-      "sprites": 143
+      "bytes": 22253280,
+      "crc32": "ed45317b",
+      "sprites": 143,
+      "equivalent": [
+        "9c0d2b13"
+      ]
     },
     "alola": {
       "index": 6,
-      "bytes": 28884786,
-      "crc32": "2978d379",
-      "sprites": 167
+      "bytes": 29094898,
+      "crc32": "15bc4bdf",
+      "sprites": 167,
+      "equivalent": [
+        "2978d379"
+      ]
+    },
+    "galar": {
+      "index": 7,
+      "bytes": 27383884,
+      "crc32": "549d68ea",
+      "sprites": 175
+    },
+    "paldea": {
+      "index": 8,
+      "bytes": 30350014,
+      "crc32": "1d700be9",
+      "sprites": 198
     }
   }
 }

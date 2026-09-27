@@ -139,11 +139,10 @@ progression, battery (AXP2101) and PWR button, anti-burn-in dimming with a
 **sound (ES8311)**, **6 UI languages (English default)**, **starter choice on
 first run**, and a one-click **web installer**.
 
-All nine regions are in the dex and all nine now have a gym ladder. **Galar and
-Paldea have no sprite pack yet**, so they show as NEEDS PACK and stay out of the
-egg pool, the gym chooser and the Pokedex grid until one is built — the same
-gating every region has always used. A board with no microSD at all is
-unaffected: every region stays available, exactly as before.
+All nine regions are in the dex, and all nine have a gym ladder and a sprite pack.
+A region whose pack is not on the card shows as NEEDS PACK and stays out of the
+egg pool, the gym chooser and the Pokedex grid until it is installed. A board with
+no microSD at all is unaffected: every region stays available, exactly as before.
 
 Pending: 3D case, soak test. See **Roadmap**.
 
@@ -892,19 +891,12 @@ To test fast: lower `PET_TICK_MS`, `MINUTES_PER_LEVEL` and `FAREWELL_AGE_MIN` in
 ## Roadmap
 
 - **Soak test** 24–48 h (instrumentation ready: `HEALTH` command/heartbeat).
-- **Galar and Paldea sprite packs** — the data and both gym ladders are in; the
-  art needs a `pack_pmd.py` run. Until then both regions read NEEDS PACK and
-  their ladders are not offered.
 - **Cries by ear.** The per-species chirps are synthesised from each creature's
   own typing and base stats, and `cry_test` proves all 1025 are audible, bounded,
   distinct and deterministic — but no test can say whether they *sound* right.
   That needs `tamapoke-emu --wav` and a board.
-- **Galar and Paldea gym ladders** — `trainers.h` stops at seven regions. There
-  is no pret disassembly for either, so they cannot be verified the way
-  `verify_rosters.py` checks the others; writing them from memory is how the
-  first Johto and Hoenn ladders ended up with ten errors.
 
-*(Done: wild encounters, catching and the bag; 3D-printed case [published on MakerWorld](https://makerworld.com/es/models/2937822-tamapoke-a-pokemon-pokeball-tamagotchi); repo public with the browser installer + one-click sprite bundle.)*
+*(Done: Galar and Paldea gym ladders and sprite packs; wild encounters, catching and the bag; 3D-printed case [published on MakerWorld](https://makerworld.com/es/models/2937822-tamapoke-a-pokemon-pokeball-tamagotchi); repo public with the browser installer + one-click sprite bundle.)*
 
 ## Community forks
 

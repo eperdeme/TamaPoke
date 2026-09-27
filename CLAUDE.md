@@ -46,7 +46,7 @@ Nobody noticed for a reason worth understanding:
   art-less ones** — strictly worse than leaving them stale, and invisible until
   somebody opens the README. It refuses to run now, and says what to run instead.
 - **`tools/unpack_bundle.py` is the fast path**, and it exists so this is possible
-  at all: it restores 1580 sprite files from the committed `web/sprites-*.pak`
+  at all: it restores 1951 sprite files from the committed `web/sprites-*.pak`
   with no network, and the crc32s come back matching `paks.json`. `pack_pmd.py`
   re-fetches ~40 MB per region and is only needed when adding a region.
 - **A failed shot used to be a skip.** `make_screens.sh` did `continue`, leaving
@@ -246,6 +246,7 @@ second caller has its own copy of it, and nobody notices until a player does.
 | evolution threshold | `canEvolveNow()` | `renderCardProgress()` | the card would promise an evolution that never came |
 | a region needs its pack | `sdBegin()`, at mount | files arriving later over `PUT` | the pack you just downloaded stayed greyed out until a reboot |
 | the 3 s hold is for the pet | a list of screens to EXCLUDE | every screen not on that list | holding a PARTY SLOT offered to release the LIVE pet |
+| sprites load up to `DEX_COUNT` | the emulator's `PmdMon::load()` | the firmware's, in `sdmon.cpp` (`> 999`) | dex 1000-1025 never drew on a board while `sprite_test` passed |
 
 **A guard written as a list of EXCLUSIONS is this trap pre-loaded.** The hold
 was gated by `!galleryOpen && !cardOpen && !kbOpen && !clockOpen`, so every

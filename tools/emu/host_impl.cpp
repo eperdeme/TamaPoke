@@ -22,6 +22,9 @@ bool sdDirty = false;
 // symbols are referenced from loop(), so they have to exist to link.
 bool sdArtDirty = false;
 void sdScanRegionArt(bool) {}
+// No PUT path here either; transfer_test sets sdTransferAt to stand in for one.
+uint32_t sdTransferAt = 0;
+uint16_t sdTransferFiles = 0;
 SdThumbs thumbs;
 
 static uint8_t *slurp(const std::string &path, uint32_t *size) {
