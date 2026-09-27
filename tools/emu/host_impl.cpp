@@ -22,6 +22,8 @@ bool sdDirty = false;
 // symbols are referenced from loop(), so they have to exist to link.
 bool sdArtDirty = false;
 void sdScanRegionArt(bool) {}
+// Nothing sets it here, as there is no PUT; transfer_test sets it by hand.
+bool sdThumbsDirty = false;
 // No PUT path here either; transfer_test sets sdTransferAt to stand in for one.
 uint32_t sdTransferAt = 0;
 uint16_t sdTransferFiles = 0;
@@ -114,9 +116,12 @@ void PmdMon::unload() {
 
 bool SdThumbs::load() {
   uint32_t size = 0;
-  data = slurp(g_spriteDir + "/thumbs.bin", &size);
-  if (!data) { Serial.println("emu: no thumbs.bin"); return false; }
-  if (memcmp(data, "TPTH", 4) != 0) { free(data); data = nullptr; return false; }
+  // The firmware's twin reads into a fresh buffer too, so a failed reload keeps the old one.
+  uint8_t *next = slurp(g_spriteDir + "/thumbs.bin", &size);
+  if (!next) { Serial.println("emu: no thumbs.bin"); return false; }
+  if (size < 6 || memcmp(next, "TPTH", 4) != 0) { free(next); return false; }
+  free(data);
+  data = next;
   memcpy(&count, data + 4, 2);
   loaded = true;
   Serial.printf("emu: thumbnails loaded: %u\n", count);
@@ -132,7 +137,7 @@ const uint8_t *SdThumbs::get(int16_t dex) const {
 
 bool SdMon::load(int16_t, bool) { return false; }   // legacy TPK1 path unused
 void SdMon::unload() { if (data) { free(data); data = nullptr; } loaded = false; }
-bool sdBegin() {
+bool sdBegin(bool) {
   Serial.printf("emu: sprites from %s\n", g_spriteDir.c_str());
   return true;
 }

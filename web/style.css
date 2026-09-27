@@ -1,3 +1,20 @@
+/* Self-hosted, SIL OFL 1.1 (licences in fonts/): fetching them from Google sent every
+   visitor's address there. Both are variable, so one file covers every weight used. */
+@font-face {
+  font-family: "DM Sans";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("fonts/dm-sans-latin.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Azeret Mono";
+  font-style: normal;
+  font-weight: 500 600;
+  font-display: swap;
+  src: url("fonts/azeret-mono-latin.woff2") format("woff2");
+}
+
 :root {
   --paper: #f4f1e8;
   --paper-deep: #e9e3d4;
@@ -174,6 +191,8 @@ h3 { margin-bottom: 6px; font-size: 17px; letter-spacing: 0; }
 .edition-option:hover, .pack-option:hover { border-color: var(--line-strong); }
 .edition-option.selected, .pack-option.selected { border-color: var(--red); background: #fff8f5; }
 .edition-option input, .pack-option input { position: absolute; opacity: 0; pointer-events: none; }
+/* The real radios and checkboxes are invisible, so keyboard focus is drawn on the card. */
+.edition-option:has(input:focus-visible), .pack-option:has(input:focus-visible) { outline: 3px solid var(--blue); outline-offset: 2px; }
 
 .edition-option label, .pack-option label {
   min-height: 92px;
@@ -267,7 +286,14 @@ h3 { margin-bottom: 6px; font-size: 17px; letter-spacing: 0; }
 .button-secondary { border-color: var(--line-strong); background: var(--surface); }
 .button-quiet { border-color: transparent; background: transparent; }
 .button-small { min-height: 44px; padding: 8px 10px; font-size: 13px; }
-.button-file { width: fit-content; }
+
+.status { margin-top: 14px; padding: 11px 14px; display: flex; align-items: center; justify-content: space-between; gap: 14px; border: 1px solid var(--line); border-left-width: 4px; border-radius: 5px; color: var(--ink); background: var(--surface); font-size: 14px; }
+.status > span { min-width: 0; }
+.status .button { flex: 0 0 auto; }
+.status-ok { border-color: #9fd1c9; border-left-color: var(--teal); background: var(--teal-soft); }
+.status-error { border-color: #dfa39d; border-left-color: var(--red); color: #7f211c; background: #fff0ed; }
+.status-warn { border-color: #e7c77f; border-left-color: var(--amber); background: var(--amber-soft); }
+.status-info { border-left-color: var(--blue); background: var(--blue-soft); }
 
 .install-note { margin-top: 22px; border-top: 1px solid var(--line); color: var(--ink-soft); font-size: 14px; }
 .install-note summary { padding: 16px 0 0; display: flex; align-items: center; gap: 9px; color: var(--ink); font-weight: 700; cursor: pointer; }
@@ -295,7 +321,8 @@ h3 { margin-bottom: 6px; font-size: 17px; letter-spacing: 0; }
 
 .custom-pack { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--line); display: flex; align-items: center; gap: 9px; color: var(--ink-soft); font-size: 13px; }
 .custom-pack svg { width: 17px; }
-.text-action { color: var(--blue); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.text-action { padding: 0; border: 0; background: none; color: var(--blue); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.text-action:disabled { color: var(--ink-soft); text-decoration: none; cursor: not-allowed; }
 
 .save-layout { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
 .save-layout > div { min-height: 190px; padding: 24px; }
@@ -322,6 +349,7 @@ h3 { margin-bottom: 6px; font-size: 17px; letter-spacing: 0; }
 .activity header { padding: 16px 18px; border-bottom: 1px solid #34403e; display: flex; align-items: center; justify-content: space-between; }
 .activity .eyebrow { color: #72c7be; }
 .activity h2 { font-size: 18px; }
+.activity-actions { display: flex; gap: 4px; }
 .activity pre { min-height: 110px; max-height: 280px; margin: 0; padding: 18px; overflow: auto; color: #bfd0ca; font: 12px/1.65 "Azeret Mono", monospace; white-space: pre-wrap; word-break: break-word; }
 .icon-button { width: 44px; min-height: 44px; padding: 0; border-color: transparent; color: #bfd0ca; background: transparent; }
 .icon-button:hover { background: #26312f; }
@@ -364,6 +392,7 @@ footer a:last-child { margin-left: auto; }
   .release-notes header { align-items: flex-start; flex-direction: column; gap: 8px; }
   .deploy-bar .button, .connect-strip .button, .flash-row esp-web-install-button, .flash-row .button { width: 100%; }
   .custom-pack { align-items: flex-start; flex-wrap: wrap; }
+  .status { flex-direction: column; align-items: flex-start; }
   footer { align-items: flex-start; flex-direction: column; }
   footer a:last-child { margin-left: 0; }
 }

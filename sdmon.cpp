@@ -1,12 +1,14 @@
 #include "sdmon.h"
 #include "pin_config.h"
 #include "pet.h"   // gRegionArt, REGIONS -- the mask this narrows
+#include "crc32.h"
 #include <FS.h>
 #include <SD_MMC.h>
 
 bool sdReady = false;
 bool sdDirty = false;
 bool sdArtDirty = false;
+bool sdThumbsDirty = false;
 uint32_t sdTransferAt = 0;
 uint16_t sdTransferFiles = 0;
 SdThumbs thumbs;
@@ -104,14 +106,17 @@ bool SdThumbs::load() {
     return false;
   }
   uint32_t size = f.size();
-  data = (uint8_t *)ps_malloc(size);
-  if (!data || f.read(data, size) != size || memcmp(data, "TPTH", 4) != 0) {
+  // A fresh buffer, so a reload that fails keeps the thumbnails already on screen.
+  uint8_t *next = size >= 6 ? (uint8_t *)ps_malloc(size) : nullptr;
+  if (!next || f.read(next, size) != size || memcmp(next, "TPTH", 4) != 0) {
     Serial.println("thumbs.bin invalido");
-    if (data) { free(data); data = nullptr; }
+    if (next) free(next);
     f.close();
     return false;
   }
   f.close();
+  free(data);
+  data = next;
   memcpy(&count, data + 4, 2);
   loaded = true;
   Serial.printf("miniaturas cargadas: %u (%u KB)\n", count, size / 1024);
@@ -156,15 +161,17 @@ void sdScanRegionArt(bool verbose) {
   gRegionArt = mask;
 }
 
-bool sdBegin() {
+bool sdBegin(bool formatIfUnreadable) {
   SD_MMC.setPins(SDMMC_CLK, SDMMC_CMD, SDMMC_DATA);
-  sdReady = SD_MMC.begin("/sdcard", true /* modo 1-bit */, true /* formatea si no monta */);
+  sdReady = SD_MMC.begin("/sdcard", true /* modo 1-bit */, formatIfUnreadable);
   if (sdReady) {
     Serial.printf("SD montada: %llu MB\n", SD_MMC.cardSize() / (1024ULL * 1024ULL));
     SD_MMC.mkdir("/mons");
     sdScanRegionArt();
   } else {
-    Serial.println("SD no detectada (el juego usa los sprites de flash)");
+    Serial.println(formatIfUnreadable
+                       ? "SD: no card, or it could not be formatted"
+                       : "SD: no card, or one this board cannot read (SD MOUNT FORMAT)");
   }
   return sdReady;
 }
@@ -245,10 +252,12 @@ void SdMon::unload() {
 // ---------------------------------------------------------------------------
 // Protocolo de carga por USB (para llenar la SD sin sacarla de la placa):
 //   PUT <ruta> <bytes>\n  + datos crudos   -> "OK" ... "DONE"
+//   SUM <ruta>\n                           -> "SUM <crc32> <bytes>" DONE, of the stored file
 //   LS\n                                   -> listado de /mons
 //   PACKS\n                                -> report each pack's state/version
 //   PACK BEGIN <region>\n                  -> invalidate before copying
 //   PACK COMMIT <region> <crc32>\n         -> record version after copying
+//   SD MOUNT [FORMAT]\n                    -> mount a card; FORMAT one it cannot read
 // Usar con tools/send_sd.py
 // ---------------------------------------------------------------------------
 
@@ -328,9 +337,46 @@ bool sdSerialCommand(const String &line) {
     if (remaining == 0) {
       sdArtDirty = true;
       sdTransferFiles++;
+      if (path == "/mons/thumbs.bin") sdThumbsDirty = true;
     }
     sdTransferAt = millis();
     Serial.println(remaining == 0 ? "DONE" : "ERR");
+    return true;
+  } else if (line.startsWith("SUM ")) {
+    // Read back off the card, so the installer can say what is ON it -- a failing or
+    // counterfeit card accepts every write -- and skip a file that is already right.
+    String path = line.substring(4);
+    path.trim();
+    if (!path.startsWith("/")) path = "/" + path;
+    File f;
+    if (sdReady) f = SD_MMC.open(path, FILE_READ);
+    if (!f || f.isDirectory()) {
+      if (f) f.close();
+      Serial.println("ERR");
+      return true;
+    }
+    static uint8_t buf[4096];
+    uint32_t crc = 0, total = 0;
+    size_t n;
+    while ((n = f.read(buf, sizeof(buf))) > 0) {
+      crc = crc32Update(crc, buf, n);
+      total += n;
+    }
+    f.close();
+    sdTransferAt = millis();   // checking the card is part of the transfer
+    Serial.printf("SUM %08lx %lu\n", (unsigned long)crc, (unsigned long)total);
+    Serial.println("DONE");
+    return true;
+  } else if (line == "SD MOUNT" || line == "SD MOUNT FORMAT") {
+    // A card inserted after boot, or one that needs formatting. FORMAT never erases a
+    // card that mounts; the installer sends it only once the player has agreed.
+    SD_MMC.end();
+    bool ok = sdBegin(line.endsWith(" FORMAT"));
+    if (ok) {
+      thumbs.load();
+      sdDirty = true;
+    }
+    Serial.println(ok ? "DONE" : "ERR");
     return true;
   } else if (line == "PACKS") {
     activePackRegion = -1;

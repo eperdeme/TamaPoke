@@ -1206,6 +1206,12 @@ void loop() {
     sdArtDirty = false;
     sdScanRegionArt(false);
   }
+  // The same, for the gallery: thumbs.bin is read in setup(), so a copy that arrived
+  // over PUT drew nothing new until a restart.
+  if (sdThumbsDirty && !transferMode()) {
+    sdThumbsDirty = false;
+    thumbs.load();
+  }
 
   // A farewell or release just finished: the creature is waiting for a slot.
   // With room it simply joins; with a full party the player is taken straight
@@ -1653,6 +1659,8 @@ void handleSerial() {
     // which is why the installer keeps its history in the browser rather than
     // on a server keyed by this.
     Serial.printf("board=%012llX\n", ESP.getEfuseMac());
+    // Its own line: the installer matches board= as a whole line, and older pages must still.
+    Serial.printf("fw=%s\n", FW_VERSION);
     Serial.printf("spec=%d nv=%u com=%u fel=%u ene=%u lim=%u desc=%u sd=%d mon=%d bat=%d usb=%d rtc=%u\n",
                   pet.speciesId, pet.level(), pet.fullness, pet.joy, pet.energy,
                   pet.hygiene, pet.careMistakes, sdReady, mon.loaded,

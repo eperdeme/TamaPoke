@@ -4,8 +4,8 @@
 //
 //   * a tap that opens the menu does nothing while files arrive -- and the same
 //     tap works once they stop, so the first check cannot pass on a dead tap
-//   * the per-file sprite reload and region rescan wait for the stream to end,
-//     and then happen by themselves
+//   * the per-file sprite reload, region rescan and thumbnail reload wait for the
+//     stream to end, and then happen by themselves
 //   * a fight is never taken over, because its render path pumps the link
 //
 // There is no PUT path in the emulator, so sdTransferAt is set by hand: it is
@@ -29,6 +29,7 @@ uint8_t uiCurrentScreen();
 bool transferMode();
 void startBattle(int16_t dex, uint8_t lvl);
 void emuAdvanceMs(uint32_t ms);
+void emuSetSpriteDir(const char *d);
 extern const char *const SCREEN_NAME[];
 extern Pet pet;
 extern bool menuOpen, battleOpen;
@@ -69,14 +70,27 @@ int main(){
   pump(2);
 
   // ---- the work it defers
+  const uint8_t *thumbsBefore = thumbs.data;
   fileArrived();
-  sdDirty = sdArtDirty = true;
+  sdDirty = sdArtDirty = sdThumbsDirty = true;
   pump(3);
-  ck(sdDirty && sdArtDirty, "the sprite reload and region rescan wait while files arrive");
+  ck(sdDirty && sdArtDirty && sdThumbsDirty,
+     "the sprite reload, region rescan and thumbnail reload wait while files arrive");
   emuAdvanceMs(SD_TRANSFER_IDLE_MS);
   pump(2);
   ck(!transferMode() && on("main"), "the mode ends by itself once the stream goes quiet");
-  ck(!sdDirty && !sdArtDirty, "and the reload and rescan it deferred run then");
+  ck(!sdDirty && !sdArtDirty && !sdThumbsDirty, "and the reload, rescan and thumbnails it deferred run then");
+  if (thumbsBefore) {
+    // Both buffers are alive while the new one is read, so an unchanged pointer means no reload.
+    ck(thumbs.loaded && thumbs.data != thumbsBefore, "the thumbnails really were read again");
+    const uint8_t *kept = thumbs.data;
+    emuSetSpriteDir("/nonexistent-tamapoke-sprites");
+    ck(!thumbs.load() && thumbs.loaded && thumbs.data == kept,
+       "and a reload that cannot read the file keeps the thumbnails already there");
+    emuSetSpriteDir(SPRITE_DIR);
+  } else {
+    printf("      (no thumbs.bin in the sprite dir, so the reload had nothing to read)\n");
+  }
 
   // ---- never over a fight
   startBattle(9, 50);

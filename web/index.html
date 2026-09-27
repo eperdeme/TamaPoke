@@ -5,9 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f4f1e8">
   <title>TamaPoke - Installer</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@500;600&amp;family=DM+Sans:opsz,wght@9..40,400;9..40,600;9..40,700&amp;display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -65,15 +62,17 @@
              the host does nothing at all. check_installer.py refuses a build that
              loses it, and installer.js says why at length. -->
         <esp-web-install-button id="flash-button" manifest="manifest.json">
-          <button class="button button-secondary" slot="activate">
+          <button class="button button-secondary" id="flash-activate" slot="activate">
             <i data-lucide="cpu" aria-hidden="true"></i>
             <span>Install firmware</span>
           </button>
           <span slot="unsupported">Use Chrome or Edge to flash this board.</span>
           <span slot="not-allowed">This installer requires HTTPS or localhost.</span>
         </esp-web-install-button>
-        <p class="action-copy" id="edition-summary">The standard edition includes every game feature and loads region art from microSD.</p>
+        <p class="action-copy" id="edition-summary">Every version includes the whole game and loads region art from microSD.</p>
       </div>
+      <div class="status" id="flash-status" role="status" hidden></div>
+      <div class="status" id="advice-status" role="status" hidden></div>
       <p class="action-copy"><strong>Back up save</strong> reads, verifies and downloads the current save. <strong>Install firmware</strong> opens the flasher. Use both when updating a board; each needs its own click and board selection because the browser grants serial access one action at a time. A brand-new board can go straight to Install firmware.</p>
 
       <section class="release-notes" aria-labelledby="release-notes-title">
@@ -114,7 +113,7 @@
           <i data-lucide="usb" aria-hidden="true"></i>
           Connect board
         </button>
-        <p>One connection manages packs and saves. Close the firmware install dialog before connecting here.</p>
+        <p>One connection manages packs and saves. After a firmware install, the page finds the board again by itself once the install dialog is closed.</p>
       </div>
 
       <div class="pack-toolbar">
@@ -149,13 +148,16 @@
           <span id="progress-label">Preparing transfer...</span>
           <span id="progress-value">0%</span>
         </div>
-        <div class="progress-track"><div id="progress-fill"></div></div>
+        <div class="progress-track" id="progress-track" role="progressbar" aria-labelledby="progress-label" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="progress-fill"></div></div>
       </div>
+
+      <div class="status" id="pack-status" role="status" hidden></div>
 
       <div class="custom-pack">
         <i data-lucide="file-up" aria-hidden="true"></i>
         <span>Generated your own sprite files?</span>
-        <label class="text-action">Choose .bin files<input id="files" type="file" accept=".bin" multiple disabled hidden></label>
+        <button type="button" class="text-action" id="files-button" disabled>Choose .bin files</button>
+        <input id="files" type="file" accept=".bin" multiple hidden>
       </div>
     </section>
 
@@ -178,14 +180,15 @@
         </div>
         <div>
           <h3>Restore backup</h3>
-          <p>This page checks the length, format and checksum before sending anything, and the firmware validates it again before replacing your save, then restarts.</p>
-          <label class="button button-secondary button-file" id="restore-label" aria-disabled="true">
+          <p>This page checks the length, format and checksum before sending anything and keeps a copy of the save it replaces. The firmware validates the backup again before replacing your save, then restarts.</p>
+          <button class="button button-secondary" id="restore-button" disabled>
             <i data-lucide="hard-drive-upload" aria-hidden="true"></i>
             Restore save
-            <input id="restore" type="file" accept=".tpsave,.txt" disabled hidden>
-          </label>
+          </button>
+          <input id="restore" type="file" accept=".tpsave,.txt" hidden>
         </div>
       </div>
+      <div class="status" id="save-status" role="status" hidden></div>
 
       <section class="release-notes" aria-labelledby="history-title">
         <header>
@@ -206,9 +209,14 @@
           <p class="eyebrow">Live output</p>
           <h2 id="activity-title">Activity</h2>
         </div>
-        <button class="icon-button" id="clear-log" title="Clear activity log" aria-label="Clear activity log">
-          <i data-lucide="trash-2" aria-hidden="true"></i>
-        </button>
+        <div class="activity-actions">
+          <button class="icon-button" id="copy-log" title="Copy diagnostics for a bug report" aria-label="Copy diagnostics for a bug report">
+            <i data-lucide="clipboard-copy" aria-hidden="true"></i>
+          </button>
+          <button class="icon-button" id="clear-log" title="Clear activity log" aria-label="Clear activity log">
+            <i data-lucide="trash-2" aria-hidden="true"></i>
+          </button>
+        </div>
       </header>
       <pre id="log" aria-live="polite">Ready. Flash the firmware or connect a running board.</pre>
     </section>
@@ -220,8 +228,10 @@
     <a href="https://github.com/eperdeme/TamaPoke" target="_blank" rel="noreferrer">Source and game manual</a>
   </footer>
 
-  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js"></script>
+  <!-- Vendored and pinned: whether an update keeps the save depends on code inside
+       this package, and check_installer.py reads the copy that ships. -->
+  <script type="module" src="vendor/esp-web-tools-10.4.0/install-button.js"></script>
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script type="module" src="installer.js?v=a91f442cb8628fa4"></script>
+  <script type="module" src="installer.js?v=aacc3e7465f0e8b0"></script>
 </body>
 </html>

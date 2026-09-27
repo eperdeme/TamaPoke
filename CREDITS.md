@@ -50,7 +50,8 @@ Huge thanks to that whole community for an enormous amount of work.
 | SensorLib (CST9217 touch, PCF85063 RTC) | [Lewis He / lewisxhe](https://github.com/lewisxhe/SensorLib) |
 | XPowersLib (AXP2101 PMU) | [Lewis He / lewisxhe](https://github.com/lewisxhe/XPowersLib) |
 | Board and pinout | [Waveshare ESP32-S3-Touch-AMOLED-1.75](https://www.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.75) |
-| Web installer | [ESP Web Tools](https://esphome.github.io/esp-web-tools/) (Nabu Casa) |
+| Web installer | [ESP Web Tools](https://esphome.github.io/esp-web-tools/) (Nabu Casa), Apache-2.0, vendored in `web/vendor/` with its licence |
+| Installer fonts | [DM Sans](https://github.com/googlefonts/dm-fonts) and [Azeret Mono](https://github.com/displaay/azeret), SIL Open Font License 1.1, in `web/fonts/` with their licences |
 | 5x7 bitmap font in `tools/emu/font.cpp` | [Adafruit_GFX](https://github.com/adafruit/Adafruit-GFX-Library) © 2012 Adafruit Industries, BSD licence |
 
 TamaPoke's own code (firmware and tools) is original work by Quique Tortosa and

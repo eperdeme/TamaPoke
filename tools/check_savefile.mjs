@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
   crc16, hexToBytes, parseBackup, verifyBackup, describeBackup, sendBackup,
-  SAVE_CRC_BYTES,
+  saveSummary, backupFileName, SAVE_CRC_BYTES,
 } from '../web/savefile.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -161,6 +161,31 @@ ckThrows(() => verifyBackup('hello\nIMPORT'), 'unrecognised',
   const ok = verifyBackup(messy);
   ck(ok.blob.length === parsed.blob.length,
      'blank lines, indentation and extra comments do not break a paste');
+}
+
+// ---- the board line the installer adds to what it downloads
+{
+  const lines = golden.trim().split('\n');
+  const tagged = verifyBackup([lines[0], '# board 987d91858428', ...lines.slice(1)].join('\n'));
+  ck(tagged.board === '987D91858428', 'a "# board" line is read back, so a restore can tell boards apart');
+  ck(tagged.blob.length === parsed.blob.length && tagged.commands.length === parsed.commands.length,
+     'and changes nothing that is sent to the board');
+  ck(parsed.board === null, "the firmware's own EXPORT carries none");
+}
+
+// ---- the label, against web/dex.json, which gen_web_dex.py derives from the game
+{
+  const dex = JSON.parse(readFileSync(join(root, 'web/dex.json'), 'utf8'));
+  const summary = saveSummary(described, dex);
+  ck(summary.includes('CHARIZARD Lv.30'),
+     `the fixture (EGG 6, LVL 30 on the firmware) is labelled with its species and level: "${summary}"`);
+  ck(saveSummary(described, null).includes('dex 6'), 'and without the table it is still a number');
+  ck(saveSummary({ dex: -1 }, dex) === 'an egg', 'an egg says so');
+  ck(saveSummary({}, dex) === 'no details', 'and a blob with nothing readable does not throw');
+  ck(backupFileName('A.S-H!', new Date(2026, 8, 27, 9, 5, 7)) === 'tamapoke-ASH-2026-09-27-09-05-07.tpsave',
+     'backup files are named in local time, with only letters and digits of the trainer');
+  ck(backupFileName('', new Date(2026, 0, 2, 3, 4, 5)).startsWith('tamapoke-save-2026-01-02'),
+     'and a save with no trainer name still gets a name');
 }
 
 // ---- the upload protocol, driven against fake firmware

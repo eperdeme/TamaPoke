@@ -24,6 +24,9 @@ Both are checked here because fixing either one alone still loses the save.
 The partition table is read out of the build itself rather than hardcoded, so a
 partition scheme change moves the check with it.
 
+3. WHO DECIDES ANY OF THAT: esp-web-tools. Point 2 is a line in THEIR install
+   dialog, so the page loads a vendored, pinned copy and this reads it.
+
     python3 tools/check_installer.py                    # checks web/manifest.json
     python3 tools/check_installer.py web/beta/manifest.json
 
@@ -135,6 +138,70 @@ def check_flash_trigger():
             bad += 1
     return bad
 
+
+def check_vendored_flasher():
+    """THE ERASE PROMPT THE SAVE DEPENDS ON IS THIRD-PARTY CODE, SO IT IS PINNED.
+
+    new_install_prompt_erase=true keeps the save only because of one line in
+    esp-web-tools' install dialog -- `new_install_prompt_erase ? ASK_ERASE :
+    _startInstall(true)` -- and an Erase box that starts unchecked. The page used to
+    load it from a floating `@10` CDN tag, so any release could change either
+    between two page loads and nothing here would ever have read it.
+    """
+    bad = 0
+    with open(os.path.join(WEB, "index.html")) as fh:
+        html = fh.read()
+    if re.search(r'<script[^>]+src="https?://[^"]*esp-web-tools', html):
+        print("\nFAIL: index.html loads esp-web-tools from a CDN; it must load the vendored copy")
+        bad += 1
+    m = re.search(r'<script type="module" src="(vendor/esp-web-tools-([0-9.]+)/install-button\.js)"', html)
+    if not m:
+        print("\nFAIL: index.html does not load vendor/esp-web-tools-<version>/install-button.js")
+        return bad + 1
+    folder = os.path.join(WEB, os.path.dirname(m.group(1)))
+    version = m.group(2)
+    try:
+        with open(os.path.join(folder, "package.json")) as fh:
+            packaged = json.load(fh).get("version")
+    except OSError:
+        packaged = None
+    if packaged != version:
+        print("\nFAIL: %s holds esp-web-tools %s, not the %s its name promises"
+              % (os.path.relpath(folder, ROOT), packaged, version))
+        bad += 1
+    if not os.path.exists(os.path.join(folder, "LICENSE")):
+        print("\nFAIL: the vendored esp-web-tools has no LICENSE, which Apache-2.0 requires")
+        bad += 1
+
+    scripts = {}
+    for name in sorted(os.listdir(folder)):
+        # Pages runs Jekyll over this repo, and Jekyll does not publish _ or . files.
+        if name[0] in "_.":
+            print("\nFAIL: vendored %s would not be published by GitHub Pages" % name)
+            bad += 1
+        if name.endswith(".js"):
+            with open(os.path.join(folder, name)) as fh:
+                scripts[name] = fh.read()
+    for name, text in scripts.items():
+        for target in re.findall(r'''(?:import\s*\(?|from)\s*["']\./([^"']+)["']''', text):
+            if target not in scripts:
+                print("\nFAIL: vendored %s imports ./%s, which is not there" % (name, target))
+                bad += 1
+
+    dialog = "".join(text for text in scripts.values() if "new_install_prompt_erase" in text)
+    branches = re.findall(r'new_install_prompt_erase\?(.{0,40}?):', dialog)
+    if not branches or any(b != 'this._state="ASK_ERASE"' for b in branches):
+        print("\nFAIL: in this esp-web-tools, new_install_prompt_erase=true no longer means "
+              "'ask first' (found %r). Read its install dialog before shipping it." % branches)
+        bad += 1
+    ask = re.search(r'_renderAskErase\(\)\{(.{0,1500}?)_startInstall\(e\.checked\)', dialog, re.S)
+    box = re.search(r'<ew-checkbox[^>]*>', ask.group(1)) if ask else None
+    if not box or "checked" in box.group(0):
+        print("\nFAIL: this esp-web-tools' Erase device box is missing or starts CHECKED, "
+              "which would erase the save by default")
+        bad += 1
+    return bad
+
 def main():
     manifest_path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(WEB, "manifest.json")
     manifest_path = os.path.abspath(manifest_path)
@@ -210,6 +277,7 @@ def main():
         bad += 1
 
     bad += check_flash_trigger()
+    bad += check_vendored_flasher()
     print("\n%s" % ("FAILURES" if bad else "the save is out of the blast radius"))
     return 1 if bad else 0
 

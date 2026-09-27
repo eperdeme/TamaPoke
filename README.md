@@ -397,8 +397,8 @@ After any ending, a **new egg** appears.
   give a creature that could only ever draw as a number.
   A region whose **sprite pack is not on the card** shows as locked and is kept
   out of the egg pool, so a partial sprite install is a supported state. A pack
-  sent from the web installer is picked up **as it lands** — the region unlocks
-  without a reboot.
+  sent from the web installer is picked up **as it lands** — the region unlocks,
+  and the Pokedex shows its new thumbnails, without a reboot.
 
 ### Personality
 Every creature has a **temperament**, shown on the profile page of its card:
@@ -605,7 +605,10 @@ the SD over Web Serial, no Arduino needed. Serve it over HTTPS or `localhost`
 All sprites come from **[PMD SpriteCollab](https://github.com/PMDCollab/SpriteCollab)**
 (CC BY-NC). You can regenerate the whole set and load it onto your board with the
 pipeline below — the firmware accepts files over USB (PUT protocol with per-block
-ACK), so you don't have to remove the card (it formats the SD to FAT if needed).
+ACK), so you don't have to remove the card. A card the board cannot read (most
+cards over 32 GB are sold as exFAT, which it does not support) is formatted only
+when you ask: **Format card** in the web installer, or `SD MOUNT FORMAT` on the
+console. It used to format such a card without asking, whatever was on it.
 
 ```bash
 python3 tools/unpack_bundle.py  # FASTEST: restore tools/sdcard/mons/ from the committed web/sprites-*.pak (no network)
@@ -621,12 +624,13 @@ ship. `pack_pmd.py` re-fetches ~40 MB per region from SpriteCollab.
 To make the **one-click web-installer bundle** instead of sending over USB:
 
 ```bash
-python3 tools/pack_bundle.py    # bundle tools/sdcard/mons/* into web/sprites.pak
+python3 tools/pack_bundle.py    # bundle tools/sdcard/mons/* into web/sprites-<region>.pak, one per region
 ```
 
-Then load it from the web installer's **"Load sprites"** button (or `send_sd.py`
+Then install them from the web installer's region list (or `send_sd.py`
 above). `pack_pmd.py` also takes individual dex numbers, e.g. `pack_pmd.py 7 25`.
-(~40 MB total, all PMD. Versioned under `tools/sdcard/`.)
+(About 285 MiB across the nine regions, all PMD. The loose files in
+`tools/sdcard/mons/` are gitignored build intermediates; the `.pak` bundles ship.)
 
 ## How to play
 
@@ -878,7 +882,10 @@ runaway-ready state) · `WIPE` (factory reset → new game) · `BEEP` (audio tes
 `BAG` (list it) · `GIVE <key> [n]` (stock it) · `WILD` / `WILD HARD` (force an
 encounter) ·
 `TIME <epoch>` / `RTCSET <epoch>` · `HEALTH` (uptime + heap for the soak test) ·
-`LS` / `PUT` (SD files).
+`LS` / `PUT` (SD files) · `SUM <path>` (CRC32 and size of a file as stored on the
+card) · `PACKS` (installed sprite pack versions) · `SD MOUNT` (mount a card
+inserted after boot) · `SD MOUNT FORMAT` (the same, formatting a card the board
+cannot read — it erases the card).
 
 `MAX` (level 100, perfect IVs, training at the ceiling) is **emulator only**. The
 firmware compiles it and never enables it: this is a game about raising something

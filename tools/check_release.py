@@ -89,22 +89,44 @@ def main():
         fail('installer safety check failed')
 
     # The JS cache keys, on the same terms as the firmware parts above. Pages sits
-    # behind a CDN, so a fresh installer.js paired with a STALE savefile.js is a
-    # real failure -- and it would look like the save backup quietly behaving the
-    # way it did before. build_web.sh computes both; this refuses a release where
-    # somebody has hand-edited one out of step.
-    for source, pattern in (
-        (ROOT / 'web' / 'installer.js', r"from '\./savefile\.js\?v=([0-9a-f]+)'"),
-        (ROOT / 'web' / 'index.html', r'src="installer\.js\?v=([0-9a-f]+)"'),
-    ):
-        target = ROOT / 'web' / ('savefile.js' if source.name == 'installer.js' else 'installer.js')
-        match = re.search(pattern, source.read_text())
-        if not match:
-            fail(f'{source.relative_to(ROOT)} has no cache key for {target.name}; run tools/build_web.sh')
-        expected = hashlib.sha256(target.read_bytes()).hexdigest()[:16]
-        if match.group(1) != expected:
-            fail(f'{source.relative_to(ROOT)} points at {target.name}?v={match.group(1)}, '
-                 f'expected {expected}; run tools/build_web.sh')
+    # behind a CDN, so a fresh installer.js paired with a STALE module is a real
+    # failure -- and it would look like the old code quietly still running.
+    # build_web.sh computes every key; this refuses a release where one has drifted
+    # or a local import has none at all.
+    installer = ROOT / 'web' / 'installer.js'
+    source = installer.read_text()
+    unkeyed = re.findall(r"from '\./([a-z0-9_-]+\.js)'", source)
+    if unkeyed:
+        fail(f'web/installer.js imports {", ".join(unkeyed)} with no cache key; run tools/build_web.sh')
+    keyed = re.findall(r"from '\./([a-z0-9_-]+\.js)\?v=([0-9a-f]+)'", source)
+    if not keyed:
+        fail('web/installer.js has no keyed module imports; run tools/build_web.sh')
+    for name, digest in keyed:
+        expected = hashlib.sha256((ROOT / 'web' / name).read_bytes()).hexdigest()[:16]
+        if digest != expected:
+            fail(f'web/installer.js points at {name}?v={digest}, expected {expected}; run tools/build_web.sh')
+    match = re.search(r'src="installer\.js\?v=([0-9a-f]+)"', (ROOT / 'web' / 'index.html').read_text())
+    expected = hashlib.sha256(installer.read_bytes()).hexdigest()[:16]
+    if not match or match.group(1) != expected:
+        fail(f'web/index.html points at installer.js?v={match.group(1) if match else "missing"}, '
+             f'expected {expected}; run tools/build_web.sh')
+
+    # The page's tests are part of the release, not a courtesy: build_web.sh skips
+    # them on a machine without node, and "skipped" must never be how a broken
+    # backup or pack upload reaches players. The Actions runner has node.
+    for test in ('check_savefile.mjs', 'check_packs.mjs'):
+        try:
+            result = subprocess.run(['node', str(ROOT / 'tools' / test)], cwd=ROOT,
+                                    capture_output=True, text=True, check=False)
+        except FileNotFoundError:
+            fail(f'node is not installed, and tools/{test} is part of the release check')
+        if result.returncode:
+            print(result.stdout[-3000:], result.stderr[-2000:])
+            fail(f'tools/{test} failed')
+        print(f'tools/{test} passes')
+    if subprocess.run([sys.executable, str(ROOT / 'tools' / 'gen_web_dex.py'), '--check'],
+                      cwd=ROOT, check=False).returncode:
+        fail('web/dex.json does not match the game; run tools/build_web.sh')
 
     # The changelog is PUBLIC-FACING, not a courtesy. web/installer.js reads the
     # release body through the GitHub API and drops it straight onto the installer

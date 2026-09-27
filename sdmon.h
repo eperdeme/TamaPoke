@@ -53,19 +53,24 @@ struct SdThumbs {
   bool loaded = false;
   uint8_t *data = nullptr;
   uint16_t count = 0;
-  bool load();
+  bool load();  // replaces what is loaded only if the new file reads back whole
   const uint8_t *get(int16_t dex) const;  // blob: w,h,palCount,pal[],idx[]
 };
 extern SdThumbs thumbs;
 
-bool sdBegin();                 // monta la SD (SDMMC 1-bit), true si hay tarjeta
+// Mounts the SD (SDMMC 1-bit), true if a card is usable. A card that will not mount
+// is formatted ONLY when asked: the console's SD MOUNT FORMAT, which the web
+// installer sends after the player confirms. It used to format any such card.
+bool sdBegin(bool formatIfUnreadable = false);
 // Narrows gRegionArt to the packs actually present. `verbose` logs one line per
 // region, which is what the boot report wants; the runtime rescan passes false so
 // its output cannot interleave with the PUT transfer protocol the host is parsing.
 void sdScanRegionArt(bool verbose = true);
-bool sdSerialCommand(const String &line);  // Handles USB PUT/LS/PACK commands.
+bool sdSerialCommand(const String &line);  // Handles USB PUT/SUM/LS/PACK/SD commands.
 extern bool sdReady;
 extern bool sdDirty;  // true tras recibir archivos: recargar sprite
+// thumbs.bin is read once at boot, so a new copy over PUT waits on this for loop().
+extern bool sdThumbsDirty;
 // A region's pack can arrive AFTER the card was mounted -- the web installer
 // streams it over PUT into the running firmware -- and gRegionArt was computed
 // once in sdBegin(). Without this the region stayed locked reading NEEDS PACK

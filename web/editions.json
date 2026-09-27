@@ -7,6 +7,6 @@
     "channel": "Unreleased",
     "manifest": "manifest.json",
     "description": "Built from current main. Released versions remain available for rollback.",
-    "notes": "This build is newer than the published Releases. Its final changelog will be generated when its version tag is released."
+    "notes": "This build is newer than the published Releases and has no release notes yet."
   }
 }

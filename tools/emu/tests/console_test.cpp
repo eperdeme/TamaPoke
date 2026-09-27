@@ -189,6 +189,26 @@ int main(){
        "nonsense arguments clamp instead of wrapping");
   }
 
+  // The web installer labels a board from STATS and matches each line WHOLE, so
+  // fw= has to stay off the board= line or every page already out there loses it.
+  {
+    std::string out = runConsole({"STATS"});
+    bool board = false, fw = false;
+    size_t at = 0;
+    while (at < out.size()) {
+      size_t nl = out.find('\n', at);
+      if (nl == std::string::npos) nl = out.size();
+      std::string ln = out.substr(at, nl - at);
+      if (ln.rfind("board=", 0) == 0)
+        board = ln.size() == 18 && ln.find_first_not_of("0123456789ABCDEF", 6) == std::string::npos;
+      if (ln.rfind("fw=", 0) == 0)
+        fw = ln.size() > 3 && ln.find_first_not_of("0123456789.", 3) == std::string::npos;
+      at = nl + 1;
+    }
+    ck(board, "STATS prints board=<12 hex digits> on a line of its own");
+    ck(fw, "and fw=<version> on another, for the installer's update check");
+  }
+
   // ---- MAX: the fully-raised creature in one command, EMULATOR ONLY.
   //
   // Two halves matter equally. That it works, and that it is INERT when

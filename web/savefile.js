@@ -8,6 +8,7 @@
 // The format is produced by save.cpp on the board:
 //
 //   # TamaPoke save, N bytes. Paste this whole block back.
+//   # board <efuse MAC>  added by the installer, so a restore can tell boards apart
 //   IMPORT <hex>      one chunk, repeated
 //   IMPORT            the commit line, exactly once, last
 //
@@ -56,6 +57,7 @@ export function hexToBytes(hex) {
 }
 
 const HEADER_RE = /^#\s*TamaPoke save,\s*(\d+)\s*bytes/i;
+const BOARD_RE = /^#\s*board\s+([0-9A-Fa-f]{6,16})\s*$/i;
 
 // Splits the text into console commands and pulls out the byte count the board
 // declared. Format only -- verifyBackup() is what decides whether it is sound.
@@ -63,11 +65,14 @@ export function parseBackup(text) {
   const lines = String(text).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const commands = [];
   let declared = null;
+  let board = null;
   let sawCommit = false;
   for (const line of lines) {
     if (line.startsWith('#')) {
       const match = HEADER_RE.exec(line);
       if (match) declared = Number.parseInt(match[1], 10);
+      const from = BOARD_RE.exec(line);
+      if (from) board = from[1].toUpperCase();
       continue;
     }
     if (sawCommit) throw new Error('there is content after the final IMPORT line');
@@ -86,7 +91,7 @@ export function parseBackup(text) {
   if (!sawCommit) throw new Error('backup is missing its final IMPORT commit line');
   if (commands.length < 2) throw new Error('backup has no data, only a commit line');
   const hex = commands.slice(0, -1).map((line) => line.slice(7)).join('');
-  return { commands, declared, blob: hexToBytes(hex) };
+  return { commands, declared, board, blob: hexToBytes(hex) };
 }
 
 // Everything parseBackup() checks, plus the parts that decide whether the bytes
@@ -156,6 +161,36 @@ export function describeBackup(blob) {
     // a label is never worth failing a backup over
   }
   return out;
+}
+
+// "ASH · CHARIZARD Lv.30" from describeBackup(). `dex` is web/dex.json -- the names
+// and the level rule, generated from the firmware -- and may be null, in which
+// case the species is only a number.
+export function saveSummary(described, dex) {
+  const bits = [];
+  if (described?.trainer) bits.push(described.trainer);
+  const n = described?.dex;
+  if (Number.isInteger(n) && n > 0) {
+    const name = dex?.names?.[n] || `dex ${n}`;
+    const age = described.ageMinutes;
+    if (dex?.minutesPerLevel && Number.isFinite(age) && age >= 0) {
+      bits.push(`${name} Lv.${Math.min(dex.maxLevel, 1 + Math.floor(age / dex.minutesPerLevel))}`);
+    } else {
+      bits.push(name);
+    }
+  } else if (Number.isInteger(n) && n < 0) {
+    bits.push('an egg');
+  }
+  return bits.join(' \u00b7 ') || 'no details';
+}
+
+// Local time, the same clock the history list shows.
+export function backupFileName(trainer, date = new Date()) {
+  const two = (value) => String(value).padStart(2, '0');
+  const stamp = `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())}-`
+    + `${two(date.getHours())}-${two(date.getMinutes())}-${two(date.getSeconds())}`;
+  const who = String(trainer || '').replace(/[^A-Za-z0-9]/g, '') || 'save';
+  return `tamapoke-${who}-${stamp}.tpsave`;
 }
 
 // How long to wait between chunks when the board cannot acknowledge them.

@@ -90,45 +90,41 @@ json.dump(m, open('web/manifest.json', 'w'), indent=2)
 print('manifest version -> ' + sys.argv[1])
 PYEOF
 
-# Fails the build if anything the manifest writes would land on the save.
-echo "Checking the installer cannot erase a save..."
-python3 tools/check_installer.py || { echo "installer would wipe saves -- refusing"; exit 1; }
-
-# The page's save backup, tested. Gated on node so a machine without it can still
-# build, but the release check refuses a tag either way -- a backup feature whose
-# verification is untested is worse than one that admits it does not verify.
-if command -v node >/dev/null; then
-  echo "Checking the save backup logic..."
-  node tools/check_savefile.mjs >/dev/null || { echo "web/savefile.js FAILED its tests -- refusing"; exit 1; }
-else
-  echo "node not installed; SKIPPING the save backup tests"
-fi
+# Species names and the level rule for the page's backup labels, from the game itself.
+python3 tools/gen_web_dex.py
 
 # CACHE KEYS FOR THE JS, computed rather than typed.
 #
 # index.html carried a hand-maintained ?v= for installer.js, which is a number
-# and a promise that drift independently -- and adding a second module made it
-# two of them. Pages sits behind a CDN and index.html revalidates while a module
-# may not, so a fresh installer.js paired with a STALE savefile.js is a real
-# failure, and it would show up as the save backup silently behaving like the old
-# version. Same reasoning as the firmware parts above.
+# and a promise that drift independently -- and every module installer.js imports
+# is another of them. Pages sits behind a CDN and index.html revalidates while a
+# module may not, so a fresh installer.js paired with a STALE savefile.js or
+# packs.js is a real failure, and it would look like the old code quietly still
+# running. Same reasoning as the firmware parts above.
 #
-# Order matters: hash savefile.js, stamp it into installer.js's import, and only
-# then hash installer.js -- otherwise index.html points at a digest of a file
-# that is about to change.
+# Order matters: hash each module, stamp it into installer.js's import, and only
+# then hash installer.js -- otherwise index.html points at a digest of a file that
+# is about to change. And BEFORE check_installer.py, which checks the result: it
+# used to run first, so any edit to installer.js failed the build it needed.
 python3 - <<'PYEOF'
 import hashlib, pathlib, re
 
 def key(path):
     return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()[:16]
 
-save_key = key('web/savefile.js')
+IMPORT = r"from '\./([a-z0-9_-]+\.js)(?:\?v=[0-9a-f]+)?'"
 installer = pathlib.Path('web/installer.js')
 src = installer.read_text()
-src, n = re.subn(r"(from '\./savefile\.js)(?:\?v=[0-9a-f]+)?'",
-                 lambda m: f"{m.group(1)}?v={save_key}'", src)
-if n != 1:
-    raise SystemExit(f"expected exactly one savefile.js import in installer.js, found {n}")
+modules = sorted(set(re.findall(IMPORT, src)))
+if not modules:
+    raise SystemExit("installer.js imports no local modules; the stamp below would do nothing")
+for name in modules:
+    # One level only: a module importing another would need its own key covered too.
+    if re.search(IMPORT, pathlib.Path(f'web/{name}').read_text()):
+        raise SystemExit(f"web/{name} imports a local module; extend this stamp before relying on it")
+    digest = key(f'web/{name}')
+    src = re.sub(rf"(from '\./{re.escape(name)})(?:\?v=[0-9a-f]+)?'",
+                 lambda m, d=digest: f"{m.group(1)}?v={d}'", src)
 installer.write_text(src)
 
 installer_key = key('web/installer.js')
@@ -139,8 +135,24 @@ html, n = re.subn(r'(src="installer\.js)(?:\?v=[0-9a-f]+)?"',
 if n != 1:
     raise SystemExit(f"expected exactly one installer.js script tag, found {n}")
 index.write_text(html)
-print(f'js cache keys -> savefile {save_key}, installer {installer_key}')
+print(f"js cache keys -> {', '.join(modules)}, installer {installer_key}")
 PYEOF
+
+# Fails the build if anything the manifest writes would land on the save.
+echo "Checking the installer cannot erase a save..."
+python3 tools/check_installer.py || { echo "installer would wipe saves -- refusing"; exit 1; }
+
+# The page's save backup and pack upload, tested. Gated on node so a machine
+# without it can still build; check_release.py runs them regardless, so a tag
+# cannot ship them untested -- a backup whose verification is untested is worse
+# than one that admits it does not verify.
+if command -v node >/dev/null; then
+  echo "Checking the save backup and pack upload logic..."
+  node tools/check_savefile.mjs >/dev/null || { echo "web/savefile.js FAILED its tests -- refusing"; exit 1; }
+  node tools/check_packs.mjs >/dev/null || { echo "web/packs.js FAILED its tests -- refusing"; exit 1; }
+else
+  echo "node not installed; SKIPPING the web tests (check_release.py will not)"
+fi
 
 echo "Empaquetando sprites..."
 if compgen -G "tools/sdcard/mons/*.bin" >/dev/null; then

@@ -98,10 +98,13 @@ is why the backup path could accept a truncated capture and call it a backup.
 checksum and the verification, and **may not touch `window`, `document` or
 `navigator`** — that is the whole reason it is a separate file, because `node`
 has to import it for `tools/check_savefile.mjs`. Anything needing a DOM, a serial
-port or IndexedDB stays in `installer.js`.
+port or IndexedDB stays in `installer.js`. `web/packs.js` is the same arrangement
+for the pack upload (TPAK, CRC-32, `PUT`, `SUM`), which `tools/check_packs.mjs`
+drives against a fake board modelled on `sdmon.cpp`.
 
 ```bash
-node tools/check_savefile.mjs      # also runs inside tools/emu/tests/run.sh
+node tools/check_savefile.mjs      # both also run inside tools/emu/tests/run.sh,
+node tools/check_packs.mjs         # and check_release.py refuses a tag without them
 ```
 
 Two rules that test earns its keep by:
@@ -141,6 +144,16 @@ Things that have already bitten, or nearly:
   page says so rather than surprising anyone.
 - **"Erase device" is inside their dialog, not ours.** We cannot see it or veto
   it. Backup-then-install narrows the window; it cannot close it.
+- **esp-web-tools is VENDORED, and that is the save's safety, not tidiness.**
+  `new_install_prompt_erase: true` keeps the save only because of one line in
+  their install dialog (`? ASK_ERASE : _startInstall(true)`, box unchecked), and
+  the page used to load a floating `@10` from unpkg -- whatever 10.x was newest,
+  read by nothing here. It loads `web/vendor/esp-web-tools-<version>/` now and
+  `check_installer.py` reads THAT copy for both. Never point it back at a CDN;
+  updating it is a deliberate act, described in `web/README.md`.
+- **A restore keeps the save it replaces** in the browser history first. It is the
+  one action on the page that destroys a save, and it used to be the only one
+  with no copy taken before it.
 - **No remote storage, deliberately.** Pages is static so there is nowhere to
   POST; any write token shipped in client JS is public; and a board ID is an
   identifier, not a credential — it is not secret and it is enumerable, so it
@@ -156,10 +169,11 @@ runs `tools/check_release.py` and then publishes. Before tagging:
 1. `bash tools/build_web.sh` -- **after the last source edit.** `check_release.py`
    verifies each binary's `?v=` hash against its own bytes, not against the
    source, so a stale `app.bin` passes the check and ships anyway. The same run
-   computes the two JS cache keys (`savefile.js` into `installer.js`'s import,
-   then `installer.js` into `index.html`) -- those were hand-maintained until
+   computes every JS cache key (each module `installer.js` imports, then
+   `installer.js` into `index.html`) -- those were hand-maintained until
    v3.22, which is a number and a promise that drift independently. The release
-   check refuses a tag where either has drifted.
+   check refuses a tag where any has drifted, and runs the web tests itself:
+   `build_web.sh` skips them on a machine without node.
 2. `FW_VERSION`, the README badge and `web/manifest.json` must all match the tag.
    `build_web.sh` does the manifest; the other two are by hand.
 3. **Write `docs/release-notes/vX.Y.md`.** `web/installer.js` reads the release
@@ -247,6 +261,8 @@ second caller has its own copy of it, and nobody notices until a player does.
 | a region needs its pack | `sdBegin()`, at mount | files arriving later over `PUT` | the pack you just downloaded stayed greyed out until a reboot |
 | the 3 s hold is for the pet | a list of screens to EXCLUDE | every screen not on that list | holding a PARTY SLOT offered to release the LIVE pet |
 | sprites load up to `DEX_COUNT` | the emulator's `PmdMon::load()` | the firmware's, in `sdmon.cpp` (`> 999`) | dex 1000-1025 never drew on a board while `sprite_test` passed |
+| thumbnails follow a new pack | `thumbs.load()` in `setup()` | a `thumbs.bin` arriving later over `PUT` | the region unlocked, and its Pokedex thumbnails stayed old until a restart |
+| a control waits while the page is busy | `syncControls()` | Back up save, added after the list was written | `EXPORT` written into a pack transfer, then the port closed under it |
 
 **A guard written as a list of EXCLUSIONS is this trap pre-loaded.** The hold
 was gated by `!galleryOpen && !cardOpen && !kbOpen && !clockOpen`, so every
@@ -487,6 +503,10 @@ To exercise long-horizon logic in minutes, temporarily lower `PET_TICK_MS`,
 
 - Sprites are ~40 MB and stream from microSD at runtime; they are never linked into
   the binary. Missing SD = the `S_NO_SPRITES` path, which must stay graceful.
+- **A card that will not mount is formatted only when asked** (`SD MOUNT FORMAT`,
+  which the installer sends after a confirmation). It used to be formatted at
+  boot, unasked, whatever was on it. The core's FatFs has no exFAT
+  (`FF_FS_EXFAT 0`), so most new cards over 32 GB need that one click.
 - The pet keeps ageing while powered off via the RTC, catching up to 2 weeks max.
   Any change to tick/aging must survive a large `deltaMinutes` jump without overflow.
 - `TamaPoke.ino` is one large sketch by design. Prefer small, surgical diffs over
@@ -1394,7 +1414,7 @@ per save is the real fix.
 ### Tests
 
 ```bash
-bash tools/emu/tests/run.sh          # all 34 suites
+bash tools/emu/tests/run.sh          # every suite, plus the two web test files
 bash tools/emu/tests/run.sh battle   # just matching ones
 ```
 
