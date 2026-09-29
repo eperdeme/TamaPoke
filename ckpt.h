@@ -14,8 +14,11 @@
 // The fix is to write each logical record as ONE blob, guarded by a CRC, into
 // TWO keys used alternately. The newest complete blob wins; if the write that
 // was in flight never landed, the previous one is still whole. The legacy
-// scalar keys are still written for backups and for downgrades, but they are no
-// longer what the firmware believes.
+// scalar keys are NOT written any more -- see the comment above Pet::save()
+// in pet.h -- but they are still READ once, as the migration path for a save
+// that predates the checkpoint. A backup and a downgrade both read/write the
+// checkpoint keys now; save.cpp's SAVE_FIELDS carries only those plus the
+// handful of keys (settings, the bag) that never had a checkpoint of their own.
 //
 // Every record here shares one layout:
 //

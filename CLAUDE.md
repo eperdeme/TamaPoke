@@ -1340,13 +1340,21 @@ Four things about it that are easy to get wrong:
   breaks the moment one write succeeds and the other does not.
   `powerloss_test` pins the invariant directly.
 
-The ~50 legacy keys are STILL WRITTEN, deliberately: they are what `EXPORT`
-carries and what a downgrade reads. But a failure in either checkpoint returns
-before touching them, so the previous save stays the previous save rather than
-becoming a half-updated one nothing can see is broken. **Dropping them is the
-obvious next win** -- it would take a save from ~55 NVS commits to 2, cutting
-both the tearing window and the page churn -- but it is a one-way door for
-anyone who downgrades, so it is not in this change.
+The ~50 legacy keys are GONE from `save()`/`persist()` as of the release that
+closed github.com/eperdeme/TamaPoke/issues/5 (badges resetting to zero after a
+restart): writing all of them on every save turned 2 checkpoint writes into
+~55, which is what actually exhausted the 20 KB `nvs` partition and made the
+Arduino core erase it whole on the next boot. `load()`/`Party::begin()` still
+READ them once, as the migration path for a save from before the checkpoint
+existed, and `Pet::load()`/`Party::begin()` now persist the checkpoint
+immediately the moment that migration happens rather than waiting for the next
+incidental save -- so `EXPORT` (which now backs up the checkpoint keys only,
+see `save.cpp`'s `SAVE_FIELDS`) is never missing the creature just because
+nothing else has saved yet. **This was a one-way door, deliberately taken**:
+a save exported by this build or later cannot be restored by a build older
+than this change, because the old build only knows how to read the legacy
+scalar keys this one no longer writes. Bump the firmware's major version with
+it, and say so in the release notes.
 
 `powerloss_test` covers all of it, and every guard in it was negative-checked by
 breaking the firmware on purpose. Note `poisonLegacy()` in that file: almost

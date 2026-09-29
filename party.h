@@ -122,9 +122,17 @@ private:
   uint8_t loadedPairBoxSlots = 0;
   // And the journal gets its OWN again, for the same reason.
   uint32_t focusGeneration = 0;
-  // The checkpoint plus both legacy blobs, exactly once. save() and boxSave()
-  // are names for it; calling them in sequence wrote the whole pair twice.
+  // The checkpoint, exactly once. save() and boxSave() are names for it;
+  // calling them in sequence wrote the whole pair twice.
   void persist();
+  // The legacy "party"/"box" blobs -- up to ~2 KB together, the single largest
+  // thing this firmware wrote to NVS -- used to be rewritten on every persist()
+  // (a catch, a farewell, a deposit), which was the dominant cost behind NVS
+  // exhaustion (see nvsinfo.cpp). They duplicated the pbA/pbB checkpoint byte
+  // for byte and the firmware never read them except on a double-checkpoint
+  // failure, so persist() no longer writes them at all; begin() still reads
+  // whatever a pre-existing device already has, which migrates an old save and
+  // remains the sole fallback if both checkpoint slots are ever lost together.
 };
 
 extern Party party;

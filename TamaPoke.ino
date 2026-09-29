@@ -40,7 +40,7 @@
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
-#define FW_VERSION "3.25"
+#define FW_VERSION "4.0"
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
   LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -112,6 +112,11 @@ uint8_t galleryFilterCount() { return GFILT_COUNT; }
 int16_t galleryDetail = 0;  // dex en vista detalle, 0 = rejilla
 
 bool screenOff = false;       // pulsacion corta del boton PWR
+// Cached from nvsLowOnSpace(), refreshed at boot and on the HEALTH heartbeat
+// rather than every frame -- nvs_get_stats() is not free, and drawSaveWarning()
+// runs on every render. See nvsinfo.cpp: a full partition is erased WHOLE on
+// the next boot, so this is the only advance notice a player ever gets.
+bool gNvsLow = false;
 bool cardOpen = false;        // ficha del bicho (deslizar vertical)
 bool kbOpen = false;
 enum : uint8_t { KB_PET = 0, KB_TRAINER };
@@ -1120,6 +1125,7 @@ void setup() {
   // an empty one. A full partition is erased WHOLE by the core on the next boot,
   // so this number trending down over a soak test is the only warning there is.
   nvsReport("boot");
+  gNvsLow = nvsLowOnSpace();
 
   // Covers the SOFTWARE restarts -- ESP.restart() after an IMPORT, and the one
   // the serial console does. It does NOT cover the AXP2101's 4-second hardware
@@ -1282,6 +1288,7 @@ void loop() {
     // reason: the value on its own says little, the trend over a soak says
     // everything. See nvsinfo.cpp for what running out costs.
     nvsReport("health");
+    gNvsLow = nvsLowOnSpace();
   }
 
   // 85 ms en juego/saco: margen seguro para que el redibujado no pise el envio
@@ -1553,6 +1560,10 @@ void handleSerial() {
     // Prints the whole save as a block of IMPORT commands. Pasting that block
     // back is the restore -- there is no separate format to get wrong, and no
     // single 2000-character line for a terminal to mangle.
+    //
+    // saveExport() reads the checkpoints only (see save.cpp) -- those are what
+    // save() and persist() write on every change, so nothing needs forcing
+    // fresh here first.
     static uint8_t buf[SAVE_TRANSFER_MAX];
     size_t n = saveExport(buf, sizeof(buf));
     if (!n) { Serial.println("EXPORT FAIL"); return; }
@@ -1651,6 +1662,7 @@ void handleSerial() {
     Serial.printf("save=%s pending=%d\n", pet.saveHealthy() ? "ok" : "BROKEN",
                   pet.savePending() ? 1 : 0);
     nvsReport("health");
+    gNvsLow = nvsLowOnSpace();
     Serial.println("DONE");
   } else if (line == "STATS") {
     // A stable per-board label, for the web installer's backup history so two
@@ -5370,6 +5382,10 @@ void battleTap(int16_t x, int16_t y) {
     if (btlMsgCount) return;
     if (btlOver) {
       btlFreeSprites();
+      // Its twin above (the btlWinUntil dismiss) already stops the music; a
+      // wild win/loss and a losing trainer fight end here instead and were the
+      // one path that left MUS_BATTLE/MUS_VICTORY looping under the next screen.
+      audioMusic(MUS_NONE);
       battleOpen = false;
       btlWild = false;
       // Back to the LAN screen rather than all the way out: that is where a
@@ -7854,8 +7870,16 @@ void drawBattery() {
   }
 }
 
-// Drawn beside the battery when Pet::saveHealthy() goes false: NVS would not
-// open, or it has refused three writes in a row.
+// Drawn beside the battery when Pet::saveHealthy() goes false (NVS would not
+// open, or it has refused three writes in a row) OR when gNvsLow is set (the
+// partition itself is close to full).
+//
+// The low-space case matters just as much: a full partition is erased WHOLE by
+// the Arduino core on the NEXT BOOT (see nvsinfo.cpp), so a save can still be
+// succeeding right up until a restart wipes every badge and every save on the
+// device. `nvsLowOnSpace()` existed only in the serial HEALTH log before this,
+// which is exactly how a player found out: by getting wiped, with no earlier
+// sign on the one screen they were actually looking at.
 //
 // Deliberately not a dialog. The condition persists, so a modal would be
 // dismissed once and then forgotten, and it is not actionable in the moment --
@@ -7863,7 +7887,7 @@ void drawBattery() {
 // EXPORT. The firmware could not say this at all before: the only symptom was a
 // line on a serial port no player has attached.
 void drawSaveWarning() {
-  if (pet.saveHealthy()) return;
+  if (pet.saveHealthy() && !gNvsLow) return;
   const int x = CX - 40, y = 11, w = 13, h = 13;
   gfx->fillTriangle(x + w / 2, y, x, y + h, x + w, y + h, UI_BAR_BAD);
   gfx->fillRect(x + w / 2, y + 5, 2, 4, RGB565_BLACK);   // the "!"

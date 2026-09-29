@@ -112,7 +112,13 @@ void Party::begin() {
   // Rewrite only after the checkpoint has had the last word. Doing this in the
   // legacy branch above could overwrite one half of a newer checkpoint before
   // it was read. A future larger checkpoint is deliberately left untouched.
-  if (boxNeedsRewrite && (!pairLoaded || loadedPairBoxSlots < BOX_SLOTS)) persist();
+  //
+  // !pairLoaded on its own (no box migration in play at all) still has to
+  // persist: the legacy "party"/"box" keys are never rewritten any more, so
+  // without this a save with no pair checkpoint yet -- a fresh install, or an
+  // exact-stride legacy party with no box key at all -- would leave EXPORT, or
+  // a crash, seeing an incomplete record until whatever incidentally saves next.
+  if (!pairLoaded || (boxNeedsRewrite && loadedPairBoxSlots < BOX_SLOTS)) persist();
 }
 
 // ---------------------------------------------------------------------------
@@ -130,9 +136,10 @@ void Party::begin() {
 // identical creatures are indistinguishable from one duplicated by a torn write.
 // One atomic record removes the question.
 //
-// The legacy "party" and "box" keys are still READ for migration and still
-// WRITTEN so a downgrade and the EXPORT backup keep working -- but they are no
-// longer what the firmware believes, exactly as with the pet.
+// The legacy "party" and "box" keys are still READ for migration, but they are
+// no longer written at all -- persist() writes the pbA/pbB checkpoint only,
+// exactly as with the pet. A downgrade to a build older than this change can no
+// longer read them; see CLAUDE.md's note above Party::persist()'s removal.
 //
 // Dimensions travel in the header for the same reason the player record carries
 // them: PARTY_SLOTS, BOX_SLOTS and sizeof(PartyMon) have all grown, and a struct
@@ -258,22 +265,17 @@ bool Party::loadPairFrom(uint8_t *buf, size_t cap) {
 // atomic without changing, and a swap is now one commit instead of two -- fewer
 // writes than before, not more.
 //
-// THE CHECKPOINT AND BOTH LEGACY BLOBS, ONCE. save() and boxSave() are the two
-// public names because the callers say which half they changed, but the record
-// does not care -- and calling them one after the other, which swapPartyBox()
-// did, wrote the ~1.2 KB pair TWICE for a single swap. That is the largest blob
-// in the store taking double the wear (nvsinfo.cpp exists to warn about exactly
-// this), and worse: after the second write BOTH alternating slots hold post-swap
-// data, so the previous complete state -- the whole reason there are two -- is
-// gone until the next save.
+// save() and boxSave() are the two public names because the callers say which
+// half they changed, but the record does not care -- and calling them one
+// after the other, which swapPartyBox() did, wrote the ~1.2 KB pair TWICE for
+// a single swap. That was the largest blob in the store taking double the
+// wear (nvsinfo.cpp exists to warn about exactly this).
+//
+// The legacy "party"/"box" blobs that used to be rewritten here on every call
+// are gone entirely -- see the comment above Party::persist() in party.h. Only
+// the checkpoint is written now.
 void Party::persist() {
   if (!savePair()) Serial.println("save: party checkpoint failed");
-  // Still written, both of them, on every persist. They are what a backup
-  // exports and what a downgrade reads, and writing only the half the caller
-  // said it touched would leave the other stale in exactly the backups nobody
-  // tests until they need one.
-  prefs.putBytes("party", slots, sizeof(slots));
-  prefs.putBytes("box", box, sizeof(box));
 }
 
 void Party::save() { persist(); }

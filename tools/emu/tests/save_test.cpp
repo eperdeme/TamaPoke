@@ -88,6 +88,10 @@ int main(){
 
   // --- a mangled blob must never be applied
   {
+    // Snapshotted whole rather than checking one legacy key's presence: since
+    // the checkpoint became the only thing save()/persist() write, there is no
+    // single scalar key guaranteed to exist that would prove this on its own.
+    NvsStore before = nvs();
     std::vector<uint8_t> t(buf, buf+n);
     t[0] = 'X';
     ck(!saveImport(t.data(), t.size()), "a blob with the wrong magic is refused");
@@ -101,7 +105,7 @@ int main(){
     ck(!saveImport(t.data(), t.size()), "and a truncated blob is refused");
     ck(!saveImport(buf, 3), "as is one too short to hold a header");
     // and none of that touched the live save
-    ck(nvs().count("party") == 1, "a refused import leaves the save alone");
+    ck(nvs() == before, "a refused import leaves the save alone");
   }
 
   // --- the real thing: wipe everything, restore, and compare

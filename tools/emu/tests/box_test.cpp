@@ -188,12 +188,18 @@ int main(){
     ck(all, "and every record lands at the right offset");
     ck(!g.box[0].hasCareState(),
        "a migrated record admits it predates care state rather than faking it");
-    // Migration must REWRITE at the current layout, or it runs on every boot
-    // and no appended field can ever be trusted.
-    Preferences chk; chk.begin("tamapoke", false);
-    ck(chk.getBytesLength("box") == sizeof(g.box),
-       "and it is rewritten in the current layout, once");
-    chk.end();
+    // Migration must REWRITE, or it runs on every boot and no appended field
+    // can ever be trusted. It lands in the pair CHECKPOINT now, not back into
+    // the legacy "box" key -- persist() no longer writes that key at all -- so
+    // prove it by deleting "box" and reloading: the checkpoint alone must
+    // still carry the migrated records forward.
+    Preferences wipe; wipe.begin("tamapoke", false);
+    wipe.remove("box");
+    wipe.end();
+    Party g2; g2.begin();
+    bool all2 = true;
+    for (int i=0;i<BOX_V323_SLOTS;i++) if (g2.box[i].dex != 30+i) all2=false;
+    ck(all2, "and it is rewritten in the current layout, once");
   }
 
   printf("%s\n", bad?"FAILURES":"all good");

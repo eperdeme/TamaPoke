@@ -6,40 +6,26 @@
 
 // Every key the firmware persists. Adding one here is the whole job of adding
 // it to the backup; save_test fails if a key exists in NVS and not in this list.
+//
+// This USED to also list ~50 individual scalar/blob keys ("full", "ivat",
+// "badg", "party", "box", ...) that duplicated the checkpoints below byte for
+// byte. They were the actual mechanism behind a real bug (github.com/eperdeme/
+// TamaPoke/issues/5, badges resetting to zero after a restart): writing all of
+// them on every save() turned 2 checkpoint writes into ~52, which is what
+// exhausts the 20 KB NVS partition and makes the Arduino core erase it whole on
+// the next boot. Removed rather than throttled -- see pet.h/party.h for where
+// they used to be and why the firmware never needed to read them except on a
+// double-checkpoint failure. The checkpoint is now the ONLY thing a backup
+// needs, because it is already the ONLY thing the firmware trusts on load.
 const SaveField SAVE_FIELDS[] = {
-  // the creature
-  { "init", SK_BOOL },  { "full", SK_U8 },    { "joy", SK_U8 },
-  { "ene", SK_U8 },     { "hyg", SK_U8 },     { "poop", SK_U8 },
-  { "wgt", SK_U8 },     { "age", SK_U32 },    { "dexn", SK_I16 },
-  { "eggT2", SK_I16 },  { "crack", SK_U8 },   { "mist", SK_U8 },
-  { "sleep", SK_BOOL }, { "lend", SK_U8 },    { "seen", SK_U32 },
-  // The alternating checkpoints. Redundant with the legacy scalars beside them
-  // on purpose: these are what the firmware actually BELIEVES on load, so a
-  // backup without them would restore a save the device then half-ignores.
+  { "init", SK_BOOL },
+  // The alternating checkpoints -- everything about the creature and the
+  // player lives here now. This IS the save; nothing below is redundant with it.
   { "petA", SK_BYTES }, { "petB", SK_BYTES },
   { "plyA", SK_BYTES }, { "plyB", SK_BYTES },
   { "pbA", SK_BYTES },  { "pbB", SK_BYTES },
-  { "bond", SK_U8 },    { "nick", SK_STR },   { "froz", SK_BOOL },
-  // individual values and training
-  { "ivat", SK_U8 },    { "ivdf", SK_U8 },    { "ivsp", SK_U8 },
-  { "ivhp", SK_U8 },    { "tatk", SK_U8 },    { "tdef", SK_U8 },
-  { "tspe", SK_U8 },
-  // moves
-  { "mvs", SK_BYTES },  { "mvlv", SK_U8 },
-  // flags
-  { "bk", SK_BOOL },    { "shy", SK_BOOL },   { "eshy", SK_BOOL },
-  { "stpk", SK_BOOL },  { "evop", SK_U8 },    { "slpa", SK_U8 },    { "rtpn", SK_BOOL },
-  // the player: outlives every creature, which is exactly why it must be here
-  { "tnam", SK_STR },   { "avtr", SK_U8 },    { "badg", SK_U16 },
-  { "reg", SK_U8 },     { "eggR", SK_BYTES }, { "regn", SK_U8 },
-  { "badgX", SK_BYTES },{ "badhX", SK_BYTES },
-  { "badh", SK_U16 },   { "dexreg", SK_BYTES }, { "dexsh", SK_BYTES },
-  { "strk", SK_U16 },   { "bstrk", SK_U16 },  { "cday", SK_U32 },
-  { "medal", SK_U16 },  { "tmedal", SK_U16 }, { "mstone", SK_U16 },
-  { "ghi", SK_U16 },    { "shi", SK_U16 },    { "qhi", SK_U16 },
-  { "mhi", SK_U16 },    // the memory game's record, beside the other three
-  // the banked creatures, and what you are carrying
-  { "party", SK_BYTES }, { "box", SK_BYTES }, { "bag", SK_BYTES },
+  // What has no checkpoint of its own
+  { "bag", SK_BYTES },
   // settings, so a restored device plays the way it did
   { "lang", SK_U8 },    { "snd", SK_BOOL },   { "vol", SK_U8 },
   // Screen brightness, 1..BRIGHT_LEVELS. Here beside the volume it mirrors, and
@@ -51,11 +37,6 @@ const SaveField SAVE_FIELDS[] = {
 };
 const uint16_t SAVE_FIELD_COUNT = sizeof(SAVE_FIELDS) / sizeof(SAVE_FIELDS[0]);
 
-// The largest single value in the backup, which is the box: BOX_SLOTS whole
-// records. DERIVED, never a literal. It was written as 768 when a PartyMon was
-// 42 bytes, and the moment the record grew the box silently stopped being
-// restored while every other field still was -- a backup that is quietly
-// partial is worse than none. save_test caught exactly that.
 // The largest single value in the backup. It USED to be the box -- BOX_SLOTS
 // whole records -- and is now the party+box CHECKPOINT, which holds both arrays
 // plus its own header. Getting this wrong does not fail loudly: readField()

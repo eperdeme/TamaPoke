@@ -81,11 +81,6 @@ static const char *newerSlot(const char *a, const char *b) {
   return genOf(x) > genOf(y) ? a : b;
 }
 
-static bool dexBitSet(const std::vector<uint8_t> &blob, int16_t dex) {
-  size_t idx = (size_t)((dex - 1) >> 3);
-  return idx < blob.size() && (blob[idx] & (1 << ((dex - 1) & 7)));
-}
-
 // Poisons the legacy keys so that anything the CHECKPOINT fails to supply reads
 // back obviously wrong.
 //
@@ -135,9 +130,12 @@ int main() {
     seedDratini(pet);
     raiseDragonair(pet);
 
-    // In the legacy write order, eleven successful writes stop immediately
-    // after tatk. This is the field pattern reported in issue #3.
-    nvsFailWritesAfter(11);
+    // The creature is ONE blob now, not ~50 keys, so a cut cannot land "after
+    // the Attack write" any more -- putBytes() is all-or-nothing here, the same
+    // as a single NVS commit on the real board. What is still worth proving:
+    // the very NEXT write (the player record) being refused right after must
+    // not touch the creature checkpoint that already landed.
+    nvsFailWritesAfter(1);
     pet.saveNow();
     nvsResumeWrites();
 
@@ -146,9 +144,9 @@ int main() {
     printf("      loaded dex=%d age=%lu training=%u/%u/%u\n", loaded.speciesId,
            (unsigned long)loaded.ageMinutes, loaded.trAtk, loaded.trDef, loaded.trSpe);
     ck(loaded.speciesId == 148 && loaded.ageMinutes == 35UL * MINUTES_PER_LEVEL,
-       "a cut after the Attack write does not devolve the creature");
+       "a cut on the very next write does not devolve the creature");
     ck(loaded.trAtk == 100 && loaded.trDef == 100 && loaded.trSpe == 100,
-       "a cut after the Attack write keeps all three training values together");
+       "and keeps all three training values together");
   }
 
   {
@@ -192,10 +190,12 @@ int main() {
 
   // --- the PLAYER's progress, which the first fix did not cover -------------
   //
-  // Badges, the Pokedex, the streak and the records were ~25 more keys written
-  // one after another. A cut between the badge arrays and the dex bitmap leaves
-  // a badge won with no record of the creature that earned it: issue #3's exact
-  // shape, one layer out.
+  // Badges, the Pokedex, the streak and the records used to be ~25 keys written
+  // one after another, and a cut between the badge arrays and the dex bitmap
+  // left a badge won with no record of the creature that earned it: issue #3's
+  // exact shape, one layer out. They are ONE blob now, so there is no ordering
+  // left for a cut to land "between" -- what is worth proving is that a refused
+  // player write commits NEITHER half, rather than one without the other.
   {
     nvs().clear();
     Pet pet;
@@ -207,24 +207,19 @@ int main() {
     pet.badgesX[0] = 0x0F;               // four Johto badges
     pet.dexReg[(FAR_DEX - 1) >> 3] |= 1 << ((FAR_DEX - 1) & 7);
 
-    // Two checkpoint writes, then twenty legacy ones: badgX is the 19th and
-    // badhX the 20th, so this stops with the badges written and dexreg still
-    // holding the baseline. The exact count is not the point -- the companion
-    // assertion below is what proves the cut landed where it was meant to.
-    nvsFailWritesAfter(2 + 20);
+    // The pet checkpoint commits (nothing about the creature changed here, but
+    // it still writes); the player checkpoint right after it is refused.
+    nvsFailWritesAfter(1);
     pet.saveNow();
     nvsResumeWrites();
 
-    // PROVE THE MECHANISM ENGAGED. Without this the assertion after it would
-    // pass just as happily with the player checkpoint removed, and if a key is
-    // ever added to the legacy run and the cut moves, this fails loudly rather
-    // than the test quietly proving nothing. CLAUDE.md § "A test that proves the
-    // transcription rather than the firmware" is a list of what that costs.
-    bool legacyBadge = slotBytes("badgX").size() >= 2 && nvs()["badgX"][0] == 0x0F;
-    bool legacyDex = dexBitSet(slotBytes("dexreg"), FAR_DEX);
-    ck(legacyBadge && !legacyDex,
-       "the cut really did land between the badge keys and the Pokedex");
+    Pet cut;
+    cut.begin();
+    ck(cut.badgesX[0] != 0x0F && !cut.isRegistered(FAR_DEX),
+       "a refused player write commits neither the badge nor the Pokedex bit");
 
+    // And a save that is allowed to finish carries both together, as one blob.
+    pet.saveNow();
     Pet loaded;
     loaded.begin();
     ck(loaded.badgesX[0] == 0x0F && loaded.isRegistered(FAR_DEX),

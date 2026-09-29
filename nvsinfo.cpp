@@ -20,9 +20,12 @@
 //
 // This cannot prevent that. What it does is put the number in the log at boot
 // and in the HEALTH heartbeat, so the trend is visible during a soak test rather
-// than discovered by a wiped board. The real fix is fewer writes per save --
-// see the checkpoint note in pet.cpp, and the ~50 legacy keys still written
-// beside them.
+// than discovered by a wiped board. The real fix WAS fewer writes per save --
+// see the checkpoint note in pet.cpp -- and it landed: the ~50 legacy scalar
+// keys that used to be rewritten beside the checkpoint on every save() are gone
+// (github.com/eperdeme/TamaPoke/issues/5), which is what was actually
+// exhausting this partition. What is left to watch is ordinary growth: the
+// checkpoints themselves getting bigger as the dex/box/etc. grow.
 //
 // Not compiled into the emulator: its NVS is a std::map with no partition to
 // exhaust, so host_impl.cpp stubs these. Same arrangement as rtcbat.cpp.

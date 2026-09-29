@@ -1814,13 +1814,13 @@ bool Pet::loadCoreSnapshot() {
   return true;
 }
 
+// LEGACY_SYNC_MS used to throttle a second write pass over ~40 scalar keys
+// here; that pass is gone entirely now (see the comment beside lastTick in
+// pet.h) rather than merely throttled. save() writes the checkpoint only.
 void Pet::save() {
   if (!opened) return;
-  // Both checkpoints go first, and a failure in either one returns BEFORE the
-  // legacy keys are touched. That ordering is the point: the legacy keys are
-  // still what a backup exports and what a downgrade reads, so a half-finished
-  // run through them is a real save that nothing can see is broken. Leaving
-  // them entirely alone means the previous save stays the previous save.
+  // A failure returns before anything else runs, so a rejected write leaves
+  // the previous checkpoint exactly as it was rather than half-updating it.
   if (!saveCoreSnapshot()) {
     pendingSave = true;
     if (saveFailures < 255) saveFailures++;
@@ -1836,60 +1836,6 @@ void Pet::save() {
   ticksSinceSave = 0;
   pendingSave = false;
   saveFailures = 0;
-  prefs.putUChar("full", fullness);
-  prefs.putUChar("joy", joy);
-  prefs.putUChar("ene", energy);
-  prefs.putUChar("hyg", hygiene);
-  prefs.putUChar("poop", poops);
-  prefs.putUChar("wgt", weight);
-  prefs.putUChar("ivat", ivAtk);
-  prefs.putUChar("ivdf", ivDef);
-  prefs.putUChar("ivsp", ivSpe);
-  prefs.putUChar("ivhp", ivHp);
-  prefs.putUChar("tatk", trAtk);
-  prefs.putUChar("tdef", trDef);
-  prefs.putUChar("tspe", trSpe);
-  prefs.putBytes("mvs", moves, sizeof(moves));
-  prefs.putUChar("mvlv", lastLearnLevel);
-  prefs.putUChar("avtr", avatar);
-  prefs.putUChar("reg", region);
-  prefs.putUChar("regn", REGION_COUNT);   // what REGION_ALL meant when this was written
-  prefs.putBytes("badgX", badgesX, sizeof(badgesX));
-  prefs.putBytes("badhX", badgesHardX, sizeof(badgesHardX));
-  prefs.putBytes("eggR", eggByRegion, sizeof(eggByRegion));
-  prefs.putString("tnam", trainerName);
-  prefs.putBool("froz", frozen);
-  prefs.putUShort("badg", badges);
-  prefs.putUShort("badh", badgesHard);
-  prefs.putBool("bk", berryKnown);
-  prefs.putBool("shy", shiny);
-  prefs.putBool("eshy", eggShiny);
-  prefs.putBool("stpk", starterPick);
-  prefs.putUChar("evop", evoPen);
-  prefs.putUChar("slpa", sleepAuto);
-  prefs.putBool("rtpn", retirePending);
-  prefs.putBytes("dexsh", dexShinyReg, sizeof(dexShinyReg));
-  prefs.putUInt("age", ageMinutes);
-  prefs.putShort("dexn", speciesId);
-  prefs.putShort("eggT2", eggTarget);
-  prefs.putUChar("crack", eggTaps);
-  prefs.putUChar("mist", careMistakes);
-  prefs.putBool("sleep", sleeping);
-  prefs.putUChar("lend", lastEnd);
-  if (lastSeenEpoch) prefs.putUInt("seen", lastSeenEpoch);
-  prefs.putBytes("dexreg", dexReg, sizeof(dexReg));
-  prefs.putUShort("strk", streak);
-  prefs.putUShort("bstrk", bestStreak);
-  prefs.putUInt("cday", lastCareDay);
-  prefs.putUChar("bond", bond);
-  prefs.putUShort("medal", medals);
-  prefs.putUShort("tmedal", totalMedals);
-  prefs.putUShort("mstone", lastMilestone);
-  prefs.putUShort("ghi", gameHi);
-  prefs.putUShort("shi", strHi);
-  prefs.putUShort("qhi", spdHi);
-  prefs.putUShort("mhi", memoHi);
-  prefs.putString("nick", nick);
 }
 
 void Pet::load() {
@@ -1996,14 +1942,16 @@ void Pet::load() {
   // The player's progress, on the same terms as the creature's below: if the
   // record is there it is what the firmware believes, and the legacy keys read
   // above were only the migration path.
-  if (!loadPlayerSnapshot() && (prefs.isKey("plyA") || prefs.isKey("plyB")))
+  const bool playerCkptLoaded = loadPlayerSnapshot();
+  if (!playerCkptLoaded && (prefs.isKey("plyA") || prefs.isKey("plyB")))
     Serial.println("save: BOTH player checkpoints failed; using legacy keys");
 
   // The checkpoint is the truth about the creature; the legacy reads above are
   // what a save from before it existed has, and what a backup restores. Both
   // clamps have to be re-applied, because the checkpoint bypassed the ones the
   // legacy path already did.
-  if (loadCoreSnapshot()) {
+  const bool petCkptLoaded = loadCoreSnapshot();
+  if (petCkptLoaded) {
     if (trAtk > trMaxAtk()) trAtk = trMaxAtk();
     if (trDef > trMaxDef()) trDef = trMaxDef();
     if (trSpe > trMaxSpe()) trSpe = trMaxSpe();
@@ -2017,7 +1965,7 @@ void Pet::load() {
     Serial.println("save: BOTH pet checkpoints failed; using legacy keys");
   } else if (prefs.isKey("dexn")) {
     // Normal exactly once per device: a save written by a build from before the
-    // checkpoints existed. The next save creates them.
+    // checkpoints existed.
     Serial.println("save: no pet checkpoint yet, migrating from legacy keys");
   }
   if (!isEgg() && moveCount() == 0 && lastLearnLevel == 0) {
@@ -2030,4 +1978,10 @@ void Pet::load() {
   checkLearnGates();
   // siembra: la mascota actual cuenta como criada (guardados antiguos)
   if (speciesId >= 1) registerSpecies(speciesId);
+  // Now that the legacy keys are the ONLY migration path and are never
+  // rewritten, a checkpoint missing here would otherwise wait for "the next
+  // save" to exist at all -- and EXPORT, or a crash, between boot and whatever
+  // incidentally triggers one would see an incomplete record. Create it now,
+  // once, so the checkpoint is authoritative the moment begin() returns.
+  if (!petCkptLoaded || !playerCkptLoaded) save();
 }

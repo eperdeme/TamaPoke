@@ -180,6 +180,15 @@ int main(){
   {
     Preferences pr;
     pr.begin("tamapoke", false);
+    // Pet::load() now persists a checkpoint the moment it migrates from legacy
+    // keys (rather than waiting for the next incidental save), so the round
+    // trip two blocks up already left a valid plyA/plyB in this store. This
+    // fixture means to be a save that has NEVER been through this build's
+    // checkpoint at all -- only ever a LATER build's bigger dex/badges as raw
+    // legacy keys -- so the lingering player checkpoint has to go first, or
+    // q.begin() below would just read that instead of the fixture.
+    pr.remove("plyA");
+    pr.remove("plyB");
     // a dex bitmap from a build whose DEX_COUNT was larger than ours
     std::vector<uint8_t> big(sizeof(((Pet*)nullptr)->dexReg) + 24, 0);
     big[(25 - 1) >> 3] |= 1 << ((25 - 1) & 7);      // PIKACHU registered
