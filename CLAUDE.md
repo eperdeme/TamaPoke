@@ -1340,21 +1340,18 @@ Four things about it that are easy to get wrong:
   breaks the moment one write succeeds and the other does not.
   `powerloss_test` pins the invariant directly.
 
-The ~50 legacy keys are GONE from `save()`/`persist()` as of the release that
-closed github.com/eperdeme/TamaPoke/issues/5 (badges resetting to zero after a
-restart): writing all of them on every save turned 2 checkpoint writes into
-~55, which is what actually exhausted the 20 KB `nvs` partition and made the
-Arduino core erase it whole on the next boot. `load()`/`Party::begin()` still
-READ them once, as the migration path for a save from before the checkpoint
-existed, and `Pet::load()`/`Party::begin()` now persist the checkpoint
-immediately the moment that migration happens rather than waiting for the next
-incidental save -- so `EXPORT` (which now backs up the checkpoint keys only,
-see `save.cpp`'s `SAVE_FIELDS`) is never missing the creature just because
-nothing else has saved yet. **This was a one-way door, deliberately taken**:
-a save exported by this build or later cannot be restored by a build older
-than this change, because the old build only knows how to read the legacy
-scalar keys this one no longer writes. Bump the firmware's major version with
-it, and say so in the release notes.
+The ~50 legacy keys stopped being written in v4.0 to reduce duplicate writes.
+That was **not a verified fix for issue #5**: `buildSquad()` copied the live
+`Pet`, including its owning `Preferences` handle. Destroying the temporary
+closed the real pet's NVS handle, so badge saves failed. The emulator missed
+it because `Preferences::end()` was a no-op. `Pet` is now non-copyable, and
+combatant level caps do not require a copy. The stub models shared-handle
+closure and `touch_test` checks the badge and training after reload.
+
+`load()`/`Party::begin()` retain the legacy upgrade path and persist its
+checkpoint immediately so `EXPORT` does not omit a freshly migrated save.
+Downgrades are unsupported; in particular, pre-checkpoint firmware cannot read
+a checkpoint-only backup. Forward migration must continue preserving saves.
 
 `powerloss_test` covers all of it, and every guard in it was negative-checked by
 breaking the firmware on purpose. Note `poisonLegacy()` in that file: almost

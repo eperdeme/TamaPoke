@@ -6,6 +6,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include <memory>
 
 typedef std::map<std::string, std::vector<uint8_t>> NvsStore;
 
@@ -48,14 +49,24 @@ public:
   // for is decided there. It defaults to the game's so an instance used without
   // begin() behaves as this stub always did.
   NvsStore *ns = &nvs();
+  std::shared_ptr<bool> handle;
+  bool readOnly = false;
   NvsStore &kv() { return *ns; }
-  bool begin(const char *name, bool = false) { ns = &nvsNamed(name); return true; }
-  void end() {}
+  bool readable() const { return !handle || *handle; }
+  bool writable() const { return readable() && !readOnly; }
+  bool begin(const char *name, bool ro = false) {
+    ns = &nvsNamed(name);
+    handle = std::make_shared<bool>(true);
+    readOnly = ro;
+    return true;
+  }
+  void end() { if (handle) *handle = false; }
+  ~Preferences() { end(); }
   // Empties ONLY this namespace. That is the whole point of the separation:
   // Pet::factoryReset() clears the game's keys and must not be able to reach
   // the reset intent that asked for it.
-  void clear() { kv().clear(); }
-  bool isKey(const char *k) { return kv().count(k) != 0; }
+  void clear() { if (writable()) kv().clear(); }
+  bool isKey(const char *k) { return readable() && kv().count(k) != 0; }
   // Arduino's Preferences has this and the stub did not, so anything that
   // retracts a single key had no way to be tested. Returns false for a key that
   // was not there, which is what the real one does.
@@ -66,18 +77,19 @@ public:
   // journal would vanish exactly when the crash it exists for happened, and the
   // test would report a tear the firmware had actually survived.
   bool remove(const char *k) {
-    if (!nvsCanWrite()) return false;
+    if (!writable() || !nvsCanWrite()) return false;
     return kv().erase(k) != 0;
   }
 
   template <typename T> size_t putT(const char *k, T v) {
-    if (!nvsCanWrite()) return 0;
+    if (!writable() || !nvsCanWrite()) return 0;
     std::vector<uint8_t> b(sizeof(T));
     memcpy(b.data(), &v, sizeof(T));
     kv()[k] = b;
     return sizeof(T);
   }
   template <typename T> T getT(const char *k, T d) {
+    if (!readable()) return d;
     auto it = kv().find(k);
     if (it == kv().end() || it->second.size() != sizeof(T)) return d;
     T v; memcpy(&v, it->second.data(), sizeof(T)); return v;
@@ -95,7 +107,7 @@ public:
   size_t putUShort(const char *k, uint16_t v) { return putT(k, v); }
   uint16_t getUShort(const char *k, uint16_t d = 0) { return getT(k, d); }
   size_t putBytes(const char *k, const void *p, size_t n) {
-    if (!nvsCanWrite()) return 0;
+    if (!writable() || !nvsCanWrite()) return 0;
     const uint8_t *b = (const uint8_t *)p;
     kv()[k] = std::vector<uint8_t>(b, b + n);
     return n;
@@ -103,6 +115,7 @@ public:
   // Size of a stored blob, 0 if absent. The firmware uses it to tell an
   // old, shorter record layout from the current one (see Party::begin).
   size_t getBytesLength(const char *k) {
+    if (!readable()) return 0;
     auto it = kv().find(k);
     return it == kv().end() ? 0 : it->second.size();
   }
@@ -118,6 +131,7 @@ public:
   // the badge arrays and eggByRegion at their zero initialiser on a real board,
   // while every test on this stub happily read a sane prefix and passed.
   size_t getBytes(const char *k, void *p, size_t n) {
+    if (!readable()) return 0;
     auto it = kv().find(k);
     if (it == kv().end()) return 0;
     if (it->second.size() > n) return 0;      // hardware copies nothing here
@@ -125,11 +139,12 @@ public:
     return it->second.size();
   }
   size_t putString(const char *k, const char *v) {
-    if (!nvsCanWrite()) return 0;
+    if (!writable() || !nvsCanWrite()) return 0;
     kv()[k] = std::vector<uint8_t>(v, v + strlen(v) + 1);
     return strlen(v) + 1;
   }
   size_t getString(const char *k, char *out, size_t n) {
+    if (!readable()) { if (n) out[0] = 0; return 0; }
     auto it = kv().find(k);
     if (it == kv().end()) { if (n) out[0] = 0; return 0; }
     size_t c = it->second.size() < n ? it->second.size() : n - 1;

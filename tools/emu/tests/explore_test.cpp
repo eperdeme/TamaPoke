@@ -60,6 +60,16 @@ static bool measureRegionControl(int8_t direction, int16_t &left, int16_t &top,
 }
 
 int main() {
+  {
+    Preferences owner;
+    owner.begin("handle-probe", false);
+    {
+      Preferences alias = owner;
+      ck(alias.putUChar("probe", 1) == 1, "a copied Preferences initially shares the open handle");
+    }
+    ck(owner.putUChar("probe", 2) == 0,
+       "destroying a copied Preferences closes the original handle, like real NVS");
+  }
   setup();
   pet.setRegion(0);
   pet.dbgHatchAs(6, false);
@@ -93,6 +103,12 @@ int main() {
   ck(startWildBattle(1, false), "an installed selected region starts an encounter");
   ck(wildDex >= REGIONS[1].lo && wildDex <= REGIONS[1].hi,
      "the encounter comes from the selected region, not the egg region");
+    pet.rename("AFTERWILD");
+    ck(pet.saveHealthy() && !pet.savePending(), "starting a wild battle does not invalidate saving");
+    Pet afterEncounter;
+    afterEncounter.begin();
+    ck(afterEncounter.speciesId == pet.speciesId && !strcmp(afterEncounter.nick, "AFTERWILD"),
+      "a save made after starting the encounter survives reload");
 
   // ---- THE SPRITE-PACK GATE NOW COVERS THE GYM LADDERS TOO
   //

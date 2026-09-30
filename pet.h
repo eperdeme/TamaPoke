@@ -143,6 +143,10 @@ bool speciesShowable(int16_t d);
 
 class Pet {
 public:
+  Pet() = default;
+  Pet(const Pet &) = delete;
+  Pet &operator=(const Pet &) = delete;
+
   // Estadisticas 0..100
   uint8_t fullness = 80;  // comida
   uint8_t joy = 80;       // felicidad
@@ -614,15 +618,7 @@ private:
   // to be its OWN last plus one for the parity invariant in ckptSlot() to hold.
   uint32_t saveGeneration = 0;
   uint32_t playerGeneration = 0;
-  // The ~40 legacy scalar keys used to duplicate the two checkpoints byte for
-  // byte, purely for EXPORT/downgrade -- the firmware itself only ever read
-  // them when BOTH checkpoint slots failed at once. Writing all of them on
-  // every save() (a badge win, a feeding) is what actually exhausted NVS (see
-  // nvsinfo.cpp and github.com/eperdeme/TamaPoke/issues/5), so they are gone:
-  // the checkpoint is now the ONLY thing save() writes. load() still reads any
-  // legacy keys already on a device from before this change, which is what
-  // migrates a pre-checkpoint save and is the sole remaining fallback if both
-  // checkpoint slots are ever lost at once -- it just never writes new ones.
+  // Legacy keys are migration-only; save() writes the checkpoints.
   uint32_t lastTick = 0;
   uint32_t eatUntil = 0;
   uint32_t heartUntil = 0;

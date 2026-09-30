@@ -233,10 +233,17 @@ bool Pet::savePlayerSnapshot() {
 
   uint16_t total = ckptSeal(buf, cur.at, PLAYER_MAGIC, PLAYER_VERSION, nextGen);
   const char *key = ckptSlot(nextGen, "plyA", "plyB");
-  if (prefs.putBytes(key, buf, total) != total) return false;
+  const size_t written = prefs.putBytes(key, buf, total);
+  if (written != total) {
+    Serial.printf("save: %s wrote %u/%u bytes\n", key, (unsigned)written, (unsigned)total);
+    return false;
+  }
   // Read back into the same buffer and re-check, exactly as the creature's does.
   uint16_t n = ckptRead(prefs, key, PLAYER_MAGIC, buf, sizeof(buf));
-  if (n != total || ckptRd32(buf + 8) != nextGen) return false;
+  if (n != total || ckptRd32(buf + 8) != nextGen) {
+    Serial.printf("save: %s read-back failed (%u/%u bytes)\n", key, (unsigned)n, (unsigned)total);
+    return false;
+  }
   playerGeneration = nextGen;
   return true;
 }
@@ -1747,14 +1754,20 @@ bool Pet::saveCoreSnapshot() {
 
   uint16_t total = ckptSeal(buf, PET_BODY, PET_CORE_MAGIC, PET_CORE_VERSION, nextGen);
   const char *key = ckptSlot(nextGen, "petA", "petB");
-  if (prefs.putBytes(key, buf, total) != total) return false;
+  const size_t writtenBytes = prefs.putBytes(key, buf, total);
+  if (writtenBytes != total) {
+    Serial.printf("save: %s wrote %u/%u bytes\n", key, (unsigned)writtenBytes, (unsigned)total);
+    return false;
+  }
   // Read it back and re-check the CRC before believing it. This catches a
   // rejected or short write, which is what a full or failing NVS looks like
   // from up here -- it cannot catch a marginal cell that reads correctly now
   // and decays later, which is what the second slot is for.
   PetCoreSnapshot written;
-  if (!readPetCore(prefs, key, written) || written.generation != nextGen)
+  if (!readPetCore(prefs, key, written) || written.generation != nextGen) {
+    Serial.printf("save: %s read-back failed\n", key);
     return false;
+  }
   saveGeneration = nextGen;
   return true;
 }

@@ -390,6 +390,18 @@ int main(int argc, char **argv) {
   if (!btlWon) { printf("FAIL: a L100 creature lost to Brock\n"); return 1; }
   if (!pet.hasBadge(0, 0, false) || hadBadge) { printf("FAIL: no badge awarded\n"); return 1; }
   printf("PASS: beating a leader awards its badge (%u/8)\n", pet.badgeCount(false));
+  if (!pet.saveHealthy() || pet.savePending()) {
+    printf("FAIL: the gym win left saving broken or pending\n");
+    return 1;
+  }
+  Pet afterGym;
+  afterGym.begin();
+  if (!afterGym.hasBadge(0, 0, false) || afterGym.trAtk != pet.trAtk ||
+      afterGym.trDef != pet.trDef || afterGym.trSpe != pet.trSpe) {
+    printf("FAIL: the gym badge or its training reward did not survive reload\n");
+    return 1;
+  }
+  printf("PASS: a gym win keeps saving healthy and its badge and training survive reload\n");
 
   // The selected region becomes battle-owned state. Replacements and badge
   // awards use btlRegion, not the gym chooser's mutable region.

@@ -15,9 +15,15 @@ static void fill(Combatant &c, int16_t dex, uint8_t lvl, uint16_t hp,
   c.base[SI_SPA] = sa; c.base[SI_SPD] = sd; c.base[SI_SPE] = sp;
 }
 
-void combatantFromPet(Combatant &c, const Pet &p) {
-  fill(c, p.speciesId, p.level(), p.vitStat(), p.atkStat(), p.defStat(),
-       p.spaStat(), p.spdStat(), p.speStat());
+void combatantFromPet(Combatant &c, const Pet &p, uint8_t levelCap) {
+  PartyMon stats;
+  stats.dex = p.speciesId;
+  stats.level = levelCap && p.level() > levelCap ? levelCap : p.level();
+  stats.ivAtk = p.ivAtk; stats.ivDef = p.ivDef;
+  stats.ivSpe = p.ivSpe; stats.ivHp = p.ivHp;
+  stats.trAtk = p.trAtk; stats.trDef = p.trDef; stats.trSpe = p.trSpe;
+  fill(c, stats.dex, (uint8_t)stats.level, party.vitOf(stats), party.atkOf(stats),
+    party.defOf(stats), party.spaOf(stats), party.spdOf(stats), party.speOf(stats));
   for (int i = 0; i < MOVE_SLOTS; i++) c.moves[i] = p.moves[i];
   c.shiny = p.shiny;
   const char *nm = p.nick[0] ? p.nick : DEX_TBL[p.speciesId].name;

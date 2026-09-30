@@ -7,16 +7,7 @@
 // Every key the firmware persists. Adding one here is the whole job of adding
 // it to the backup; save_test fails if a key exists in NVS and not in this list.
 //
-// This USED to also list ~50 individual scalar/blob keys ("full", "ivat",
-// "badg", "party", "box", ...) that duplicated the checkpoints below byte for
-// byte. They were the actual mechanism behind a real bug (github.com/eperdeme/
-// TamaPoke/issues/5, badges resetting to zero after a restart): writing all of
-// them on every save() turned 2 checkpoint writes into ~52, which is what
-// exhausts the 20 KB NVS partition and makes the Arduino core erase it whole on
-// the next boot. Removed rather than throttled -- see pet.h/party.h for where
-// they used to be and why the firmware never needed to read them except on a
-// double-checkpoint failure. The checkpoint is now the ONLY thing a backup
-// needs, because it is already the ONLY thing the firmware trusts on load.
+// Legacy fields migrate on load; exports keep checkpoints and standalone keys.
 const SaveField SAVE_FIELDS[] = {
   { "init", SK_BOOL },
   // The alternating checkpoints -- everything about the creature and the

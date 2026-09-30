@@ -6,9 +6,7 @@
 // `nvs` 20 KB -- five pages, roughly 630 entries of 32 bytes -- and NVS needs a
 // free page in hand to compact into.
 //
-// If it ever runs out, nvs_flash_init() returns ESP_ERR_NVS_NO_FREE_PAGES, and
-// the Arduino core's response (esp32-hal-misc.c, initArduino) is to ERASE THE
-// ENTIRE PARTITION before setup() is ever reached:
+// Arduino erases NVS before setup() if initialization reports NO_FREE_PAGES.
 //
 //     err = nvs_flash_init();
 //     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -18,14 +16,7 @@
 // firmware could not see it coming either: putX() returning short was discarded
 // at every call site except the checkpoints.
 //
-// This cannot prevent that. What it does is put the number in the log at boot
-// and in the HEALTH heartbeat, so the trend is visible during a soak test rather
-// than discovered by a wiped board. The real fix WAS fewer writes per save --
-// see the checkpoint note in pet.cpp -- and it landed: the ~50 legacy scalar
-// keys that used to be rewritten beside the checkpoint on every save() are gone
-// (github.com/eperdeme/TamaPoke/issues/5), which is what was actually
-// exhausting this partition. What is left to watch is ordinary growth: the
-// checkpoints themselves getting bigger as the dex/box/etc. grow.
+// Headroom is diagnostic; a failed save can also mean an invalid NVS handle.
 //
 // Not compiled into the emulator: its NVS is a std::map with no partition to
 // exhaust, so host_impl.cpp stubs these. Same arrangement as rtcbat.cpp.
@@ -62,6 +53,5 @@ void nvsReport(const char *when) {
   Serial.printf("nvs %s: used=%lu avail=%lu total=%lu\n", when,
                 (unsigned long)used, (unsigned long)avail, (unsigned long)total);
   if (avail < NVS_LOW_ENTRIES)
-    Serial.printf("nvs %s: LOW -- a full partition is erased WHOLE on the next "
-                  "boot; EXPORT now\n", when);
+    Serial.printf("nvs %s: LOW -- limited save headroom; EXPORT a backup\n", when);
 }

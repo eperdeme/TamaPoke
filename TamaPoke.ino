@@ -40,7 +40,7 @@
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
-#define FW_VERSION "4.0"
+#define FW_VERSION "4.1"
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
   LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -4465,10 +4465,7 @@ static void buildSquad(uint8_t maxLvl, uint8_t maxCount, uint16_t mask) {
   btlPetIn = false;
   if (maxCount > TRAINER_TEAM_MAX) maxCount = TRAINER_TEAM_MAX;
   if (!pet.isEgg() && btlSquadN < maxCount && (mask & 1)) {
-    Pet tmp = pet;                       // a copy: the real pet is untouched
-    if (maxLvl && tmp.level() > maxLvl)
-      tmp.ageMinutes = (uint32_t)(maxLvl - 1) * MINUTES_PER_LEVEL;
-    combatantFromPet(btlSquad[btlSquadN++], tmp);
+    combatantFromPet(btlSquad[btlSquadN++], pet, maxLvl);
     btlPetIn = true;      // the training reward goes to whoever fought for it
   }
   for (int i = 0; i < PARTY_SLOTS && btlSquadN < maxCount; i++) {

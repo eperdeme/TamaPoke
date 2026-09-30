@@ -70,7 +70,7 @@ needs_sketch() { case "$1" in touch_test|flush_test|joy_test|anim_test|swipe_tes
 # and these are standalone: gbsynth.cpp has no Arduino dependency at all, which
 # is the point of it -- linking the game core in would only demand stubs for
 # symbols the test never calls.
-standalone() { case "$1" in synth_test|palette_test|cry_test|crc32_test) return 0;; *) return 1;; esac; }
+standalone() { case "$1" in audio_test|synth_test|palette_test|cry_test|crc32_test) return 0;; *) return 1;; esac; }
 
 # sprite_test drives PmdMon straight off the sprite directory, so it needs the
 # host's SD stubs but none of the sketch
@@ -135,7 +135,9 @@ run_one() {
   standalone "$name" && objs=("$OBJ/gbsynth.o")
   needs_sketch "$name" && objs+=("${SKETCH_O[@]}")
   needs_host "$name" && objs+=("${HOST_O[@]}")
-  if ! g++ "${FLAGS[@]}" -o "$suite_out/test" "$src" "${objs[@]}" 2>"$suite_out/compile.log"; then
+  suite_flags=("${FLAGS[@]}")
+  [ "$name" = audio_test ] && suite_flags+=(-I"$HERE/audio_stubs")
+  if ! g++ "${suite_flags[@]}" -o "$suite_out/test" "$src" "${objs[@]}" 2>"$suite_out/compile.log"; then
     { echo "=== $name: DID NOT COMPILE"; tail -5 "$suite_out/compile.log"; } >"$suite_out/output"
     echo fail >"$suite_out/status"
     return

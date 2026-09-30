@@ -32,7 +32,7 @@ struct Combatant {
   bool fainted() const { return hp == 0; }
 };
 
-void combatantFromPet(Combatant &c, const Pet &p);
+void combatantFromPet(Combatant &c, const Pet &p, uint8_t levelCap = 0);
 void combatantFromParty(Combatant &c, const PartyMon &m);
 
 // What one action did, so the UI can narrate it without recomputing anything.
