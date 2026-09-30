@@ -8,6 +8,7 @@
 #include "moves.h"
 #include <cstdio>
 
+#ifndef TAMA_NATIVE_TEST
 uint32_t g_seed = 0xC0FFEE;
 FakeSerial Serial;
 FakeESP ESP;
@@ -20,6 +21,7 @@ void FakeESP::restart() { exit(0); }
 int FakeSerial::available() { return 0; }
 String FakeSerial::readStringUntil(char) { return String(""); }
 void sfxPlay(uint8_t) {}
+#endif
 
 static void show(Pet &p, const char *when) {
   printf("%-22s %-11s L%-3u :", when, DEX_TBL[p.speciesId].name, p.level());

@@ -6,6 +6,7 @@
 #include "Preferences.h"
 // linked against the same core as every other suite, so it needs the same
 // hardware stubs even though it only exercises the string table
+#ifndef TAMA_NATIVE_TEST
 uint32_t g_seed = 1;
 FakeSerial Serial; FakeESP ESP; FakeWire Wire;
 volatile int g_touchX = 0, g_touchY = 0;
@@ -16,6 +17,7 @@ void FakeESP::restart() { exit(0); }
 int FakeSerial::available() { return 0; }
 String FakeSerial::readStringUntil(char) { return String(""); }
 void sfxPlay(uint8_t) {}
+#endif
 #include "i18n.h"
 #include "moves.h"
 #include <cstdio>

@@ -6,12 +6,15 @@
 #include "party.h"
 #include "dex.h"
 #include <cstdio>
+static uint32_t g_ms=0;
+#ifndef TAMA_NATIVE_TEST
 uint32_t g_seed=11; FakeSerial Serial; FakeESP ESP; FakeWire Wire;
 volatile int g_touchX=0,g_touchY=0; volatile bool g_touchDown=false; bool wasPressed=false;
-static uint32_t g_ms=0; uint32_t millis(){return g_ms;}
+uint32_t millis(){return g_ms;}
 void FakeESP::restart(){exit(0);}
 int FakeSerial::available(){return 0;} String FakeSerial::readStringUntil(char){return String("");}
 void sfxPlay(uint8_t){}
+#endif
 static int bad=0;
 static void ck(bool ok,const char*w){printf("%s  %s\n",ok?"PASS":"FAIL",w); if(!ok)bad++;}
 

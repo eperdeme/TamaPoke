@@ -10,11 +10,13 @@
 #include "dex.h"
 #include "types.h"
 #include <cstdio>
+#ifndef TAMA_NATIVE_TEST
 uint32_t g_seed=4242; FakeSerial Serial; FakeESP ESP; FakeWire Wire;
 volatile int g_touchX=0,g_touchY=0; volatile bool g_touchDown=false; bool wasPressed=false;
 uint32_t millis(){return 0;} void FakeESP::restart(){exit(0);}
 int FakeSerial::available(){return 0;} String FakeSerial::readStringUntil(char){return String("");}
 void sfxPlay(uint8_t){}
+#endif
 
 static int bad=0;
 static void ck(bool ok,const char*w){printf("%s  %s\n",ok?"PASS":"FAIL",w); if(!ok)bad++;}

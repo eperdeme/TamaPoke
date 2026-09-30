@@ -17,18 +17,21 @@
 #include "noart.h"   // speciesHasArt / NO_ART_COUNT
 #include <cstdio>
 #include <set>
+#ifndef TAMA_NATIVE_TEST
 uint32_t g_seed=23; FakeSerial Serial; FakeESP ESP; FakeWire Wire;
 volatile int g_touchX=0,g_touchY=0; volatile bool g_touchDown=false; bool wasPressed=false;
 uint32_t millis(){return 0;} void FakeESP::restart(){exit(0);}
 int FakeSerial::available(){return 0;} String FakeSerial::readStringUntil(char){return String("");}
 void sfxPlay(uint8_t){}
+#endif
 static int bad=0;
 static void ck(bool ok,const char*w){printf("%s  %s\n",ok?"PASS":"FAIL",w); if(!ok)bad++;}
 
 // a pet with enough of the dex seen that the lottery is past the starter case
 static void seed(Pet &p, int upto=60){
   p.begin();
-  for (int d=1; d<=upto; d++) p.dbgHatchAs(d,false);
+  for (int d=1; d<=upto; d++) if (!p.isRegistered(d)) p.dbgHatchAs(d,false);
+  if (p.isEgg()) p.dbgHatchAs(upto,false);
 }
 
 int main(){
@@ -83,7 +86,8 @@ int main(){
   // --- a first egg gives a starter from the chosen region
   {
     for (uint8_t r=0; r<REGION_COUNT; r++){
-      Pet p; p.begin(); p.factoryReset(); p.begin();
+      { Pet previous; previous.begin(); previous.factoryReset(); }
+      Pet p; p.begin();
       p.setRegion(r);
       const RegionInfo &ri = REGIONS[r];
       bool ok=true;

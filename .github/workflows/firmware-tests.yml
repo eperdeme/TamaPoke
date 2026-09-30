@@ -1,0 +1,57 @@
+name: Firmware tests
+
+on:
+  pull_request:
+  push:
+    branches: ["**"]
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: arduino/setup-arduino-cli@v2
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.arduino15
+            ~/Arduino/libraries
+          key: arduino-${{ runner.os }}-esp32-3.3.11-gfx-1.6.7-sensor-0.4.1-xpowers-0.3.3
+      - name: Install host dependencies
+        run: sudo -n apt-get update && sudo -n apt-get install -y libsdl2-dev
+      - name: Install pinned firmware dependencies
+        run: |
+          node tools/emu/tests/bounded.mjs 180 -- arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          node tools/emu/tests/bounded.mjs 600 -- arduino-cli core install esp32:esp32@3.3.11 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          node tools/emu/tests/bounded.mjs 300 -- arduino-cli lib install "GFX Library for Arduino@1.6.7" "SensorLib@0.4.1" "XPowersLib@0.3.3"
+      - name: Restore committed sprite assets
+        run: node tools/emu/tests/bounded.mjs 120 -- python3 tools/unpack_bundle.py
+      - name: Install checksum-pinned native ESP32 emulator
+        working-directory: ${{ runner.temp }}
+        run: |
+          node "$GITHUB_WORKSPACE/tools/emu/tests/bounded.mjs" 180 -- curl --fail --location --max-time 150 --output esp-emu.tar.gz https://github.com/espressif/esp-emulator/releases/download/v0.44.0/esp-emu-0.44.0-x86_64-unknown-linux-gnu.tar.gz
+          printf '%s  esp-emu.tar.gz\n' '340316dda477602fafe5e994c7e535f667d1ca654f890f99c2b7ea391eb1644b' | sha256sum --check --strict
+          mkdir esp-emu
+          tar -xzf esp-emu.tar.gz -C esp-emu --strip-components=1
+      - name: Native-first firmware, workflow, migration and original-defect gates
+        env:
+          TAMA_TEST_BACKEND: "auto"
+          TAMA_ESP_EMULATOR: ${{ runner.temp }}/esp-emu/esp-emu
+          TAMA_TEST_JOBS: "2"
+          TAMA_TEST_LOG_DIR: ${{ runner.temp }}/tamapoke-test-logs
+        run: node tools/emu/tests/bounded.mjs 2400 --require 'PASS migrated native suites:' --require 'PASS native post-panic fresh-process persistence;' -- bash tools/emu/tests/run.sh
+      - name: Retain test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-test-evidence
+          path: ${{ runner.temp }}/tamapoke-test-logs
+          retention-days: 14

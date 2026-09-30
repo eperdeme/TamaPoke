@@ -103,55 +103,6 @@ String FakeSerial::readStringUntil(char) {
   return s;
 }
 
-// --- NVS persistence ---
-void nvsLoad(const char *path) {
-  FILE *f = fopen(path, "rb");
-  if (!f) return;
-  uint32_t n = 0;
-  if (fread(&n, 4, 1, f) != 1) { fclose(f); return; }
-  for (uint32_t i = 0; i < n; i++) {
-    uint32_t kl = 0, vl = 0;
-    if (fread(&kl, 4, 1, f) != 1 || kl > 64) break;
-    std::string k(kl, 0);
-    if (fread(&k[0], 1, kl, f) != kl) break;
-    if (fread(&vl, 4, 1, f) != 1 || vl > 4096) break;
-    std::vector<uint8_t> v(vl);
-    if (vl && fread(v.data(), 1, vl, f) != vl) break;
-    // Keys outside the game's namespace are stored as "@namespace/key". A real
-    // NVS key is at most 15 characters and cannot contain either character, so
-    // this cannot collide with a key written by an older emulator build -- which
-    // is why the file format did not have to change to gain namespaces.
-    if (!k.empty() && k[0] == '@') {
-      size_t slash = k.find('/');
-      if (slash != std::string::npos)
-        nvsOther()[k.substr(1, slash - 1)][k.substr(slash + 1)] = v;
-      continue;
-    }
-    nvs()[k] = v;
-  }
-  fclose(f);
-}
-void nvsSave(const char *path) {
-  FILE *f = fopen(path, "wb");
-  if (!f) return;
-  // Flattened first, so the count in the header covers every namespace. Writing
-  // nvs().size() and then more records than that is how a file becomes
-  // unreadable by its own loader.
-  std::vector<std::pair<std::string, const std::vector<uint8_t> *>> flat;
-  for (auto &kv : nvs()) flat.push_back({ kv.first, &kv.second });
-  for (auto &ns : nvsOther())
-    for (auto &kv : ns.second)
-      flat.push_back({ "@" + ns.first + "/" + kv.first, &kv.second });
-  uint32_t n = flat.size();
-  fwrite(&n, 4, 1, f);
-  for (auto &kv : flat) {
-    uint32_t kl = kv.first.size(), vl = kv.second->size();
-    fwrite(&kl, 4, 1, f); fwrite(kv.first.data(), 1, kl, f);
-    fwrite(&vl, 4, 1, f); if (vl) fwrite(kv.second->data(), 1, vl, f);
-  }
-  fclose(f);
-}
-
 // the sketch
 void emuSetSpriteDir(const char *);
 void startBattle(int16_t dex, uint8_t lvl);

@@ -6,12 +6,14 @@
 #include "pet.h"
 #include "party.h"
 #include <cstdio>
+#ifndef TAMA_NATIVE_TEST
 uint32_t g_seed=9; FakeSerial Serial; FakeESP ESP; FakeWire Wire;
 volatile int g_touchX=0,g_touchY=0; volatile bool g_touchDown=false; bool wasPressed=false;
 static uint32_t g_ms=0; uint32_t millis(){return g_ms;}
 void FakeESP::restart(){exit(0);}
 int FakeSerial::available(){return 0;} String FakeSerial::readStringUntil(char){return String("");}
 void sfxPlay(uint8_t){}
+#endif
 static int bad=0;
 static void ck(bool ok,const char*w){printf("%s  %s\n",ok?"PASS":"FAIL",w); if(!ok)bad++;}
 
@@ -49,8 +51,14 @@ int main(){
     award(r);
     r.ageMinutes = 4UL*24*60;
     if (e==0) r.startFarewell(); else if (e==1) r.startRunaway(); else r.release();
+  #ifdef TAMA_NATIVE_TEST
+    delay(CEREMONY_MS + 1000);
+    r.update(millis());
+  #else
     g_ms += 60000;                       // let the ceremony expire
     r.update(g_ms);
+  #endif
+    ck(r.isEgg(), "the ending actually completes before checking persistence");
     char msg[64]; snprintf(msg,sizeof(msg),"survives a %s",names[e]);
     ck(intact(r), msg);
     Pet after; after.begin();

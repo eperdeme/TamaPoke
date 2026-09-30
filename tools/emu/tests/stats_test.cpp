@@ -7,6 +7,7 @@
 #include "dex.h"
 #include <cstdio>
 
+#ifndef TAMA_NATIVE_TEST
 uint32_t g_seed = 0xC0FFEE;
 FakeSerial Serial;
 FakeESP ESP;
@@ -20,6 +21,7 @@ void FakeESP::restart() { exit(0); }
 void sfxPlay(uint8_t) {}   // lives in the sketch; audio is not under test
 int FakeSerial::available() { return 0; }
 String FakeSerial::readStringUntil(char) { return String(""); }
+#endif
 
 static int bad = 0;
 static void ck(bool ok, const char *what) {

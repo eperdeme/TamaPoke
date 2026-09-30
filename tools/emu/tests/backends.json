@@ -1,0 +1,32 @@
+{
+  "native": [
+    "ai_test", "battle_test", "clock_test", "crc32_test", "cry_test",
+    "dexdata_test", "eevee_test", "evo_test", "foesave_test", "gym_test",
+    "i18n_test", "label_test", "link_test", "lossy_test", "moves_test",
+    "palette_test", "persist_test", "region_test", "retire_test", "revive_test",
+    "reward_test", "roster_test", "save_test", "sleep_test", "stats_test",
+    "synth_test", "trainer_test", "upgrade_test", "wild_test"
+  ],
+  "host": {
+    "anim_test": "Synthetic framebuffer, PMD animation and UI-loop controls",
+    "audio_test": "Resumable audio task with host queue and I2S doubles; board codec not modeled",
+    "box_test": "Injected partial/refused NVS writes for atomic party/box tests",
+    "console_test": "Synthetic serial input and restart interception in the real sketch",
+    "explore_test": "Real Explore UI with synthetic touch, sprites and framebuffer",
+    "flush_test": "Host frameReady and synthetic renderer/loop controls",
+    "focus_test": "Real focus UI plus injected NVS failures and synthetic touch",
+    "hit_test": "Synthetic geometry, framebuffer and touch hit-area probes",
+    "joy_test": "Real minigame UI with synthetic touch and clock control",
+    "lan_test": "Real LAN UI with injected peer transport and synthetic touch",
+    "powerloss_test": "Write-count failure injection and direct checkpoint corruption",
+    "release_test": "Synthetic long-press gestures, UI state and framebuffer",
+    "reset_test": "Partial/refused reset-intent writes and direct host namespace inspection",
+    "sprite_test": "Host filesystem sprite streaming; board SD/MMC path not validated",
+    "starter_test": "Synthetic chooser gestures and real UI state",
+    "swipe_test": "Synthetic swipe/rim gestures and framebuffer-backed paged UI",
+    "touch_test": "Synthetic touch IRQ, framebuffer and NVS handle-failure regression",
+    "transfer_test": "Host transfer-mode, sprites and deterministic loop clock controls",
+    "view_test": "Synthetic real-screen rendering, touch and framebuffer inspection",
+    "workflow_test": "Integrated real sketch/audio with host task scheduling, gestures and fork/exec reboot"
+  }
+}

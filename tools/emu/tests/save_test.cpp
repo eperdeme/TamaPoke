@@ -11,14 +11,17 @@
 #include "pet.h"
 #include "party.h"
 #include "save.h"
+#include "test_nvs.h"
 #include <cstdio>
 #include <set>
 #include <string>
+#ifndef TAMA_NATIVE_TEST
 uint32_t g_seed=7; FakeSerial Serial; FakeESP ESP; FakeWire Wire;
 volatile int g_touchX=0,g_touchY=0; volatile bool g_touchDown=false; bool wasPressed=false;
 uint32_t millis(){return 0;} void FakeESP::restart(){exit(0);}
 int FakeSerial::available(){return 0;} String FakeSerial::readStringUntil(char){return String("");}
 void sfxPlay(uint8_t){}
+#endif
 static int bad=0;
 static void ck(bool ok,const char*w){printf("%s  %s\n",ok?"PASS":"FAIL",w); if(!ok)bad++;}
 
@@ -27,6 +30,7 @@ int main(){
   // both ladders, a Pokedex with holes in it, a named trainer
   Pet pet;
   pet.begin();
+  party.begin();
   pet.dbgHatchAs(6,true);
   pet.ageMinutes = 72UL*MINUTES_PER_LEVEL;
   pet.ivAtk=31; pet.ivDef=7; pet.ivSpe=22; pet.ivHp=19;
@@ -63,7 +67,7 @@ int main(){
     std::set<std::string> inTable;
     for (uint16_t i=0;i<SAVE_FIELD_COUNT;i++) inTable.insert(SAVE_FIELDS[i].key);
     int missing = 0;
-    for (auto &kv : nvs()) {
+    for (auto &kv : readTestNvs()) {
       if (inTable.count(kv.first)) continue;
       printf("      key '%s' is stored but NOT backed up\n", kv.first.c_str());
       missing++;
@@ -91,7 +95,7 @@ int main(){
     // Snapshotted whole rather than checking one legacy key's presence: since
     // the checkpoint became the only thing save()/persist() write, there is no
     // single scalar key guaranteed to exist that would prove this on its own.
-    NvsStore before = nvs();
+    NvsStore before = readTestNvs();
     std::vector<uint8_t> t(buf, buf+n);
     t[0] = 'X';
     ck(!saveImport(t.data(), t.size()), "a blob with the wrong magic is refused");
@@ -105,12 +109,12 @@ int main(){
     ck(!saveImport(t.data(), t.size()), "and a truncated blob is refused");
     ck(!saveImport(buf, 3), "as is one too short to hold a header");
     // and none of that touched the live save
-    ck(nvs() == before, "a refused import leaves the save alone");
+    ck(readTestNvs() == before, "a refused import leaves the save alone");
   }
 
   // --- the real thing: wipe everything, restore, and compare
   pet.factoryReset();
-  ck(nvs().empty() || nvs().count("party")==0, "the wipe really emptied NVS");
+  ck(readTestNvs().empty() || readTestNvs().count("party")==0, "the wipe really emptied NVS");
   ck(saveImport(buf, n), "the backup imports");
 
   Pet p2; Party q2;

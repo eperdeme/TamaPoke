@@ -9,6 +9,7 @@
 #include "moves.h"
 #include <cstdio>
 
+#ifndef TAMA_NATIVE_TEST
 uint32_t g_seed = 0xC0FFEE;
 FakeSerial Serial;
 FakeESP ESP;
@@ -22,6 +23,7 @@ void FakeESP::restart() { exit(0); }
 int FakeSerial::available() { return 0; }
 String FakeSerial::readStringUntil(char) { return String(""); }
 void sfxPlay(uint8_t) {}
+#endif
 
 static int bad = 0;
 static void ck(bool ok, const char *what) {

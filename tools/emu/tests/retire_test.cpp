@@ -20,6 +20,7 @@
 #include "pet.h"
 #include "party.h"
 #include <cstdio>
+#ifndef TAMA_NATIVE_TEST
 uint32_t g_seed=41; FakeSerial Serial; FakeESP ESP; FakeWire Wire;
 volatile int g_touchX=0,g_touchY=0; volatile bool g_touchDown=false; bool wasPressed=false;
 // a clock the test can push forward: a ceremony ends when millis() passes
@@ -29,6 +30,7 @@ uint32_t millis(){ return gNow; }
 void FakeESP::restart(){exit(0);}
 int FakeSerial::available(){return 0;} String FakeSerial::readStringUntil(char){return String("");}
 void sfxPlay(uint8_t){}
+#endif
 static int bad=0;
 static void ck(bool ok,const char*w){printf("%s  %s\n",ok?"PASS":"FAIL",w); if(!ok)bad++;}
 
@@ -36,8 +38,13 @@ static void ck(bool ok,const char*w){printf("%s  %s\n",ok?"PASS":"FAIL",w); if(!
 // Pet::update() -- rather than by calling the two halves by hand, which would
 // stop testing the order they run in.
 static void finish(Pet &p, Party &q){
+#ifdef TAMA_NATIVE_TEST
+  delay(CEREMONY_MS + 1000);
+  p.update(millis());
+#else
   gNow += CEREMONY_MS + 1000;
   p.update(gNow);
+#endif
   if (p.endedKind != CER_NONE) {
     if (!q.add(p.endedMon)) q.boxAdd(p.endedMon);
     p.endedKind = CER_NONE;

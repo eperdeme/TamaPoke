@@ -50,7 +50,6 @@ void Party::begin() {
     prefs.getBytes("party", old, stored);
     for (int i = 0; i < PARTY_SLOTS; i++)
       memcpy(&slots[i], old + i * oldStride, oldStride);
-    save();   // rewrite in the current layout so this only happens once
   }
   // a blob written by an older/newer build could hold nonsense; drop anything
   // that is not a real Pokedex number rather than indexing DEX_TBL with it

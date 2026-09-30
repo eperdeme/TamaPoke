@@ -32,6 +32,35 @@ int main(){
   ck(kept, "a pre-box save keeps its whole party");
   ck(p.boxCount()==0, "and comes up with an empty box, not garbage");
 
+  {
+    nvs().clear();
+    const size_t stride = offsetof(PartyMon, stateVersion);
+    uint8_t oldParty[PARTY_SLOTS * stride] = {};
+    PartyMon oldBox[BOX_V323_SLOTS];
+    for (int index = 0; index < PARTY_SLOTS; index++) {
+      PartyMon member = mk(25 + index, 40 + index);
+      memcpy(oldParty + index * stride, &member, stride);
+    }
+    for (int index = 0; index < BOX_V323_SLOTS; index++) oldBox[index] = mk(258 + index, 50 + index);
+    Preferences seed;
+    seed.begin("tamapoke", false);
+    seed.putBytes("party", oldParty, sizeof(oldParty));
+    seed.putBytes("box", oldBox, sizeof(oldBox));
+    seed.end();
+    for (int reload = 0; reload < 2; reload++) {
+      Party migrated;
+      migrated.begin();
+      bool partyKept = true, boxKept = true;
+      for (int index = 0; index < PARTY_SLOTS; index++)
+        partyKept &= migrated.slots[index].dex == 25 + index && migrated.slots[index].level == 40 + index;
+      for (int index = 0; index < BOX_V323_SLOTS; index++)
+        boxKept &= migrated.box[index].dex == 258 + index && migrated.box[index].level == 50 + index;
+      for (int index = BOX_V323_SLOTS; index < BOX_SLOTS; index++) boxKept &= migrated.box[index].empty();
+      ck(partyKept && boxKept, reload ? "combined legacy migration survives checkpoint reload" :
+         "short legacy party migration waits for the 18-slot box before checkpointing");
+    }
+  }
+
   // v3.23's box was 18 current-size records. Once BOX_SLOTS doubled, dividing
   // this length by the new slot count inferred a half-size stride and corrupted
   // every record. The historical count is part of the save format, not a copy

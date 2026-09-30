@@ -22,12 +22,16 @@ uint32_t emuTimeScale() { return g_timeScale; }
 // moment you are. Accumulating (rather than scaling total elapsed time) keeps
 // it monotonic across a change of rate.
 uint32_t millis() {
+#ifdef TAMA_DETERMINISTIC_CLOCK
+  return (uint32_t)(g_virtUs / 1000);
+#else
   auto now = std::chrono::steady_clock::now();
   uint64_t dus = std::chrono::duration_cast<std::chrono::microseconds>(now - g_tLast).count();
   g_tLast = now;
   bool gesturing = g_touchDown || wasPressed;   // press .. release resolved
   g_virtUs += dus * (gesturing ? 1 : g_timeScale);
   return (uint32_t)(g_virtUs / 1000);
+#endif
 }
 
 // A DETERMINISTIC NUDGE, for the headless tests.

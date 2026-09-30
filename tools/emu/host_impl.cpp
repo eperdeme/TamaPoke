@@ -177,6 +177,7 @@ bool nvsLowOnSpace() { return false; }
 void nvsReport(const char *) {}
 
 // --- audio (silent) ---
+#ifndef TAMA_REAL_AUDIO
 void audioBegin() {}
 void sfxPlay(uint8_t) {}
 // The per-species chirp. Counted rather than discarded, so the tests can prove a
@@ -186,6 +187,7 @@ void sfxPlay(uint8_t) {}
 int g_emuCryCount = 0;
 int16_t g_emuCryDex = 0;
 void audioCry(int16_t dex) { g_emuCryDex = dex; g_emuCryCount++; }
+#endif
 // no radio here; the protocol itself is exercised by tests/link_test.cpp
 struct Link;
 // No radio here at all, which is why lossy_test drives Link directly instead
@@ -197,12 +199,14 @@ void linkNowPoll() {}
 static LinkNowStats gNoStats;
 const LinkNowStats &linkNowStats() { return gNoStats; }
 // audio is silent here, but the sketch calls these, so they have to exist
+#ifndef TAMA_REAL_AUDIO
 static uint8_t g_emuVol = 7, g_emuMusic = 0;
 void audioMusic(uint8_t id) { g_emuMusic = id; }
 void audioSetVolume(uint8_t v) { g_emuVol = v > 10 ? 10 : v; }
 uint8_t audioVolume() { return g_emuVol; }
 void audioSetEnabled(bool on) { (void)on; }
 bool audioEnabled() { return true; }
+#endif
 
 // Why the last run ended. The tests link this file but not main_sdl.cpp, so the
 // state lives here and the GUI sets it after reading a simulated crash.

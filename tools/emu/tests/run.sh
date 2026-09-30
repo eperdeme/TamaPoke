@@ -1,8 +1,6 @@
 #!/bin/bash
-# Headless tests. They compile the REAL firmware sources against the emulator's
-# hardware stubs, so they assert against Pet/Party/Combatant themselves rather
-# than restating their rules -- a harness that re-implements a formula only
-# proves the transcription.
+# Native-first tests. Portable suites use real ESP32-S3 Arduino/ESP-IDF;
+# host-only UI and failure-injection suites use the desktop harness.
 #
 #   bash tools/emu/tests/run.sh          # everything
 #   bash tools/emu/tests/run.sh battle   # just the ones matching "battle"
@@ -16,48 +14,85 @@
 #   i18n_test   -- STRINGS is positional; a short language row is zero-padded by
 #                  the compiler with no diagnostic, silently shifting every
 #                  string after the gap in that language only.
-set -e
+set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 EMU="$(cd "$HERE/.." && pwd)"
 ROOT="$(cd "$EMU/../.." && pwd)"
 FILTER="${1:-}"
+BACKEND="${TAMA_TEST_BACKEND:-auto}"
 SPRITE_DIR="$ROOT/tools/sdcard/mons"
 
-command -v sdl2-config >/dev/null || { echo "SDL2 not found (brew install sdl2)" >&2; exit 1; }
+[ "$#" -le 1 ] || { echo "Only one substring filter is supported" >&2; exit 1; }
+for tool in node python3 arduino-cli; do
+  command -v "$tool" >/dev/null || { echo "Mandatory test tool unavailable: $tool" >&2; exit 1; }
+done
+bounded() { node "$HERE/bounded.mjs" "$@"; }
 
-# sketch.cpp + proto.h come from the normal build; this also proves the emulator
-# still compiles before anything is tested against it
-OUT="$(mktemp -d)"
+if [ -n "${TAMA_TEST_LOG_DIR:-}" ]; then
+  mkdir -p "$TAMA_TEST_LOG_DIR"
+  OUT="$(mktemp -d "$TAMA_TEST_LOG_DIR/run.XXXXXX")"
+else
+  OUT="$(mktemp -d)"
+fi
 OUT_FW="$OUT/firmware.log"
-trap 'kill $(jobs -p) 2>/dev/null || true; rm -rf "$OUT"' EXIT
+cleanup() {
+  kill $(jobs -p) 2>/dev/null || true
+  if [ -z "${TAMA_TEST_LOG_DIR:-}" ]; then rm -rf "$OUT"; else echo "Test logs: $OUT"; fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
-bash "$EMU/build.sh" >/dev/null
+bounded 30 -- node "$HERE/backends.mjs" "$FILTER" "$BACKEND" >"$OUT/routing.txt"
+selected=(); host_selected=(); native_selected=()
+while IFS=$'\t' read -r backend name; do
+  selected+=("$HERE/$name.cpp")
+  if [ "$backend" = native ]; then
+    native_selected+=("$name")
+  else
+    host_selected+=("$HERE/$name.cpp")
+    if [ "$name" = sprite_test ] && [ ! -d "$SPRITE_DIR" ]; then
+      echo "Mandatory sprite coverage unavailable: run python3 tools/unpack_bundle.py" >&2
+      exit 1
+    fi
+  fi
+done <"$OUT/routing.txt"
+ESP_EMULATOR=""
+if [ "${#native_selected[@]}" -gt 0 ] || { [ "$BACKEND" = auto ] && [ -z "$FILTER" ]; }; then
+  ESP_EMULATOR="$(command -v "${TAMA_ESP_EMULATOR:-esp-emu}" || true)"
+  [ -n "$ESP_EMULATOR" ] || {
+    echo "Mandatory native emulator unavailable: set TAMA_ESP_EMULATOR=/path/to/esp-emu (v0.44.0). No silent host fallback." >&2
+    exit 1
+  }
+fi
+if [ "${#host_selected[@]}" -gt 0 ]; then
+  for tool in g++ sdl2-config; do
+    command -v "$tool" >/dev/null || { echo "Mandatory host test tool unavailable: $tool" >&2; exit 1; }
+  done
+  if ! bounded 180 -- bash "$EMU/build.sh" >"$OUT/emulator.log" 2>&1; then
+    cat "$OUT/emulator.log"
+    echo "=== mandatory emulator build FAILED"
+    exit 1
+  fi
+fi
+echo "=== test routing: ${#native_selected[@]} native, ${#host_selected[@]} host (mode=$BACKEND)"
+bounded 30 --require 'PASS bounded gates:' -- node "$HERE/bounded.mjs" --self-test
 
 # The emulator generates proto.h with every prototype at the top, so it will
 # happily compile a sketch that arduino-cli rejects for using a function before
-# it is declared. That shipped once. If arduino-cli is installed, the firmware
-# build is the one that decides.
+# it is declared. That shipped once. The mandatory firmware build decides.
 fw_pid=""
-if command -v arduino-cli >/dev/null; then
-  FQBN="esp32:esp32:esp32s3:CDCOnBoot=cdc,FlashSize=16M,PSRAM=opi,PartitionScheme=app3M_fat9M_16MB"
-  # The slowest step, so it runs alongside the suites; its result is checked before the summary.
-  arduino-cli compile --fqbn "$FQBN" "$ROOT" >/dev/null 2>"$OUT_FW" &
-  fw_pid=$!
-fi
+FQBN="esp32:esp32:esp32s3:CDCOnBoot=cdc,FlashSize=16M,PSRAM=opi,PartitionScheme=app3M_fat9M_16MB"
+bounded 600 -- arduino-cli compile --fqbn "$FQBN" "$ROOT" >"$OUT_FW" 2>&1 &
+fw_pid=$!
 
 # The browser halves of the save backup and the pack upload. They are JavaScript,
 # so they cannot run in the C++ harness below -- and they went untested for exactly
-# that reason while the firmware side had suites. Gated on node being present, the
-# same way the arduino-cli check above is, so a machine without it still runs
-# everything else.
-if command -v node >/dev/null; then
-  echo "=== check_savefile (web/savefile.js)"
-  node "$ROOT/tools/check_savefile.mjs" || { echo "    ^ check_savefile FAILED"; exit 1; }
-  echo "=== check_packs (web/packs.js)"
-  node "$ROOT/tools/check_packs.mjs" || { echo "    ^ check_packs FAILED"; exit 1; }
-else
-  echo "=== check_savefile, check_packs: SKIPPED (node not installed)"
-fi
+# that reason while the firmware side had suites. Both are mandatory.
+echo "=== check_savefile (web/savefile.js)"
+bounded 60 -- node "$ROOT/tools/check_savefile.mjs"
+echo "=== check_packs (web/packs.js)"
+bounded 60 -- node "$ROOT/tools/check_packs.mjs"
 
 # arrays, not a string: the sprite dir has to reach the compiler still quoted,
 # and passing these through eval silently strips them
@@ -88,7 +123,11 @@ case "$test_jobs" in ''|*[!0-9]*|0) echo "TAMA_TEST_JOBS must be a positive inte
 
 # Bash 3 on macOS has no `wait -n`, so throttle on running jobs, not counting the firmware build.
 throttle() {
-  while (( $(jobs -rp | grep -vx "${fw_pid:-0}" | wc -l) >= test_jobs )); do sleep 0.1; done
+  while (( $(jobs -rp | grep -vx "${fw_pid:-0}" | wc -l) >= test_jobs )); do
+    for running in $(jobs -rp); do
+      if [ "$running" != "$fw_pid" ]; then wait "$running" || true; break; fi
+    done
+  done
 }
 
 # Every suite links the same firmware sources, so compile them once rather than per suite.
@@ -99,9 +138,10 @@ for f in "${CORE[@]}"; do CORE_O+=("$OBJ/$(basename "$f" .cpp).o"); done
 SKETCH_O=("$OBJ/sketch.o" "$OBJ/host_impl.o" "$OBJ/font.o" "$OBJ/clock.o")
 HOST_O=("$OBJ/host_impl.o" "$OBJ/font.o")
 obj_pids=()
+if [ "${#host_selected[@]}" -gt 0 ]; then
 for f in "${CORE[@]}" "$EMU/sketch.cpp" "$EMU/host_impl.cpp" "$EMU/font.cpp" "$EMU/clock.cpp"; do
   throttle
-  g++ "${FLAGS[@]}" -c "$f" -o "$OBJ/$(basename "$f" .cpp).o" 2>"$OBJ/$(basename "$f" .cpp).log" &
+  bounded 120 -- g++ "${FLAGS[@]}" -c "$f" -o "$OBJ/$(basename "$f" .cpp).o" >"$OBJ/$(basename "$f" .cpp).log" 2>&1 &
   obj_pids+=("$!")
 done
 obj_failed=0
@@ -113,58 +153,68 @@ if [ "$obj_failed" -ne 0 ]; then
   done
   exit 1
 fi
-
-selected=()
-for src in "$HERE"/*_test.cpp; do
-  name="$(basename "$src" .cpp)"
-  [ -n "$FILTER" ] && [[ "$name" != *"$FILTER"* ]] && continue
-  selected+=("$src")
-done
+fi
 
 run_one() {
   src="$1"
   name="$(basename "$src" .cpp)"
+  echo "CHECK compiling $name"
   suite_out="$OUT/$name"
   mkdir -p "$suite_out"
-  if [ "$name" = sprite_test ] && [ ! -d "$SPRITE_DIR" ]; then
-    echo "=== sprite_test: SKIPPED (generate tools/sdcard/mons with tools/pack_pmd.py)" >"$suite_out/output"
-    echo skip >"$suite_out/status"
-    return
-  fi
   objs=("${CORE_O[@]}")
   standalone "$name" && objs=("$OBJ/gbsynth.o")
   needs_sketch "$name" && objs+=("${SKETCH_O[@]}")
   needs_host "$name" && objs+=("${HOST_O[@]}")
   suite_flags=("${FLAGS[@]}")
-  [ "$name" = audio_test ] && suite_flags+=(-I"$HERE/audio_stubs")
-  if ! g++ "${suite_flags[@]}" -o "$suite_out/test" "$src" "${objs[@]}" 2>"$suite_out/compile.log"; then
+  suite_sources=("$src")
+  case "$name" in
+    audio_test) suite_flags+=(-I"$HERE/audio_stubs" -pthread);;
+    workflow_test)
+      suite_flags+=(-I"$HERE/audio_stubs" -pthread -DTAMA_REAL_AUDIO -DTAMA_DETERMINISTIC_CLOCK)
+      suite_sources+=("$EMU/host_impl.cpp" "$EMU/clock.cpp")
+      objs+=("$OBJ/font.o")
+      ;;
+  esac
+  if ! bounded 120 -- g++ "${suite_flags[@]}" -o "$suite_out/test" "${suite_sources[@]}" "${objs[@]}" >"$suite_out/compile.log" 2>&1; then
     { echo "=== $name: DID NOT COMPILE"; tail -5 "$suite_out/compile.log"; } >"$suite_out/output"
     echo fail >"$suite_out/status"
+    echo "CHECK completed $name: compile failed"
     return
   fi
   # pipefail matters: piping the test through grep would otherwise report
   # grep's exit status and every failure would be counted as a pass
-  if (cd "$suite_out" && set -o pipefail && ./test 2>&1 | grep -vE '^(TamaPoke fw|emu:|RTC )') >"$suite_out/test.log"; then
-    { echo "=== $name"; cat "$suite_out/test.log"; } >"$suite_out/output"
+  test_command=(bounded 180)
+  [ "$name" = workflow_test ] && test_command+=(--require 'PASS mandatory workflows complete:')
+  test_command+=(-- ./test)
+  if (cd "$suite_out" && "${test_command[@]}" 2>&1 | grep -vE '^(TamaPoke fw|emu:|RTC )') >"$suite_out/test.log"; then
+    if [ "$name" = workflow_test ]; then
+      { echo "=== $name"; grep -E '^PASS (workflow|mandatory)' "$suite_out/test.log"; } >"$suite_out/output"
+    else
+      { echo "=== $name"; cat "$suite_out/test.log"; } >"$suite_out/output"
+    fi
     echo pass >"$suite_out/status"
   else
     { echo "=== $name"; cat "$suite_out/test.log"; echo "    ^ $name FAILED"; } >"$suite_out/output"
     echo fail >"$suite_out/status"
   fi
+  echo "CHECK completed $name: $(cat "$suite_out/status")"
 }
 
-echo "=== C++ suites (${#selected[@]} total, $test_jobs parallel jobs)"
+echo "=== host C++ suites (${#host_selected[@]} total, $test_jobs parallel jobs)"
 # Each worker has its own cwd and output files, and emulator NVS lives in process memory.
 suite_pids=()
-for src in "${selected[@]}"; do
+if [ "${#host_selected[@]}" -gt 0 ]; then
+for src in "${host_selected[@]}"; do
   throttle
   run_one "$src" &
   suite_pids+=("$!")
 done
 for pid in "${suite_pids[@]}"; do wait "$pid" || true; done
+fi
 
 pass=0; fail=0; skip=0
-for src in "${selected[@]}"; do
+if [ "${#host_selected[@]}" -gt 0 ]; then
+for src in "${host_selected[@]}"; do
   name="$(basename "$src" .cpp)"
   cat "$OUT/$name/output" 2>/dev/null || echo "=== $name: worker exited without a result"
   result="$(cat "$OUT/$name/status" 2>/dev/null || true)"
@@ -174,13 +224,41 @@ for src in "${selected[@]}"; do
     *) fail=$((fail+1));;
   esac
 done
+fi
+
+if [ "${#native_selected[@]}" -gt 0 ]; then
+  echo "=== native ESP32-S3 suites (${#native_selected[@]} total)"
+  if TAMA_TEST_LOG_DIR="$OUT" bounded 1250 --require "PASS migrated native suites: ${#native_selected[@]}" -- node "$HERE/native.mjs" "$ESP_EMULATOR" "${native_selected[@]}"; then
+    pass=$((pass+${#native_selected[@]}))
+  else
+    fail=$((fail+${#native_selected[@]}))
+  fi
+fi
 
 fw_ok=1
 if [ -n "$fw_pid" ] && ! wait "$fw_pid"; then
   echo "=== THE FIRMWARE DOES NOT COMPILE (the emulator does; that is not the same thing)"
-  grep -i error "$OUT_FW" | head -5
+  tail -20 "$OUT_FW"
   fw_ok=0
+fi
+mutation_ok=1
+native_ok=1
+if [ -z "$FILTER" ]; then
+  if [ "$BACKEND" = auto ]; then
+    echo "=== native PSRAM, migration, reboot and real watchdog probe"
+    if ! TAMA_TEST_LOG_DIR="$OUT" bounded 950 --require 'PASS native post-panic fresh-process persistence;' -- node "$HERE/native.mjs" "$ESP_EMULATOR"; then
+      native_ok=0
+    fi
+    echo "=== native assertion-failure and restored-firmware control"
+    if ! TAMA_TEST_LOG_DIR="$OUT" bounded 1900 --require 'PASS native failure control:' -- node "$HERE/native.mjs" "$ESP_EMULATOR" --negative-check; then
+      native_ok=0
+    fi
+  fi
+  echo "=== original-defect end-to-end mutations"
+  if ! bounded 600 --require 'PASS mandatory original-defect mutations complete: 2' -- node "$HERE/mutations.mjs"; then
+    mutation_ok=0
+  fi
 fi
 echo
 echo "suites passed: $pass, failed: $fail, skipped: $skip"
-[ "$fail" -eq 0 ] && [ "$fw_ok" -eq 1 ]
+[ "$pass" -eq "${#selected[@]}" ] && [ "$fail" -eq 0 ] && [ "$skip" -eq 0 ] && [ "$fw_ok" -eq 1 ] && [ "$mutation_ok" -eq 1 ] && [ "$native_ok" -eq 1 ]
