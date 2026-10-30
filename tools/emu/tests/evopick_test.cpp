@@ -80,6 +80,9 @@ int main(){
   pet.ageMinutes = (uint32_t)20 * MINUTES_PER_LEVEL;
   pet.fullness = pet.joy = pet.energy = pet.hygiene = 100;
   emuAdvanceMs(EVOLVE_ANIM_MS + 100);         // let GALLADE's evolution animation finish
+  // a move GALLADE (or CHARMANDER at 21) can learn would put its prompt in front
+  // of the EVOLVE button; this test is about the evolve dialog, not learning
+  while (pet.hasLearnOffer()) pet.declineLearn();
   render();
   // The first tap after a hatch can be taken by its banner; tap until the
   // dialog is up (the same EVOLVE path as before this change).
