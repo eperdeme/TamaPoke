@@ -103,8 +103,16 @@ uint8_t galleryPage = 0;    // GAL_PAGES paginas de GAL_PER_PAGE
 // ever fires for the LIVE creature -- on hatch, on a focus swap, on revive -- so
 // a wild capture that went straight into the box has never touched dexReg. The
 // dex knows what you have RAISED; the party and box know what you HAVE.
-enum : uint8_t { GFILT_ALL = 0, GFILT_RAISED, GFILT_CAUGHT, GFILT_SHINY, GFILT_COUNT };
-uint8_t galleryFilter = GFILT_ALL;
+// Three Pokedexes, each in an ALL and a SHINY view: COMPLETE (everything raised
+// or caught), HATCHED (your eggs and what they became), CAUGHT (captures and
+// what they became). The grid always shows the whole region, classic style:
+// what is in the chosen dex is in colour, the rest is a silhouette.
+enum : uint8_t { GFILT_COMPLETE = 0, GFILT_COMPLETE_SHINY, GFILT_HATCHED, GFILT_HATCHED_SHINY,
+                 GFILT_CAUGHT, GFILT_CAUGHT_SHINY, GFILT_COUNT };
+uint8_t galleryFilter = GFILT_COMPLETE;
+static inline uint8_t gvWhich() { return galleryFilter / 2; }   // DEXV_*
+static inline bool gvShiny() { return (galleryFilter & 1) != 0; }
+bool galleryMember(int16_t dex) { return pet.inDex(gvWhich(), gvShiny(), dex); }
 // Published so view_test can walk every filter without keeping its own copy of
 // how many there are -- a test that restates a count silently stops covering the
 // mode somebody adds next.
@@ -253,6 +261,12 @@ uint8_t movePickPage = 0;
 #define MOVE_ROW_Y(i) (96 + (i) * 58)
 #define MOVE_PICK_PER_PAGE 5
 #define MOVE_PICK_Y(i) (76 + (i) * 58)
+// Evolution choice: opened by EVOLVE when the creature can become more than one
+// form. Modal, like the move picker; backing out leaves the EVOLVE button up.
+bool evoPickOpen = false;
+uint8_t evoPickPage = 0;
+#define EVO_PICK_PER_PAGE 4
+#define EVO_PICK_Y(i) (100 + (i) * 64)
 // level-up learn prompt: modal, and deliberately without a timeout -- it
 // decides what the creature is for the rest of its life, and once banked into
 // the party, forever.
@@ -269,7 +283,7 @@ enum : uint8_t {
   SCR_STARTER = 0, SCR_REGION, SCR_GALLERY, SCR_DEXPICK, SCR_MOVEPICK, SCR_BOX,
   SCR_PARTY, SCR_KEYBOARD, SCR_CARD, SCR_PLAYER, SCR_CLOCK, SCR_GYM, SCR_GYMPICK,
   SCR_EXPLORE, SCR_LAN, SCR_PICK, SCR_BATTLE, SCR_WIN, SCR_LEARN, SCR_TRAIN, SCR_MENU,
-  SCR_BAGSCR, SCR_GAME, SCR_MAIN, SCR_TRANSFER, SCR_COUNT
+  SCR_BAGSCR, SCR_GAME, SCR_MAIN, SCR_TRANSFER, SCR_EVOPICK, SCR_COUNT
 };
 extern const char *const SCREEN_NAME[SCR_COUNT];   // const is internal linkage in C++
 
@@ -308,6 +322,10 @@ uint8_t bagPages();
 bool startWildBattle(uint8_t region, bool hard);
 PartyMon wildToPartyMon();
 void focusSwap(uint8_t slot);
+// The evolution choice. render() and the tap handler reach these well above
+// where they are defined.
+void renderEvoPick();
+void evoPickTap(int16_t x, int16_t y);
 // Declared here because setup() calls it ~5000 lines above its definition, and
 // arduino-cli does not always auto-prototype -- see the note at the top of this
 // block. The emulator's generated proto.h would have hidden it.
@@ -347,7 +365,7 @@ const char *const SCREEN_NAME[SCR_COUNT] = {
   "starter", "region", "gallery", "dexpick", "movepick", "box",
   "party", "keyboard", "card", "player", "clock", "gym", "gympick",
   "explore", "lan", "pick", "battle", "win", "learn", "train", "menu",
-  "bag", "minigame", "main", "transfer"
+  "bag", "minigame", "main", "transfer", "evopick"
 };
 
 // Badge art for a region, or nullptr when that region has none yet.
@@ -747,7 +765,7 @@ static inline bool btlCellHit(int i, int16_t x, int16_t y) {
 #define TRAIN_ROW_MEMO 3
 
 // Settings page 2's rows. See the essay above renderClockOptions().
-#define SET_ROWS 5
+#define SET_ROWS 6
 #define SET_ROW_H UI_TAP_MIN
 #define SET_ROW_GAP 10
 #define SET_ROW_Y(i) (92 + (i) * (SET_ROW_H + SET_ROW_GAP))
@@ -756,7 +774,8 @@ static inline bool btlCellHit(int i, int16_t x, int16_t y) {
 #define SET_VOL   1
 #define SET_BRIGHT 2
 #define SET_LANG  3
-#define SET_RESET 4
+#define SET_SPEED 4   // real minutes per level, cycles 60/30/15/5/1
+#define SET_RESET 5
 
 // The memory game. See the essay above startMemoGame().
 #define MEMO_PADS 4
@@ -1048,6 +1067,9 @@ void setup() {
   // y nadie lo vacia) -> con timeout 0 los mensajes se descartan
   Serial.setTxTimeoutMs(0);
   Serial.printf("TamaPoke fw v%s\n", FW_VERSION);
+  // A locally modified build: branching evolutions are chosen, and the Pokedex
+  // has a HATCHED filter. Said at boot so a board can be identified.
+  Serial.println("custom build: evo-choice + hatched-dex + level-speed");
   bootReport();   // why the last run ended, and what it was doing
   // BEFORE anything opens the game namespace or loads a creature into RAM. A
   // wipe asked for on the previous run finishes here, where there is no window
@@ -1055,6 +1077,7 @@ void setup() {
   resetRecover();
   loadLang();  // idioma guardado (ES por defecto)
   brightLoad();  // brillo guardado (por defecto: el de siempre)
+  levelSpeedLoad();  // minutos por nivel (por defecto: 60, el juego original)
   Wire.begin(IIC_SDA, IIC_SCL);
   // CST9217 (tactil), AXP2101 (PMU) y PCF85063 (RTC) comparten este bus I2C.
   // Red de seguridad para PMU/RTC (SensorLib NO respeta este timeout en el
@@ -1802,6 +1825,7 @@ void onSwipeV(int dir) {
   if (lanOpen)      { if (back) { lanLeave(); lanOpen = false; } return; }
   if (trainOpen)    { if (back) trainOpen = false; return; }
   if (bagOpen)      { if (back) bagOpen = false; return; }
+  if (evoPickOpen)  { if (back) evoPickOpen = false; return; }
   if (movePickOpen) { if (back) movePickOpen = false; return; }
   if (boxOpen)      { if (back) { boxOpen = false; boxSel = 0; } return; }
   // Either minigame exits on a swipe, keeping what was earned. A swipe cannot
@@ -2266,6 +2290,7 @@ void onSwipe(int dir) {
   if (pickOpen) { pickOpen = false; return; }
   if (trainOpen) { trainOpen = false; return; }
   if (bagOpen) { bagOpen = false; return; }
+  if (evoPickOpen) { evoPickOpen = false; return; }
   if (movePickOpen) { movePickOpen = false; return; }
   if (boxOpen) { boxOpen = false; boxSel = 0; return; }
   if (gameOpen) { leaveGame(); return; }   // swipe out, keeping what you earned
@@ -2462,6 +2487,10 @@ void onTap(int16_t x, int16_t y) {
     }
     return;
   }
+  if (evoPickOpen) {
+    evoPickTap(x, y);
+    return;
+  }
   if (movePickOpen) {
     uint8_t all[64];
     uint8_t n = learnableList(all, sizeof(all));
@@ -2554,7 +2583,10 @@ void onTap(int16_t x, int16_t y) {
     bool b1 = inX && y >= c1t && y <= c1b;   // accion
     bool b2 = inX && y >= c2t && y <= c2b;   // mantener / quedaros
     if (choiceKind == 1) {                 // evolucion
-      if (b1) { int16_t old = pet.speciesId; pet.evolve(); evoPmd.load(old, pet.shiny); }
+      if (b1) {
+        if (pet.evoOptionCount() > 1) { evoPickOpen = true; evoPickPage = 0; }   // ask which form
+        else { int16_t old = pet.speciesId; pet.evolve(); evoPmd.load(old, pet.shiny); }
+      }
       else if (b2) pet.declineEvolve();
     } else if (choiceKind == 3) {          // retirada a peticion
       if (b1) pet.startRetire();
@@ -2798,6 +2830,7 @@ RTC_NOINIT_ATTR uint32_t gCrumbHeap;
 uint8_t uiCurrentScreen() {
   if (transferMode()) return SCR_TRANSFER;
   if (pet.awaitingStarter()) return starterRegionDone ? SCR_STARTER : SCR_REGION;
+  if (evoPickOpen) return SCR_EVOPICK;
   if (galleryOpen) return galleryPick ? SCR_DEXPICK : SCR_GALLERY;
   if (movePickOpen) return SCR_MOVEPICK;
   if (partyOpen) return boxOpen ? SCR_BOX : SCR_PARTY;
@@ -2907,6 +2940,12 @@ static uint8_t *uiRimTarget(uint8_t *pages) {
     // is how every other paged screen here works, and uiDrawRimBar() reads the
     // same table, so the second page advertises itself with no new control.
     case SCR_CLOCK:   p = &clockPage;   n = CLOCK_PAGES; break;
+    case SCR_EVOPICK: {
+      uint8_t k = pet.evoOptionCount();
+      p = &evoPickPage;
+      n = k ? (uint8_t)((k + EVO_PICK_PER_PAGE - 1) / EVO_PICK_PER_PAGE) : 1;
+      break;
+    }
     case SCR_MOVEPICK: {
       uint8_t all[64];
       uint8_t k = learnableList(all, sizeof(all));
@@ -3170,6 +3209,10 @@ void render() {
     else renderStarterSelect();
     return;
   }
+  if (evoPickOpen) {
+    renderEvoPick();
+    return;
+  }
   if (galleryOpen) {
     if (galleryPick) { renderRegionPick(RPICK_FOR_DEX); return; }
     renderGallery();
@@ -3286,7 +3329,7 @@ void render() {
       gfx->print(rar);
     }
     char reg[24];
-    snprintf(reg, sizeof(reg), T(S_POKEDEX_FMT), pet.registeredCount(), DEX_COUNT);
+    snprintf(reg, sizeof(reg), T(S_POKEDEX_FMT), pet.dexCountIn(DEXV_COMPLETE, false, 1, DEX_COUNT), DEX_COUNT);
     gfx->fillRect(0, 312, 466, 154, gNight ? UI_BG_NIGHT : UI_BG_DAY);
     gfx->setTextColor(inkColor());
     gfx->setTextSize(2);
@@ -3953,6 +3996,19 @@ static void renderClockOptions() {
     gfx->setCursor(CX - (int)strlen(lp) * 6, ry + rh / 2 - 8);
     gfx->print(lp);
   }
+  // level speed: a pill that cycles, like the language
+  {
+    setRowRect(SET_SPEED, &rx, &ry, &rw, &rh);
+    gfx->fillRoundRect(rx, ry, rw, rh, 10, UI_WHITE);   // a choice, not a warning
+    gfx->drawRoundRect(rx, ry, rw, rh, 10, UI_INK);
+    char sp[32];
+    snprintf(sp, sizeof(sp), T(S_LEVEL_SPEED_FMT), (unsigned)gLevelMins);
+    strncat(sp, " >", sizeof(sp) - strlen(sp) - 1);
+    gfx->setTextColor(UI_INK);
+    gfx->setTextSize(2);
+    gfx->setCursor(CX - (int)strlen(sp) * 6, ry + rh / 2 - 8);
+    gfx->print(sp);
+  }
   // reset: drawn as the destructive thing it is, and it only ever OPENS the
   // confirm -- see clockTap()
   {
@@ -4048,6 +4104,11 @@ void clockTap(int16_t x, int16_t y) {
       }
       if (i == SET_LANG) {
         setLang((Lang)((gLang + 1) % LANG_COUNT));
+        sfxPlay(SFX_TAP);
+        return;
+      }
+      if (i == SET_SPEED) {
+        levelSpeedCycle();
         sfxPlay(SFX_TAP);
         return;
       }
@@ -4346,6 +4407,65 @@ void renderMovePick() {
   gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 402);
   gfx->print(T(S_BACK));
   gfx->flush();
+}
+
+// ---------- evolution choice ----------
+// One row per form this creature can become (art present, pack on the card).
+// A dot marks a form not yet in the Pokedex, so finishing a line is visible.
+void renderEvoPick() {
+  gfx->fillScreen(RGB565_BLACK);
+  gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - (int)strlen(T(S_EVO_PICK)) * 6, 52);
+  gfx->print(T(S_EVO_PICK));
+  int16_t opts[EVO_BRANCH_MAX];
+  uint8_t n = pet.evoOptions(pet.speciesId, opts);
+  uint8_t pages = n ? (n + EVO_PICK_PER_PAGE - 1) / EVO_PICK_PER_PAGE : 1;
+  if (evoPickPage >= pages) evoPickPage = 0;
+  for (uint8_t i = 0; i < EVO_PICK_PER_PAGE; i++) {
+    uint8_t idx = evoPickPage * EVO_PICK_PER_PAGE + i;
+    if (idx >= n) break;
+    const DexEntry &d = DEX_TBL[opts[idx]];
+    int y = EVO_PICK_Y(i);
+    gfx->fillRoundRect(70, y, 326, 54, 14, d.accent);
+    gfx->drawRoundRect(70, y, 326, 54, 14, UI_INK);
+    // Dark text on a light type colour (Electric, Ice...), white on the rest.
+    const uint16_t a = d.accent;
+    const int lum = ((a >> 11) & 31) * 8 * 3 + ((a >> 5) & 63) * 4 * 6 + (a & 31) * 8;
+    const uint16_t fg = lum > 1400 ? UI_INK : UI_WHITE;
+    gfx->setTextColor(fg);
+    gfx->setTextSize(2);
+    gfx->setCursor(CX - (int)strlen(d.name) * 6, y + 19);
+    gfx->print(d.name);
+    if (!pet.isRegistered(opts[idx])) gfx->fillCircle(92, y + 27, 6, fg);
+  }
+  for (uint8_t i = 0; i < pages && pages > 1; i++) {
+    if (i == evoPickPage) gfx->fillCircle(CX - (pages - 1) * 13 + i * 26, 372, 5, UI_INK);
+    else gfx->drawCircle(CX - (pages - 1) * 13 + i * 26, 372, 4, UI_INK);
+  }
+  gfx->setTextColor(UI_INK_SOFT);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 402);
+  gfx->print(T(S_BACK));
+  gfx->flush();
+}
+
+void evoPickTap(int16_t x, int16_t y) {
+  int16_t opts[EVO_BRANCH_MAX];
+  uint8_t n = pet.evoOptions(pet.speciesId, opts);
+  for (uint8_t i = 0; i < EVO_PICK_PER_PAGE; i++) {
+    uint8_t idx = evoPickPage * EVO_PICK_PER_PAGE + i;
+    if (idx >= n) break;
+    int ry = EVO_PICK_Y(i);
+    if (x < 70 || x > 396 || y < ry || y > ry + 54) continue;
+    sfxPlay(SFX_TAP);
+    int16_t old = pet.speciesId;
+    if (pet.evolveTo(opts[idx])) evoPmd.load(old, pet.shiny);
+    evoPickOpen = false;
+    return;
+  }
+  evoPickOpen = false;   // anywhere else: back out, the EVOLVE button stays up
 }
 
 // ---------- battle ----------
@@ -4722,6 +4842,10 @@ static void wildGrantDrops() {
 // twin, and "which slot does a creature take" is exactly that shape.
 static void wildStoreCaught() {
   PartyMon m = wildToPartyMon();
+  // CAUGHT (and CAUGHT SHINY) from this moment, wherever it ends up -- box,
+  // released later, swapped away. It is NOT "raised" until it is made active.
+  pet.noteCaught(m.dex, m.shiny != 0);
+  pet.saveNow();
   // NOT registered in the Pokedex here. Registration means "you raised this",
   // and switchTo() does it when the creature actually becomes the one you are
   // raising -- so catching one and leaving it in the box does not fill the dex.
@@ -5558,7 +5682,7 @@ static void renderPlayerBadges() {
   snprintf(l, sizeof(l), T(S_STREAK_FMT), pet.streak, pet.bestStreak);
   gfx->setCursor(CX - (int)strlen(l) * 6, 286);
   gfx->print(l);
-  snprintf(l, sizeof(l), T(S_POKEDEX_FMT), pet.registeredCount(), DEX_COUNT);
+  snprintf(l, sizeof(l), T(S_POKEDEX_FMT), pet.dexCountIn(DEXV_COMPLETE, false, 1, DEX_COUNT), DEX_COUNT);
   gfx->setCursor(CX - (int)strlen(l) * 6, 312);
   gfx->print(l);
   snprintf(l, sizeof(l), T(S_PARTY_FMT), party.count());
@@ -6603,7 +6727,7 @@ static void renderRegionPick(uint8_t mode) {
   char ttl[40];
   if (mode == RPICK_FOR_START) snprintf(ttl, sizeof(ttl), "%s", T(S_CHOOSE_REGION));
   else if (forGyms) snprintf(ttl, sizeof(ttl), "%s", T(S_GYMS));
-  else snprintf(ttl, sizeof(ttl), T(S_POKEDEX_FMT), pet.registeredCount(), DEX_COUNT);
+  else snprintf(ttl, sizeof(ttl), T(S_POKEDEX_FMT), pet.dexCountIn(DEXV_COMPLETE, false, 1, DEX_COUNT), DEX_COUNT);
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(2);
   gfx->setCursor(CX - (int)strlen(ttl) * 6, 48);
@@ -6646,7 +6770,7 @@ static void renderRegionPick(uint8_t mode) {
       snprintf(sub, sizeof(sub), T(S_BADGES_FMT), pet.badgeCountIn(i, gymHard));
     else if (mode == RPICK_FOR_DEX)
       snprintf(sub, sizeof(sub), "%u/%u",
-               pet.registeredCountIn(REGIONS[i].lo, REGIONS[i].hi),
+               pet.dexCountIn(DEXV_COMPLETE, false, REGIONS[i].lo, REGIONS[i].hi),
                (unsigned)(REGIONS[i].hi - REGIONS[i].lo + 1));
     if (sub[0]) {
       gfx->setTextColor(UI_INK_SOFT);
@@ -6786,14 +6910,17 @@ void renderCardProgress() {
   gfx->setCursor(CX - strlen(lv) * 15, 86);
   gfx->print(lv);
 
-  // barra de progreso al siguiente nivel (1 nivel = 60 min de juego)
+  // barra de progreso al siguiente nivel (1 nivel = 60 min de juego; the
+  // speed setting decides how many real minutes that is)
   uint8_t into = pet.ageMinutes % MINUTES_PER_LEVEL;
+  const uint8_t step = levelSpeedStep();
   int bx = 93, bw = 280, by = 158, bh = 22;
   gfx->fillRoundRect(bx, by, bw, bh, 6, UI_TRACK);
   int fw = (bw - 4) * into / MINUTES_PER_LEVEL;
   if (fw > 0) gfx->fillRoundRect(bx + 2, by + 2, fw, bh - 4, 5, UI_BAR_OK);
   char nx[26];
-  snprintf(nx, sizeof(nx), T(S_NEXT_LVL_FMT), MINUTES_PER_LEVEL - into, pet.level() + 1);
+  snprintf(nx, sizeof(nx), T(S_NEXT_LVL_FMT),
+           (unsigned)((MINUTES_PER_LEVEL - into + step - 1) / step), pet.level() + 1);
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(2);
   gfx->setCursor(CX - strlen(nx) * 6, by + 32);
@@ -6872,7 +6999,7 @@ static void menuRowLabel(int i, char *out, size_t n) {
   switch (i) {
     case 0: snprintf(out, n, "%s", T(S_STATS)); break;
     case 1: snprintf(out, n, "%s", T(S_BAG)); break;
-    case 2: snprintf(out, n, T(S_POKEDEX_FMT), pet.registeredCount(), DEX_COUNT); break;
+    case 2: snprintf(out, n, T(S_POKEDEX_FMT), pet.dexCountIn(DEXV_COMPLETE, false, 1, DEX_COUNT), DEX_COUNT); break;
     case 3: snprintf(out, n, "%s", T(S_SETTINGS)); break;
     case 4: snprintf(out, n, "%s", T(S_RETIRE)); break;
     default: snprintf(out, n, "%s", T(S_CLOSE)); break;
@@ -7195,6 +7322,7 @@ PartyMon wildToPartyMon() {
   m.stateVersion = 1;
   m.ageMinutes = (uint32_t)(wildLvl ? wildLvl - 1 : 0) * MINUTES_PER_LEVEL;
   m.lastLearnLevel = wildLvl;   // do not replay gates it already passed
+  m.setOrigin(ORIGIN_WILD);     // a capture, and so is everything it evolves into
   return m;
 }
 
@@ -7641,25 +7769,9 @@ void drawThumb(const uint8_t *b, int x, int y, int s, bool sil) {
 // longer contiguous, so the cell arithmetic that used to be repeated in both
 // places would put a tap on a different creature than the one drawn.
 
-// Is this species in the player's hands RIGHT NOW -- the live creature, a party
-// slot, or a box slot?
-static bool dexHeldNow(int16_t dex) {
-  if (!pet.isEgg() && pet.speciesId == dex) return true;
-  for (int i = 0; i < PARTY_SLOTS; i++)
-    if (party.slots[i].dex == dex) return true;
-  for (int i = 0; i < BOX_SLOTS; i++)
-    if (party.box[i].dex == dex) return true;
-  return false;
-}
-
-bool galleryPass(int16_t dex) {
-  switch (galleryFilter) {
-    case GFILT_RAISED: return pet.isRegistered(dex);
-    case GFILT_CAUGHT: return dexHeldNow(dex);
-    case GFILT_SHINY:  return pet.isShinyRegistered(dex);
-    default: return true;
-  }
-}
+// Classic Pokedex: every species of the region has a cell, so nothing is
+// filtered out -- membership only decides colour vs silhouette (galleryMember).
+bool galleryPass(int16_t dex) { (void)dex; return true; }
 
 uint16_t galleryCount() {
   uint16_t n = 0;
@@ -7688,12 +7800,11 @@ uint8_t galleryPages() {
 }
 
 const char *galleryFilterName() {
-  switch (galleryFilter) {
-    case GFILT_RAISED: return T(S_FILT_RAISED);
-    case GFILT_CAUGHT: return T(S_FILT_CAUGHT);
-    case GFILT_SHINY:  return T(S_FILT_SHINY);
-    default: return T(S_FILT_ALL);
-  }
+  static char buf[32];
+  const StrId names[3] = { S_FILT_ALL, S_FILT_HATCHED, S_FILT_CAUGHT };
+  if (gvShiny()) snprintf(buf, sizeof(buf), "%s %s", T(names[gvWhich() % 3]), T(S_FILT_SHINY));
+  else snprintf(buf, sizeof(buf), "%s", T(names[gvWhich() % 3]));
+  return buf;
 }
 
 // Cycling the filter can leave the page past the end of a shorter result, and a
@@ -7709,10 +7820,10 @@ void renderGallery() {
     gfx->fillScreen(RGB565_BLACK);
     gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
     const DexEntry &d = DEX_TBL[galleryDetail];
-    bool reg = pet.isRegistered(galleryDetail);
+    bool reg = galleryMember(galleryDetail);
     char head[24];
     snprintf(head, sizeof(head), "N.%03d %s%s", galleryDetail,
-             pet.isShinyRegistered(galleryDetail) ? "*" : "", reg ? d.name : "???");
+             pet.inDex(DEXV_COMPLETE, true, galleryDetail) ? "*" : "", reg ? d.name : "???");
     gfx->setTextColor(reg ? d.accent : UI_INK);
     int glen = strlen(head);
     int gts = (glen <= 13) ? 3 : 2;  // auto-encoge nombres largos (no caben a t3)
@@ -7745,7 +7856,7 @@ void renderGallery() {
   char head[32];
   const RegionInfo &grg = REGIONS[galleryRegion % GAL_REGIONS];
   snprintf(head, sizeof(head), "%s %u/%u", grg.name,
-           pet.registeredCountIn(grg.lo, grg.hi), (unsigned)GAL_SPAN);
+           pet.dexCountIn(gvWhich(), gvShiny(), grg.lo, grg.hi), (unsigned)GAL_SPAN);
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(3);
   gfx->setCursor(CX - strlen(head) * 9, 36);
@@ -7756,8 +7867,8 @@ void renderGallery() {
   // questions and the count is the interesting half.
   {
     char fl[32];
-    snprintf(fl, sizeof(fl), "%s %u", galleryFilterName(), (unsigned)galleryCount());
-    gfx->setTextColor(galleryFilter == GFILT_ALL ? UI_INK_SOFT : UI_BAR_WARN);
+    snprintf(fl, sizeof(fl), "< %s >", galleryFilterName());
+    gfx->setTextColor(galleryFilter == GFILT_COMPLETE ? UI_INK_SOFT : UI_BAR_WARN);
     gfx->setTextSize(1);
     gfx->setCursor(CX - (int)strlen(fl) * 3, 66);
     gfx->print(fl);
@@ -7779,8 +7890,8 @@ void renderGallery() {
       int x = GAL_X + c * GAL_CELL, y = GAL_Y + r * GAL_CELL;
       const uint8_t *t = thumbs.get(dex);
       if (t) {
-        drawThumb(t, x, y, 2, !pet.isRegistered(dex));
-        if (pet.isShinyRegistered(dex)) {
+        drawThumb(t, x, y, 2, !galleryMember(dex));
+        if (pet.inDex(DEXV_COMPLETE, true, dex)) {
           gfx->setTextColor(UI_BAR_WARN);
           gfx->setTextSize(2);
           gfx->setCursor(x + 62, y + 4);
@@ -7838,10 +7949,10 @@ void galleryTap(int16_t x, int16_t y) {
   const int16_t dex = galleryAt((uint16_t)galleryPage * GAL_PER_PAGE + r * 4 + c);
   if (!dex) return;
   galleryDetail = dex;
-  galleryPmd.load(dex, pet.isShinyRegistered(dex));
+  galleryPmd.load(dex, gvShiny() && galleryMember(dex));
   // Only for an entry the player has actually filled in. Playing the cry of a
   // silhouette would hand over the one thing the "???" is withholding.
-  if (pet.isRegistered(dex)) audioCry(dex);
+  if (galleryMember(dex)) audioCry(dex);
 }
 
 void drawBattery() {
@@ -8494,7 +8605,7 @@ const char *statusMsg() {
   if (pet.energy < 25) return T(S_EXHAUSTED);
   if (pet.joy < 25) return T(S_SAD);
   if (pet.weight > 60) return T(S_CHUBBY);
-  if (pet.shiny && pet.ageMinutes < 15) return T(S_IS_SHINY);
+  if (pet.shiny && pet.ageMinutes < 15UL * levelSpeedStep()) return T(S_IS_SHINY);  // ~15 real min
   return T(S_HAPPY);
 }
 

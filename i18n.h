@@ -174,6 +174,9 @@ enum StrId : uint8_t {
   S_BOX_PUT,        // party detail sheet: move this creature into the box
   // shown while a sprite pack streams in over USB
   S_XFER, S_XFER_FMT, S_XFER_HINT,
+  S_EVO_PICK,       // title of the screen that asks which form to evolve into
+  S_FILT_HATCHED,   // Pokedex filter: hatched from your eggs (and their evolutions)
+  S_LEVEL_SPEED_FMT, // settings row: real minutes per level, %u = 60/30/15/5/1
   STR_COUNT
 };
 

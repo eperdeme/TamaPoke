@@ -199,6 +199,13 @@ int main(){
       for (int e = 0; e < EEVEE_EVO_COUNT; e++)
         if (EEVEE_EVOS[e] == d) isEevee = true;
       if (isEevee) continue;
+      // Every other branch (GALLADE, FROSLASS, POLITOED...) is reached the same
+      // way, off the generated EVO_BRANCHES table that marked it evolution-only.
+      bool isBranch = false;
+      for (int b = 0; b < EVO_BRANCH_COUNT; b++)
+        for (int k = 0; k < EVO_BRANCHES[b].count; k++)
+          if (EVO_BRANCHES[b].to[k] == d) isBranch = true;
+      if (isBranch) continue;
       printf("      %s (%d) can be neither hatched nor evolved into\n",
              DEX_TBL[d].name, d);
       stranded++;

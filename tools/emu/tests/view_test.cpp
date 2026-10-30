@@ -69,7 +69,9 @@ void galleryTap(int16_t x, int16_t y);
 // cannot be included.
 uint8_t galleryFilterCount();
 uint8_t boxSortCount();
-enum : uint8_t { GFILT_ALL = 0, GFILT_RAISED, GFILT_CAUGHT, GFILT_SHINY };
+enum : uint8_t { GFILT_COMPLETE = 0, GFILT_COMPLETE_SHINY, GFILT_HATCHED, GFILT_HATCHED_SHINY,
+                 GFILT_CAUGHT, GFILT_CAUGHT_SHINY };
+bool galleryMember(int16_t dex);
 enum : uint8_t { BSORT_SLOT = 0, BSORT_DEX, BSORT_LEVEL };
 
 static int bad=0;
@@ -102,7 +104,7 @@ int main(){
   for (int i=0;i<4;i++) render();
   // The names above are this file's, the counts are the firmware's. If they ever
   // disagree, every loop below is silently skipping a mode.
-  ck(galleryFilterCount() == GFILT_SHINY + 1,
+  ck(galleryFilterCount() == GFILT_CAUGHT_SHINY + 1,
      "this test knows about every Pokedex filter the firmware has");
   ck(boxSortCount() == BSORT_LEVEL + 1,
      "and about every box order");
@@ -128,67 +130,35 @@ int main(){
   }
   ck(!pet.isRegistered(131), "a box-only creature is genuinely NOT in the dex");
 
-  galleryFilter = GFILT_ALL;
-  ck(galleryCount() == 151, "ALL shows the whole region");
-  ck(galleryPages() == 10, "across ten pages of sixteen");
-  ck(galleryAt(0) == 1 && galleryAt(150) == 151,
-     "and the grid runs from the first species to the last");
-  ck(galleryAt(151) == 0, "with nothing past the end");
-
-  galleryFilter = GFILT_RAISED;
-  {
-    const uint16_t n = galleryCount();
-    ck(n >= 1, "RAISED shows what has actually been raised");
-    ck(galleryPass(6) && galleryPass(151), "including the live creature and MEW");
-    ck(!galleryPass(131), "but NOT the one that only ever sat in the box");
-  }
-
-  galleryFilter = GFILT_CAUGHT;
-  ck(galleryPass(131), "CAUGHT does show the box-only creature");
-  ck(galleryPass(6), "and the live one");
-  ck(!galleryPass(151), "but not MEW, which is in the dex and not in your hands");
-
-  galleryFilter = GFILT_SHINY;
-  ck(galleryCount() == 1 && galleryAt(0) == 151, "SHINY shows only shiny records");
-  ck(galleryPages() == 1, "on a single page");
-
-  // THE MISMATCH CHECK. Every filter, and for each one the set the grid would
-  // draw must be exactly the set the filter admits -- no cell drawn that the tap
-  // path cannot resolve, and nothing admitted that never gets drawn.
+  // CLASSIC: every view draws the whole region; membership is colour.
   for (uint8_t f = 0; f < galleryFilterCount(); f++) {
     galleryFilter = f;
     galleryPage = 0;
+    char m[96];
+    snprintf(m, sizeof(m), "view %u draws the whole region (151 cells, ten pages)", f);
+    ck(galleryCount() == 151 && galleryPages() == 10 && galleryAt(0) == 1 && galleryAt(150) == 151, m);
     const std::set<int16_t> drawn = drawnAcrossPages(), want = passingInRegion();
-    char m[120];
-    snprintf(m, sizeof(m),
-             "filter %u: the grid draws exactly what the filter admits (%u of %u)",
-             f, (unsigned)drawn.size(), (unsigned)want.size());
-    ck(drawn == want, m);
-    ck(drawn.size() == galleryCount(), "and the count agrees with the grid");
+    ck(drawn == want, "and the grid draws exactly the cells the tap path resolves");
   }
 
-  // An EMPTY result still has a page, or the screen draws nothing at all and
-  // reads as a crash rather than as an empty filter.
-  {
-    galleryFilter = GFILT_SHINY;
-    memset(pet.dexShinyReg, 0, sizeof(pet.dexShinyReg));
-    ck(galleryCount() == 0, "a filter can legitimately match nothing");
-    ck(galleryPages() == 1, "and still has one page to say so on");
-    ck(galleryAt(0) == 0, "with no cell to tap");
-  }
-
-  // Cycling a filter must not leave the page past the end of a shorter result.
-  {
-    galleryFilter = GFILT_ALL;
-    galleryPage = 9;                     // the last page of 151
-    galleryFilter = GFILT_SHINY;         // now one page
-    galleryClampPage();
-    ck(galleryPage == 0, "narrowing the filter pulls the page back into range");
-  }
+  // CHARIZARD hatched (egg); MEW put in the dex by hand, shiny (origin unknown);
+  // LAPRAS caught and sitting in the box, never raised.
+  pet.noteCaught(131, false);
+  galleryFilter = GFILT_COMPLETE;
+  ck(galleryMember(6) && galleryMember(151) && galleryMember(131),
+     "COMPLETE holds the hatched, the hand-registered and the caught one");
+  galleryFilter = GFILT_COMPLETE_SHINY;
+  ck(galleryMember(151) && !galleryMember(6) && !galleryMember(131), "COMPLETE SHINY only the shiny MEW");
+  galleryFilter = GFILT_HATCHED;
+  ck(galleryMember(6) && !galleryMember(151) && !galleryMember(131), "HATCHED only the egg's CHARIZARD");
+  galleryFilter = GFILT_CAUGHT;
+  ck(galleryMember(131) && !galleryMember(6) && !galleryMember(151), "CAUGHT only the box LAPRAS");
+  galleryFilter = GFILT_CAUGHT_SHINY;
+  ck(!galleryMember(131), "and CAUGHT SHINY not even that");
 
   // Every region, so a filter cannot be valid in Kanto and broken in Paldea.
   {
-    galleryFilter = GFILT_ALL;
+    galleryFilter = GFILT_COMPLETE;
     int wrong = 0;
     for (uint8_t r = 0; r < REGION_COUNT - 1; r++) {
       galleryRegion = r;
@@ -546,7 +516,7 @@ int main(){
     // The Pokedex speaks -- but only for an entry actually filled in. Playing the
     // cry of a silhouette hands over the one thing the "???" is withholding.
     galleryRegion = 0;
-    galleryFilter = GFILT_ALL;
+    galleryFilter = GFILT_COMPLETE;
     galleryPage = 0;
     galleryDetail = 0;
     pet.dexReg[(6 - 1) >> 3] |= 1 << ((6 - 1) & 7);       // CHARIZARD registered

@@ -7,7 +7,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from dex_data import DEX, TYPE_ACCENTS, CLASSIC, RARE, LEGENDARY, REGIONS, EEVEE_BRANCHES
+from dex_data import DEX, TYPE_ACCENTS, CLASSIC, RARE, LEGENDARY, REGIONS, EEVEE_BRANCHES, EVO_BRANCHES
 from dex_stats import BASE_STATS
 from dex_types import TYPES, TYPE_ORDER, CHART
 
@@ -51,6 +51,22 @@ def main():
     out.append("#define EEVEE_EVO_COUNT %d\n" % len(EEVEE_BRANCHES))
     out.append("static const int16_t EEVEE_EVOS[EEVEE_EVO_COUNT] = { %s };\n\n"
                % ', '.join(str(x) for x in EEVEE_BRANCHES))
+    # Every branching species, Eevee included: the player picks one of these
+    # when it evolves. to[0] is always the table's own evolvesTo.
+    bmax = max(len(v) for v in EVO_BRANCHES.values())
+    for base, tos in EVO_BRANCHES.items():
+        evo = [d[4] for d in DEX if d[0] == base][0]
+        assert tos[0] == evo, f"branch {base}: first target {tos[0]} != evolvesTo {evo}"
+    out.append("// Species with more than one evolution. to[0] == DEX_TBL[from].evolvesTo;\n"
+               "// the player chooses one when it evolves. Generated from EVO_BRANCHES.\n")
+    out.append("#define EVO_BRANCH_MAX %d\n" % bmax)
+    out.append("struct EvoBranch { int16_t from; uint8_t count; int16_t to[EVO_BRANCH_MAX]; };\n")
+    out.append("#define EVO_BRANCH_COUNT %d\n" % len(EVO_BRANCHES))
+    out.append("static const EvoBranch EVO_BRANCHES[EVO_BRANCH_COUNT] = {\n")
+    for base in sorted(EVO_BRANCHES):
+        tos = EVO_BRANCHES[base]
+        out.append("  { %d, %d, { %s } },\n" % (base, len(tos), ', '.join(str(x) for x in tos)))
+    out.append("};\n\n")
     out.append("// The 18 current types. See tools/dex_types.py for why this game uses the\n"
                "// modern chart rather than the Gen 1 one.\n"
                "enum PkType : uint8_t {\n  ")
@@ -95,7 +111,8 @@ def main():
     # single evolvesTo -- this used to read `| {135, 136}`, which is why Espeon,
     # Umbreon, Leafeon, Glaceon and Sylveon were treated as base forms and came
     # out of eggs. The list lives in dex_data.py so the firmware shares it.
-    evolved = {d[4] for d in DEX if d[4]} | set(EEVEE_BRANCHES)
+    evolved = ({d[4] for d in DEX if d[4]} | set(EEVEE_BRANCHES)
+               | {t for tos in EVO_BRANCHES.values() for t in tos})
     rarities = []
     out.append("static const DexEntry DEX_TBL[DEX_COUNT + 1] = {\n")
     out.append('  { "?", 0, 0, 0, 0x2946, 50, 50, 50, 50, 50, 50, 0 },  // 0: sin usar\n')
