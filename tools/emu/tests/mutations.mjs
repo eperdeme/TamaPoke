@@ -7,7 +7,7 @@ import { runCommand } from './bounded.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '../../..');
-const core = ['gbsynth', 'pet', 'i18n', 'party', 'battle', 'link', 'save', 'inventory', 'wild'];
+const core = ['gbsynth', 'pet', 'i18n', 'party', 'battle', 'link', 'save', 'inventory', 'wild', 'boxstore'];
 
 function replaceOnce(source, before, after) {
   assert(source.split(before).length === 2, 'mutation anchor must occur exactly once');
@@ -29,7 +29,7 @@ async function build(directory) {
     `-I${emu}/tests/audio_stubs`, '-DTAMA_REAL_AUDIO', '-DTAMA_DETERMINISTIC_CLOCK',
     `-DSPRITE_DIR="${root}/tools/sdcard/mons"`, '-o', join(directory, 'workflow'),
     join(emu, 'tests/workflow_test.cpp'), ...core.map((name) => join(directory, `${name}.cpp`)),
-    ...['host_impl', 'font', 'clock'].map((name) => join(emu, `${name}.cpp`))];
+    ...['host_impl', 'font', 'clock', 'boxfs_host'].map((name) => join(emu, `${name}.cpp`))];
   await checked(command, { timeoutMs: 120000 }, 'compile real firmware workflow');
 }
 
@@ -109,7 +109,8 @@ async function main() {
       await writeFile(partyFile, broken ? replaceOnce(partySource, anchor, `${anchor}\n    save();`) : partySource);
       await checked(['g++', '-std=c++17', '-O1', '-w', `-I${directory}/tools/emu`, `-I${directory}`,
         '-o', boxTest, join(directory, 'tools/emu/tests/box_test.cpp'),
-        ...['pet', 'party', 'i18n'].map((name) => join(directory, `${name}.cpp`))],
+        ...['pet', 'party', 'i18n', 'boxstore'].map((name) => join(directory, `${name}.cpp`)),
+        join(directory, 'tools/emu/boxfs_host.cpp')],
       { timeoutMs: 120000 }, 'compile combined legacy migration control');
       const result = await runCommand([boxTest], { timeoutMs: 30000, echo: false });
       if (broken) {

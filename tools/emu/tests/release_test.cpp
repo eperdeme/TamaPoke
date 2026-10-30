@@ -33,7 +33,7 @@ extern uint8_t dimStage;
 extern bool holdFired;
 extern Pet pet;
 extern bool partyOpen, boxOpen, movePickOpen, releaseConfirm;
-extern uint8_t partyDetail, boxDetail, boxSwapFrom, boxSel;
+extern uint8_t partyDetail, boxSwapFrom; extern uint16_t boxDetail, boxSel;
 
 static int bad=0;
 static void ck(bool ok,const char*w){printf("%s  %s\n",ok?"PASS":"FAIL",w); if(!ok)bad++;}

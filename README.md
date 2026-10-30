@@ -255,8 +255,13 @@ brings ELECTIVIRE, MAGMORTAR and RHYPERIOR waiting on exactly the same thing.
   **joins your party** (6 slots), keeping its species, nickname, shiny status, IVs,
   training, moves, the level it reached **and its whole care state**. It is frozen
   *while stored*: it does not age or train until you raise it again.
-- The **Box holds 36 Pokemon** across six pages. An existing 18-slot Box keeps
-  every creature in place and gains 18 empty slots after updating.
+- The **Box holds 360 Pokemon**: ten boxes of 36. The title's arrows change
+  box, and sorting is per box. Box 1 stays in the save exactly as before; boxes
+  2-10 live in the flash's FAT partition, so the first boot after updating
+  formats it (a few seconds, once). Moving a creature between the party and
+  boxes 2-10 is journalled, so a power cut mid-move never duplicates or loses
+  one, and save backups carry every box. A board whose FAT partition cannot be
+  mounted keeps the 36-slot box.
 - **Choosing who you raise.** Tap a party slot and press **MAKE ACTIVE**. It is a
   true *exchange* — the creature on the main screen takes the slot the newcomer
   vacates — so it needs no free slot and nothing is ever lost. Both keep their

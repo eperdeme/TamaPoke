@@ -37,7 +37,7 @@ async function main() {
   const sketch = join(directory, 'native');
   await mkdir(sketch);
   for (const file of await readdir(root))
-    if (file.endsWith('.h') || ['pet.cpp', 'party.cpp', 'inventory.cpp', 'i18n.cpp', 'save.cpp',
+    if (file.endsWith('.h') || ['pet.cpp', 'party.cpp', 'inventory.cpp', 'i18n.cpp', 'save.cpp', 'boxstore.cpp', 'boxfs.cpp',
       ...(suites.length ? ['gbsynth.cpp', 'battle.cpp', 'link.cpp', 'wild.cpp'] : [])].includes(file))
       await cp(join(root, file), join(sketch, file));
   await cp(join(here, suites.length ? 'native/suite.ino' : 'native/native.ino'), join(sketch, 'native.ino'));

@@ -153,8 +153,8 @@ int main(){
 
   // --- and the whole thing can then be backed up and restored
   {
-   static uint8_t buf[SAVE_TRANSFER_MAX];
-    size_t n = saveExport(buf, sizeof(buf));
+   static uint8_t *buf = (uint8_t *)malloc(SAVE_TRANSFER_MAX);   // heap: too big for DRAM statics on the board
+    size_t n = saveExport(buf, (size_t)SAVE_TRANSFER_MAX);
     ck(n > 0, "an upgraded save exports");
     pet.factoryReset();
     ck(saveImport(buf, n), "and imports again");

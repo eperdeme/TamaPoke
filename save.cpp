@@ -3,6 +3,7 @@
 #include <Preferences.h>
 #include <string.h>
 #include "party.h"   // MAX_VAL is derived from the box, see below
+#include "boxstore.h"
 
 // Every key the firmware persists. Adding one here is the whole job of adding
 // it to the backup; save_test fails if a key exists in NVS and not in this list.
@@ -25,6 +26,10 @@ const SaveField SAVE_FIELDS[] = {
   // .tpsave already in a player's hands. Bumping the version would refuse all of
   // them outright -- saveImport() tests it for exact equality.
   { "brt", SK_U8 },
+  // Which save the extra boxes on flash belong to (boxstore.h). Exported for
+  // completeness, but a restore never keeps it: saveImport() installs a fresh
+  // one, so boxes left over from the save being replaced read as empty.
+  { "bxid", SK_U32 },
 };
 const uint16_t SAVE_FIELD_COUNT = sizeof(SAVE_FIELDS) / sizeof(SAVE_FIELDS[0]);
 
@@ -113,6 +118,7 @@ size_t saveExportSize() {
   size_t n = SAVE_HDR + 2;
   for (uint16_t i = 0; i < SAVE_FIELD_COUNT; i++)
     n += 1 + strlen(SAVE_FIELDS[i].key) + 1 + 2 + MAX_VAL / 16;
+  n += BOX_EXTRA * (1 + 4 + 1 + 2 + BOX_SLOTS * sizeof(PartyMon));
   return n + 1024;                   // the two big blobs
 }
 
@@ -139,6 +145,26 @@ size_t saveExport(uint8_t *out, size_t cap) {
     count++;
   }
   p.end();
+  // The extra boxes, as keys of their own: "bx2" .. "bx10", each BOX_SLOTS raw
+  // records. Not NVS keys, so not in SAVE_FIELDS -- but the wire format is the
+  // same, which is what lets an installer that has never heard of them carry a
+  // backup holding them, and an older firmware restore one by skipping them.
+  // Only non-empty boxes are written; a restore treats a missing one as empty.
+  for (uint8_t b = 0; b < BOX_EXTRA; b++) {
+    if (boxStoreBoxEmpty(b)) continue;
+    char key[8];
+    snprintf(key, sizeof(key), "bx%u", (unsigned)(b + 2));
+    const size_t klen = strlen(key);
+    const size_t n = BOX_SLOTS * sizeof(PartyMon);
+    if (at + 1 + klen + 1 + 2 + n + 2 > cap) return 0;
+    out[at++] = (uint8_t)klen;
+    memcpy(out + at, key, klen); at += klen;
+    out[at++] = SK_BYTES;
+    out[at++] = (uint8_t)(n & 0xFF);
+    out[at++] = (uint8_t)(n >> 8);
+    memcpy(out + at, boxStoreBoxData(b), n); at += n;
+    count++;
+  }
   out[0] = SAVE_MAGIC0; out[1] = SAVE_MAGIC1;
   out[2] = SAVE_MAGIC2; out[3] = SAVE_MAGIC3;
   out[4] = SAVE_VERSION;
@@ -189,6 +215,42 @@ bool saveImport(const uint8_t *in, size_t n) {
   }
   if (at != n - 2 || seen != count) return false;
 
+  // The extra boxes go to flash FIRST, under a brand-new save id that nothing
+  // on the device carries yet. If this fails the restore is refused with NVS
+  // untouched; if power is lost after it, the old save still holds the old id
+  // and never sees the files just written. Only the NVS commit below makes them
+  // the live boxes, by installing that id. See "Which save a box belongs to" in
+  // boxstore.h for why a restore never reuses the backup's own id.
+  const uint8_t *boxes[BOX_EXTRA] = { nullptr };
+  bool anyBox = false;
+  // Each box is BOX_SLOTS records of whatever size the exporting build had, so
+  // the stride is read off the value's length rather than assumed: a backup
+  // from before (or after) PartyMon grew still restores its boxes.
+  uint16_t stride = 0;
+  for (at = SAVE_HDR; at + 4 <= n - 2;) {
+    uint8_t klen = in[at];
+    char key[16] = {0};
+    memcpy(key, in + at + 1, klen);
+    size_t vat = at + 1 + klen;
+    uint16_t vlen = (uint16_t)in[vat + 1] | ((uint16_t)in[vat + 2] << 8);
+    unsigned no = 0;
+    char tail = 0;
+    if (in[vat] == SK_BYTES && vlen && vlen % BOX_SLOTS == 0 &&
+        (!stride || vlen / BOX_SLOTS == stride) &&
+        sscanf(key, "bx%u%c", &no, &tail) == 1 && no >= 2 && no < 2 + BOX_EXTRA) {
+      boxes[no - 2] = in + vat + 3;
+      stride = (uint16_t)(vlen / BOX_SLOTS);
+      anyBox = true;
+    }
+    at = vat + 3 + vlen;
+  }
+  uint32_t newId = 0;
+  if (anyBox) {
+    if (!boxStoreImport(boxes, stride, &newId)) return false;
+  } else {
+    newId = boxStoreNewId();
+  }
+
   // PASS TWO: it parses, so commit. Cleared first, or keys the backup does not
   // contain would survive from whatever save happened to be on the device.
   Preferences p;
@@ -206,6 +268,7 @@ bool saveImport(const uint8_t *in, size_t n) {
     if (f) writeField(p, *f, in + vat + 3, vlen);
     at = vat + 3 + vlen;
   }
+  p.putUInt("bxid", newId);          // last: this is what makes the boxes live
   p.end();
   return true;
 }

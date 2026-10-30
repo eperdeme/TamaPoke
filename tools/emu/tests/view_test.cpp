@@ -37,7 +37,7 @@ uint16_t galleryCount();
 int16_t galleryAt(uint16_t visual);
 uint8_t galleryPages();
 void galleryClampPage();
-uint8_t boxSlotFor(uint8_t visual);
+uint16_t boxSlotFor(uint16_t visual);
 const char *personalityName();
 int uiGoalCount();
 bool uiGoalMet(int i);

@@ -26,7 +26,9 @@
 #include "badges.h"
 #include "avatars.h"
 #include <stdarg.h>
+#include <algorithm>
 #include "party.h"
+#include "boxstore.h"
 #include "save.h"
 #include "pet.h"
 #include "items.h"
@@ -156,9 +158,10 @@ uint8_t partyDetail = 0;   // 0 = the grid, else slot + 1
 // The box, reached from the party screen. `boxSwapFrom` is the party slot
 // waiting for something to trade with, 0 when nothing is pending.
 bool boxOpen = false;
-uint8_t boxPage = 0;
+uint8_t boxPage = 0;       // the page WITHIN the current box, 0..5
+uint8_t boxNo = 0;         // which box, 0 = box 1 (the only one without a file store)
 uint8_t boxSwapFrom = 0;   // party slot + 1, armed from the party side
-uint8_t boxSel = 0;        // box slot + 1, armed from the box side
+uint16_t boxSel = 0;       // box slot + 1, armed from the box side (any box)
 // How the box is ORDERED ON SCREEN. RAM only, like the Pokedex filter, and for a
 // stronger reason: see boxSlotFor(). Sorting the array itself would rewrite half
 // of a CRC'd checkpoint every time somebody glanced at the box.
@@ -168,7 +171,7 @@ uint8_t boxSortCount() { return BSORT_COUNT; }
 // The box gets the same detail sheet the party has. Tapping a box slot used to
 // yank the creature into the party immediately, which is a surprising amount to
 // happen from one tap -- and left nowhere to put a RELEASE button.
-uint8_t boxDetail = 0;        // box slot + 1 whose sheet is open
+uint16_t boxDetail = 0;       // box slot + 1 whose sheet is open (any box)
 // The RELEASE confirm, on whichever sheet is up. One flag rather than two,
 // because only one sheet can be open at a time and partyDetail/boxDetail
 // already say which.
@@ -330,7 +333,9 @@ void memoTap(int16_t x, int16_t y);
 void leaveMemo();
 void memoPadPos(int i, int *cx, int *cy);
 int memoPadAt(int16_t x, int16_t y);
-uint8_t boxSlotFor(uint8_t visual);
+uint16_t boxSlotFor(uint16_t visual);
+uint8_t boxBoxes();
+int8_t boxArrowAt(int16_t x, int16_t y);
 const char *boxSortName();
 uint8_t galleryFilterCount();
 uint8_t boxSortCount();
@@ -1095,6 +1100,10 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(TP_INT), touchIsr, FALLING);
 
   party.begin();
+  // The boxes past the first, on the flash's FAT partition. After the party,
+  // because an unfinished swap across the two is replayed into both. The first
+  // boot after this update formats the partition, which takes a few seconds.
+  boxStoreBegin(party);
   bag.begin();
   pet.begin();
   // AFTER pet.begin(), because it compares against the pet checkpoint's loaded
@@ -1564,9 +1573,11 @@ void handleSerial() {
     // saveExport() reads the checkpoints only (see save.cpp) -- those are what
     // save() and persist() write on every change, so nothing needs forcing
     // fresh here first.
-    static uint8_t buf[SAVE_TRANSFER_MAX];
-    size_t n = saveExport(buf, sizeof(buf));
-    if (!n) { Serial.println("EXPORT FAIL"); return; }
+    // On the heap, and only for as long as the export runs: the ceiling grew
+    // with the extra boxes and is too much to keep reserved (save.h).
+    uint8_t *buf = (uint8_t *)malloc(SAVE_TRANSFER_MAX);
+    size_t n = buf ? saveExport(buf, SAVE_TRANSFER_MAX) : 0;
+    if (!n) { free(buf); Serial.println("EXPORT FAIL"); return; }
     Serial.printf("# TamaPoke save, %u bytes. Paste this whole block back.\n",
                   (unsigned)n);
     for (size_t i = 0; i < n; i += 48) {
@@ -1575,17 +1586,22 @@ void handleSerial() {
       Serial.println();
     }
     Serial.println("IMPORT");        // the empty one commits
+    free(buf);
   } else if (line.startsWith("IMPORT")) {
     // IMPORT <hex>   append a chunk
     // IMPORT         commit what has been appended
-    static uint8_t in[SAVE_TRANSFER_MAX];
+    // Held between chunks, so allocated on the first one and freed once the
+    // restore is committed or refused (save.h).
+    static uint8_t *in = nullptr;
     static size_t inN = 0;
+    if (!in) in = (uint8_t *)malloc(SAVE_TRANSFER_MAX);
+    if (!in) { Serial.println("IMPORT FULL"); inN = 0; return; }
     String hex = line.substring(6);
     hex.trim();
     if (hex.length()) {
       if (hex.length() & 1) { Serial.println("IMPORT ODD"); inN = 0; return; }
       for (size_t i = 0; i + 1 < (size_t)hex.length(); i += 2) {
-        if (inN >= sizeof(in)) { Serial.println("IMPORT FULL"); inN = 0; return; }
+        if (inN >= SAVE_TRANSFER_MAX) { Serial.println("IMPORT FULL"); inN = 0; return; }
         auto nyb = [](char c) -> int {
           if (c >= '0' && c <= '9') return c - '0';
           if (c >= 'A' && c <= 'F') return c - 'A' + 10;
@@ -1602,6 +1618,8 @@ void handleSerial() {
     }
     if (!inN) { Serial.println("IMPORT EMPTY"); return; }
     bool ok = saveImport(in, inN);
+    free(in);
+    in = nullptr;
     Serial.println(ok ? "IMPORT OK" : "IMPORT REJECTED");
     inN = 0;
     if (ok) { Serial.println("DONE"); delay(100); ESP.restart(); }
@@ -1979,13 +1997,13 @@ void renderPartyDetail() {
 }
 
 void renderBoxDetail() {
-  if (party.box[boxDetail - 1].empty()) {
+  if (party.boxAt(boxDetail - 1).empty()) {
     boxDetail = 0;
     releaseConfirm = false;
     renderBox();
     return;
   }
-  renderMonSheet(party.box[boxDetail - 1], true);
+  renderMonSheet(party.boxAt(boxDetail - 1), true);
 }
 
 // The two buttons' hit areas, so a test can prove they do not overlap without
@@ -2162,6 +2180,7 @@ void partyTap(int16_t x, int16_t y) {
       partyDetail = 0;
       boxOpen = true;
       boxPage = 0;
+      boxNo = 0;
       sfxPlay(SFX_TAP);
       return;
     }
@@ -2183,6 +2202,7 @@ void partyTap(int16_t x, int16_t y) {
   if (!partyPick && partyHubAt(x, y)) {
     boxOpen = true;                  // open the box, nothing picked yet
     boxPage = 0;
+    boxNo = 0;
     boxSwapFrom = 0;
     sfxPlay(SFX_TAP);
     return;
@@ -2210,6 +2230,7 @@ void partyTap(int16_t x, int16_t y) {
       if (boxSwapFrom == i + 1) {    // tapped again: take it to the box
         boxOpen = true;
         boxPage = 0;
+        boxNo = 0;
         sfxPlay(SFX_TAP);
         return;
       }
@@ -2900,7 +2921,7 @@ static uint8_t *uiRimTarget(uint8_t *pages) {
     // the region, and paging past the filtered end draws an empty screen.
     case SCR_GALLERY: p = &galleryPage; n = galleryPages(); break;
     case SCR_PLAYER:  p = &playerPage;  n = PLAYER_PAGES; break;
-    case SCR_BOX:     p = &boxPage;     n = BOX_SLOTS / BOX_PER_PAGE; break;
+    case SCR_BOX:     p = &boxPage;     n = BOX_SLOTS / BOX_PER_PAGE; break;   // within one box
     case SCR_BAGSCR:  p = &bagPage;     n = bagPages(); break;
     case SCR_CARD:    p = &cardPage;    n = CARD_PAGES; break;
     // Settings became two pages when brightness and the reset arrived; the rim
@@ -7269,8 +7290,8 @@ void renderTrain() {
 // Empty slots always last, whatever the key: a grid with holes punched through it
 // is harder to read than a full one, and the empty cells are only there to be
 // swap targets anyway.
-static bool boxSortAfter(uint8_t a, uint8_t b) {
-  const PartyMon &ma = party.box[a], &mb = party.box[b];
+static bool boxSortAfter(uint16_t a, uint16_t b) {
+  const PartyMon &ma = party.boxAt(a), &mb = party.boxAt(b);
   if (ma.empty() != mb.empty()) return ma.empty();
   if (ma.empty()) return false;                  // both empty: keep slot order
   if (boxSort == BSORT_DEX) {
@@ -7294,20 +7315,20 @@ static bool boxSortAfter(uint8_t a, uint8_t b) {
 // box_test asserts this is a BIJECTION for every mode, because the one bug class
 // that matters here is two visual cells resolving to the same real slot -- which
 // is how a creature gets overwritten.
-uint8_t boxSlotFor(uint8_t visual) {
-  if (visual >= BOX_SLOTS) return 0;
+// `visual` counts across every box (box * BOX_SLOTS + position), but the order
+// is PER BOX: a box keeps its own creatures whatever the sort, as in the main
+// games, so "box 3" always means the same 36 slots. Stable, for the reason the
+// insertion sort it replaces gave: equal keys keep slot order, deterministically.
+uint16_t boxSlotFor(uint16_t visual) {
+  const uint16_t cap = party.boxCap();
+  if (visual >= cap) return 0;
   if (boxSort == BSORT_SLOT) return visual;
-  uint8_t order[BOX_SLOTS];
-  for (uint8_t i = 0; i < BOX_SLOTS; i++) order[i] = i;
-  // Insertion sort: few entries, and STABLE, which is what makes equal keys
-  // resolve to a deterministic order instead of one the algorithm chose.
-  for (uint8_t i = 1; i < BOX_SLOTS; i++) {
-    const uint8_t v = order[i];
-    int j = (int)i - 1;
-    while (j >= 0 && boxSortAfter(order[j], v)) { order[j + 1] = order[j]; j--; }
-    order[j + 1] = v;
-  }
-  return order[visual];
+  const uint16_t base = visual - visual % BOX_SLOTS;
+  uint16_t order[BOX_SLOTS];
+  for (uint16_t i = 0; i < BOX_SLOTS; i++) order[i] = base + i;
+  std::stable_sort(order, order + BOX_SLOTS,
+                   [](uint16_t a, uint16_t b) { return boxSortAfter(b, a); });
+  return order[visual % BOX_SLOTS];
 }
 
 const char *boxSortName() {
@@ -7318,11 +7339,47 @@ const char *boxSortName() {
   }
 }
 
+// Boxes of 36 = six pages each. 1 when there is no file store (the box is 36).
+#define BOX_PAGES_PER_BOX (BOX_SLOTS / BOX_PER_PAGE)
+uint8_t boxBoxes() { return (uint8_t)(party.boxCap() / BOX_SLOTS); }
+
+// The title's two halves: -1 previous box, +1 next, 0 elsewhere. Each half is a
+// 90 x 50 target, above the finger floor, and inside the glass at the title's
+// height (the chord there is ~250 px).
+#define BOX_ARROW_Y0 20
+#define BOX_ARROW_Y1 70
+#define BOX_ARROW_IN 30      // the middle 60 px is the label, not a control
+#define BOX_ARROW_OUT 120
+int8_t boxArrowAt(int16_t x, int16_t y) {
+  if (boxBoxes() < 2 || y < BOX_ARROW_Y0 || y > BOX_ARROW_Y1) return 0;
+  if (x >= CX - BOX_ARROW_OUT && x <= CX - BOX_ARROW_IN) return -1;
+  if (x >= CX + BOX_ARROW_IN && x <= CX + BOX_ARROW_OUT) return 1;
+  return 0;
+}
+
 void renderBox() {
   gfx->fillScreen(RGB565_BLACK);
   gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
   char head[32];
-  snprintf(head, sizeof(head), T(S_BOX_FMT), party.boxCount(), BOX_SLOTS);
+  if (boxBoxes() > 1) {
+    // Ten boxes are sixty pages: too many to scroll to the last one. The title
+    // names the box and its two halves jump a whole box (wrapping, so box 10 is
+    // one tap from box 1); the hub keeps the page within it.
+    snprintf(head, sizeof(head), "%s %u", T(S_BOX_BTN), (unsigned)(boxNo + 1));
+    // the two arrows drawn as the buttons they are, centred in their targets
+    for (int side = -1; side <= 1; side += 2) {
+      const int ax = CX + side * (BOX_ARROW_IN + BOX_ARROW_OUT) / 2;
+      const int ay = (BOX_ARROW_Y0 + BOX_ARROW_Y1) / 2;
+      gfx->fillRoundRect(ax - 22, ay - 18, 44, 36, 10, UI_WHITE);
+      gfx->drawRoundRect(ax - 22, ay - 18, 44, 36, 10, UI_INK);
+      gfx->setTextColor(UI_INK);
+      gfx->setTextSize(3);
+      gfx->setCursor(ax - 8, ay - 11);
+      gfx->print(side < 0 ? "<" : ">");
+    }
+  } else {
+    snprintf(head, sizeof(head), T(S_BOX_FMT), party.boxCount(), party.boxCap());
+  }
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(2);
   gfx->setCursor(CX - (int)strlen(head) * 6, 40);
@@ -7336,11 +7393,19 @@ void renderBox() {
     gfx->setTextSize(1);
     gfx->setCursor(CX - (int)strlen(sub) * 3, PSLOT_PROMPT_Y);
     gfx->print(sub);
+  } else if (boxBoxes() > 1) {
+    // how full the whole box is, in the band the swap prompt otherwise uses
+    char cnt[16];
+    snprintf(cnt, sizeof(cnt), "%u/%u", party.boxCount(), party.boxCap());
+    gfx->setTextColor(UI_INK_SOFT);
+    gfx->setTextSize(1);
+    gfx->setCursor(CX - (int)strlen(cnt) * 3, PSLOT_PROMPT_Y);
+    gfx->print(cnt);
   }
   for (uint8_t i = 0; i < BOX_PER_PAGE; i++) {
-    uint8_t visual = boxPage * BOX_PER_PAGE + i;
-    if (visual >= BOX_SLOTS) break;
-    drawPartySlot(i, party.box[boxSlotFor(visual)]);
+    uint16_t visual = boxNo * BOX_SLOTS + boxPage * BOX_PER_PAGE + i;
+    if (visual >= party.boxCap()) break;
+    drawPartySlot(i, party.boxAt(boxSlotFor(visual)));
   }
   {
     // The hub carries the page AND the order, and tapping it cycles the order --
@@ -7348,8 +7413,8 @@ void renderBox() {
     // to answer a tap by closing the box, which is what BACK and a swipe already
     // do twice over.
     char pg[12];
-    snprintf(pg, sizeof(pg), "%u/%u", (unsigned)(boxPage + 1),
-             (unsigned)(BOX_SLOTS / BOX_PER_PAGE));
+    // the page within the box; the title says which box
+    snprintf(pg, sizeof(pg), "%u/%u", (unsigned)(boxPage + 1), (unsigned)BOX_PAGES_PER_BOX);
     drawPartyHub(pg, boxSortName(), boxSwapFrom != 0);
   }
   gfx->setTextColor(UI_INK_SOFT);
@@ -7392,6 +7457,23 @@ void boxTap(int16_t x, int16_t y) {
   // The hub cycles the order. Checked BEFORE the slots: the hub sits in the
   // middle of the ring and does not overlap them, but ordering it first keeps the
   // rule "the thing drawn on top answers first" true here as everywhere else.
+  {
+    const int8_t step = boxArrowAt(x, y);
+    if (step) {
+      const int n = boxBoxes();
+      boxNo = (uint8_t)(((int)boxNo + step + n) % n);
+      boxPage = 0;
+      boxDetail = 0;
+      releaseConfirm = false;
+      sfxPlay(SFX_TAP);
+      return;
+    }
+    // The label between the arrows answers nothing. It used to fall through to
+    // "anywhere else backs out", so a slightly central aim at an arrow closed
+    // the box instead of turning it.
+    if (boxBoxes() > 1 && y >= BOX_ARROW_Y0 && y <= BOX_ARROW_Y1 &&
+        x > CX - BOX_ARROW_IN && x < CX + BOX_ARROW_IN) return;
+  }
   if (partyHubAt(x, y)) {
     boxSort = (uint8_t)((boxSort + 1) % BSORT_COUNT);
     // A pending swap is armed against a REAL slot, so re-ordering the view does
@@ -7404,12 +7486,12 @@ void boxTap(int16_t x, int16_t y) {
     return;
   }
   for (uint8_t i = 0; i < BOX_PER_PAGE; i++) {
-    uint8_t visual = boxPage * BOX_PER_PAGE + i;
-    if (visual >= BOX_SLOTS) break;
-    uint8_t idx = boxSlotFor(visual);
+    uint16_t visual = boxNo * BOX_SLOTS + boxPage * BOX_PER_PAGE + i;
+    if (visual >= party.boxCap()) break;
+    uint16_t idx = boxSlotFor(visual);
     if (partySlotAt(x, y) != (int)i) continue;
     if (boxSwapFrom) {           // a party slot is waiting: complete the trade
-      if (party.slots[boxSwapFrom - 1].empty() && party.box[idx].empty()) {
+      if (party.slots[boxSwapFrom - 1].empty() && party.boxAt(idx).empty()) {
         sfxPlay(SFX_DENY);
         return;
       }
@@ -7422,7 +7504,7 @@ void boxTap(int16_t x, int16_t y) {
     // Otherwise open its SHEET. It used to go straight to the party, which is a
     // lot to happen from one tap and left nowhere to put RELEASE; the sheet
     // offers TO PARTY explicitly and shows what you are about to move.
-    if (party.box[idx].empty()) { sfxPlay(SFX_DENY); return; }
+    if (party.boxAt(idx).empty()) { sfxPlay(SFX_DENY); return; }
     boxDetail = idx + 1;
     releaseConfirm = false;
     sfxPlay(SFX_TAP);
@@ -7501,12 +7583,12 @@ void renderParty() {
   // full it is, so the player knows there is anything in there without opening
   if (!partyPick) {
     char bl[24];
-    snprintf(bl, sizeof(bl), "%u/%u", party.boxCount(), BOX_SLOTS);
+    snprintf(bl, sizeof(bl), "%u/%u", party.boxCount(), party.boxCap());
     drawPartyHub(bl, T(S_BOX_BTN), boxSwapFrom != 0);
   }
 
   if (boxSel) {
-    const PartyMon &b = party.box[boxSel - 1];
+    const PartyMon &b = party.boxAt(boxSel - 1);
     char sw[44];
     snprintf(sw, sizeof(sw), T(S_BOX_SWAP),
              b.nick[0] ? b.nick : DEX_TBL[b.dex].name);
@@ -7647,8 +7729,8 @@ static bool dexHeldNow(int16_t dex) {
   if (!pet.isEgg() && pet.speciesId == dex) return true;
   for (int i = 0; i < PARTY_SLOTS; i++)
     if (party.slots[i].dex == dex) return true;
-  for (int i = 0; i < BOX_SLOTS; i++)
-    if (party.box[i].dex == dex) return true;
+  for (uint16_t i = 0; i < party.boxCap(); i++)
+    if (party.boxAt(i).dex == dex) return true;
   return false;
 }
 

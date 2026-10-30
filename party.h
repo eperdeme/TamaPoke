@@ -71,10 +71,16 @@ public:
   void replaceAt(uint8_t i, const PartyMon &m);
   void releaseAt(uint8_t i);    // free a slot again
   void save();
-  uint8_t boxCount() const;
+  // The box, ACROSS EVERY BOX: indices below BOX_SLOTS are box[] (box 1, in
+  // the NVS checkpoint), the rest are the extra boxes on flash (boxstore.h).
+  // boxCap() is BOX_SLOTS when there is no file store, so a board without one
+  // plays exactly as before.
+  uint16_t boxCap() const;
+  const PartyMon &boxAt(uint16_t i) const;
+  uint16_t boxCount() const;
   int boxFirstFree() const;
   bool boxAdd(const PartyMon &m);     // into the first free box slot
-  void boxReleaseAt(uint8_t i);
+  void boxReleaseAt(uint16_t i);
   void boxSave();
   // The party and the box are ONE checkpointed record, because a swap moves a
   // creature between them. See the note above Party::savePair() in party.cpp.
@@ -86,7 +92,7 @@ public:
   bool loadPairFrom(uint8_t *buf, size_t cap);
   // Swaps a party slot with a box slot. Either may be empty, so this doubles as
   // deposit and withdraw rather than needing three separate operations.
-  void swapPartyBox(uint8_t partyIdx, uint8_t boxIdx);
+  void swapPartyBox(uint8_t partyIdx, uint16_t boxIdx);
 
   // ---- the focus swap's write-ahead journal -------------------------------
   // Exchanging the live creature with a party slot writes TWO records -- this

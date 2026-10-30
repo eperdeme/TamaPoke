@@ -85,8 +85,8 @@ int main(){
   // place to put a new flag is SAVE_FIELDS.
   {
     Pet p3; p3.begin(); p3.dbgHatchAs(25, false); p3.renameTrainer("PIKA");
-    static uint8_t buf[SAVE_TRANSFER_MAX];
-    size_t n = saveExport(buf, sizeof(buf));
+    static uint8_t *buf = (uint8_t *)malloc(SAVE_TRANSFER_MAX);   // heap: too big for DRAM statics on the board
+    size_t n = saveExport(buf, (size_t)SAVE_TRANSFER_MAX);
     ck(n > 0, "a save exports");
     resetArm();                                   // armed at the time of export
     ck(saveImport(buf, n), "and imports onto a device with an intent pending");
@@ -112,8 +112,8 @@ int main(){
 
     Pet p4; p4.begin(); p4.dbgHatchAs(7, false); p4.renameTrainer("SQUIRT");
     { Preferences g; g.begin("tamapoke", false); g.putUChar("brt", 3); g.end(); }
-    static uint8_t buf[SAVE_TRANSFER_MAX];
-    size_t n = saveExport(buf, sizeof(buf));
+    static uint8_t *buf = (uint8_t *)malloc(SAVE_TRANSFER_MAX);   // heap: too big for DRAM statics on the board
+    size_t n = saveExport(buf, (size_t)SAVE_TRANSFER_MAX);
     ck(n > 0, "a save with a brightness setting exports");
     { Preferences g; g.begin("tamapoke", false); g.putUChar("brt", 9); g.end(); }
     ck(saveImport(buf, n), "and imports");

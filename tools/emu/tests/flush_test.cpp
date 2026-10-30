@@ -24,7 +24,7 @@ extern bool cardOpen, galleryOpen, clockOpen, kbOpen, menuOpen, partyOpen, party
 extern bool trainOpen, movePickOpen, battleOpen, gymOpen, playerOpen;
 extern bool exploreOpen;
 extern uint8_t cardPage;
-extern uint8_t partyDetail, boxDetail;
+extern uint8_t partyDetail; extern uint16_t boxDetail;
 extern bool boxOpen, releaseConfirm;
 extern bool bagOpen;
 // The four minigames, the paged settings screen and the player's pages. The

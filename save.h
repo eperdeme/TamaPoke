@@ -31,9 +31,11 @@
 // simply stops existing. save_test prints the margin and fails below a quarter
 // spare.
 //
-// Costs two static buffers of this size in the sketch, which is why it is not
-// simply enormous.
-#define SAVE_TRANSFER_MAX 12288
+// Raised again from 12288 for the extra boxes (boxstore.h): nine of them add
+// up to ~15.6 KB when all are in use. The sketch allocates these buffers on the
+// heap only while an EXPORT or IMPORT is running (large allocations land in
+// PSRAM on the board), so the ceiling no longer costs RAM the rest of the time.
+#define SAVE_TRANSFER_MAX 32768
 
 enum SaveKind : uint8_t {
   SK_U8 = 1, SK_I8, SK_BOOL, SK_U16, SK_I16, SK_U32, SK_BYTES, SK_STR,

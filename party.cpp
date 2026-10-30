@@ -1,4 +1,5 @@
 #include "party.h"
+#include "boxstore.h"
 #include <stdlib.h>
 #include <string.h>
 #include "dex.h"
@@ -384,35 +385,65 @@ void Party::focusEnd() {
   prefs.remove("fxB");
 }
 
-uint8_t Party::boxCount() const {
-  uint8_t n = 0;
-  for (auto &s : box)
-    if (!s.empty()) n++;
+uint16_t Party::boxCap() const {
+  return BOX_SLOTS + (boxStoreReady() ? BOX_EXTRA_SLOTS : 0);
+}
+
+const PartyMon &Party::boxAt(uint16_t i) const {
+  if (i < BOX_SLOTS) return box[i];
+  return boxStoreSlot((uint16_t)(i - BOX_SLOTS));
+}
+
+uint16_t Party::boxCount() const {
+  uint16_t n = 0;
+  for (uint16_t i = 0; i < boxCap(); i++)
+    if (!boxAt(i).empty()) n++;
   return n;
 }
 
+// Box 1 first, then the extra boxes in order: a box that fills from the front
+// is the one the player expects, and box 1 is the store with no seam to cross.
 int Party::boxFirstFree() const {
-  for (int i = 0; i < BOX_SLOTS; i++)
-    if (box[i].empty()) return i;
+  for (uint16_t i = 0; i < boxCap(); i++)
+    if (boxAt(i).empty()) return i;
   return -1;
 }
 
 bool Party::boxAdd(const PartyMon &m) {
   int i = boxFirstFree();
   if (i < 0) return false;
-  box[i] = m;
-  boxSave();
-  return true;
+  if (i < BOX_SLOTS) {
+    box[i] = m;
+    boxSave();
+    return true;
+  }
+  // An extra box. One store, one write -- but if the store refuses it, the slot
+  // is put back so RAM never shows a creature the flash does not have.
+  const uint16_t e = (uint16_t)(i - BOX_SLOTS);
+  boxStoreSlot(e) = m;
+  if (boxStoreSave((uint8_t)(e / BOX_SLOTS))) return true;
+  boxStoreSlot(e) = PartyMon();
+  return false;
 }
 
-void Party::boxReleaseAt(uint8_t i) {
-  if (i >= BOX_SLOTS) return;
-  box[i] = PartyMon();
-  boxSave();
+void Party::boxReleaseAt(uint16_t i) {
+  if (i >= boxCap()) return;
+  if (i < BOX_SLOTS) {
+    box[i] = PartyMon();
+    boxSave();
+    return;
+  }
+  const uint16_t e = (uint16_t)(i - BOX_SLOTS);
+  boxStoreSlot(e) = PartyMon();
+  boxStoreSave((uint8_t)(e / BOX_SLOTS));
 }
 
-void Party::swapPartyBox(uint8_t partyIdx, uint8_t boxIdx) {
-  if (partyIdx >= PARTY_SLOTS || boxIdx >= BOX_SLOTS) return;
+void Party::swapPartyBox(uint8_t partyIdx, uint16_t boxIdx) {
+  if (partyIdx >= PARTY_SLOTS || boxIdx >= boxCap()) return;
+  if (boxIdx >= BOX_SLOTS) {          // across the seam: journalled, see boxstore.h
+    boxStoreSwap(*this, false, partyIdx, (uint16_t)(boxIdx - BOX_SLOTS));
+    return;
+  }
   PartyMon t = slots[partyIdx];
   slots[partyIdx] = box[boxIdx];
   box[boxIdx] = t;
