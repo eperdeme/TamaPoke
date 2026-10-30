@@ -167,6 +167,50 @@ int main() {
        "while its real level-up moves keep their real levels (EMBER 1, FLAMETHROWER 34)");
   }
 
+  // --- the 40 appended moves -------------------------------------------------
+  {
+    // they are APPENDED: every move a save already holds keeps its index
+    ck(MV_DARK_PULSE == 89 && MV_STRUGGLE == 88, "the new moves are appended; saved move indices do not move");
+    ck(MOVE_COUNT <= 256, "and every move still fits the byte a save stores it in");
+    // the gap they were added for: species that reach level 40 with fewer than
+    // three moves learned by level-up. 207 before; the bound leaves a little
+    // room for the data to shift without hiding a regression of the kind fixed.
+    int thin = 0;
+    for (int d = 1; d <= DEX_COUNT; d++) {
+      int lv = 0;
+      for (uint8_t i = 0; i < learnCount(d); i++) { uint8_t l = learnLevel(d, i); if (l > 0 && l < 40) lv++; }
+      if (lv < 3) thin++;
+    }
+    printf("      species with fewer than 3 level-up moves before 40: %d\n", thin);
+    ck(thin <= 45, "the thin movesets the new moves were added for stay fixed");
+    // BANETTE, the case that started it: its real Dark and Ghost moves
+    bool sneak = false, sucker = false, knock = false;
+    for (uint8_t i = 0; i < learnCount(354); i++) {
+      const uint8_t m = learnMove(354, i), l = learnLevel(354, i);
+      if (m == MV_SHADOW_SNEAK && l > 0) sneak = true;
+      if (m == MV_SUCKER_PUNCH && l > 0) sucker = true;
+      if (m == MV_KNOCK_OFF && l > 0) knock = true;
+    }
+    ck(sneak && sucker && knock, "BANETTE learns SHADOW SNEAK, SUCKER PUNCH and KNOCK OFF by level");
+    // simplified, but the effects the engine has are kept
+    ck(MOVE_TBL[MV_SHADOW_SNEAK].effect == EF_PRIORITY && MOVE_TBL[MV_GIGA_DRAIN].effect == EF_DRAIN &&
+       MOVE_TBL[MV_TAKE_DOWN].effect == EF_RECOIL && MOVE_TBL[MV_FURY_SWIPES].effect == EF_MULTI &&
+       MOVE_TBL[MV_FEINT_ATTACK].effect == EF_NEVER_MISS && MOVE_TBL[MV_GIGA_IMPACT].effect == EF_RECHARGE,
+       "priority, drain, recoil, multi-hit, never-miss and recharge are kept");
+  }
+
+  // --- coverage: a set of four attacks of ONE type gets a second type --------
+  {
+    Pet s; s.dbgHatchAs(143, false);                 // SNORLAX: Normal, many Normal moves
+    s.ageMinutes = 49UL * MINUTES_PER_LEVEL;
+    s.relearnFromLevel();
+    bool other = false;
+    for (int i = 0; i < MOVE_SLOTS; i++)
+      if (s.moves[i] && MOVE_TBL[s.moves[i]].cat != MC_STATUS && MOVE_TBL[s.moves[i]].type != T_NORMAL)
+        other = true;
+    ck(other, "a level 50 SNORLAX is not left with four Normal attacks and nothing for a Ghost");
+  }
+
   printf("%s\n", bad ? "FAILURES" : "all good");
   return bad ? 1 : 0;
 }

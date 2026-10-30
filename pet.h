@@ -101,6 +101,13 @@ enum : uint16_t {
 
 uint8_t moveUnlockLevel(int16_t dex, uint8_t idx);
 
+// The forms `dex` evolves FROM, nearest first (Charizard: Charmeleon, then
+// Charmander). The move picker offers their moves too, each behind the level
+// that form learns it at, so a move the line skipped -- an evolution taken late,
+// or a later form that dropped it -- can still be taught by hand.
+#define PRE_EVO_MAX 4
+uint8_t preEvolutions(int16_t dex, int16_t *out, uint8_t max);
+
 // ---------------------------------------------------------------------------
 // Which regions have their sprite pack on the microSD.
 //
@@ -286,6 +293,7 @@ public:
   // The newest MOVE_SLOTS moves this species has learned by its current level,
   // newest last. Used on hatch, on a fresh save, and to backfill empty slots.
   void relearnFromLevel();
+  void ensureCoverage();   // relearnFromLevel(): a second attacking type when one exists
   // The level at which `dex` may legally use learnset entry `i`. A level-up
   // move carries its own; a level-0 entry is a TM/tutor/egg move, which the
   // data gives no level at all, and those unlock together at TM_LEVEL.

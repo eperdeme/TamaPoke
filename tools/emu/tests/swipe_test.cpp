@@ -376,6 +376,37 @@ int main(){
     } else printf("PASS  picker     and the TMs arrive once it is built\n");
   }
 
+  // Earlier forms' moves, each behind the level THAT form learns it at.
+  // Sirfetch'd's own list has no AIR SLASH; Farfetch'd learns it at 31.
+  {
+    uint8_t l[MOVE_COUNT];
+    auto has = [&](int16_t dex, uint8_t lvl, const char *mv) {
+      uint8_t n = learnableFor(dex, lvl, l, sizeof(l));
+      for (uint8_t i = 0; i < n; i++) if (!strcmp(MOVE_TBL[l[i]].name, mv)) return true;
+      return false;
+    };
+    int16_t pre[PRE_EVO_MAX];
+    uint8_t np = preEvolutions(6, pre, PRE_EVO_MAX);
+    if (np != 2 || pre[0] != 5 || pre[1] != 4) { printf("FAIL  picker     Charizard's line is not Charmeleon, Charmander\n"); bad++; }
+    else printf("PASS  picker     Charizard comes from Charmeleon, then Charmander\n");
+    np = preEvolutions(470, pre, PRE_EVO_MAX);
+    if (np != 1 || pre[0] != 133) { printf("FAIL  picker     Leafeon does not trace back to Eevee\n"); bad++; }
+    else printf("PASS  picker     a branch form (Leafeon) traces back to Eevee\n");
+    if (preEvolutions(4, pre, PRE_EVO_MAX) != 0) { printf("FAIL  picker     Charmander has a pre-evolution\n"); bad++; }
+    else printf("PASS  picker     a base form has none\n");
+    if (has(865, 30, "AIR SLASH")) { printf("FAIL  picker     a level 30 Sirfetch'd gets AIR SLASH early\n"); bad++; }
+    else printf("PASS  picker     an earlier form's move keeps that form's level gate\n");
+    if (!has(865, 31, "AIR SLASH")) { printf("FAIL  picker     Sirfetch'd never gets Farfetch'd's AIR SLASH\n"); bad++; }
+    else printf("PASS  picker     and Sirfetch'd can be taught Farfetch'd's AIR SLASH at 31\n");
+    // nothing listed twice, and no list cut short: Mew alone has 82 entries
+    uint8_t n = learnableFor(151, 100, l, sizeof(l));
+    bool dup = false;
+    for (uint8_t i = 0; i < n; i++)
+      for (uint8_t j = i + 1; j < n; j++) if (l[i] == l[j]) dup = true;
+    if (dup || n <= 64) { printf("FAIL  picker     Mew's list is cut short or repeats (%u)\n", n); bad++; }
+    else printf("PASS  picker     Mew's whole list fits (%u moves), none twice\n", n);
+  }
+
   printf("%s\n", bad?"FAILURES":"every paged screen pages");
   return bad?1:0;
 }

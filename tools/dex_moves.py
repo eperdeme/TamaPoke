@@ -218,6 +218,66 @@ MOVES = [
     # STAB; Darkrai is SpA 135 / Atk 90, so neither was usable to it. It learns
     # DARK PULSE by level-up at 27, so this is its real move, not a contrivance.
     ("DARK PULSE",   "dark-pulse",    'dark',     MC_SPEC,  80, 100, EF_NONE,      0, 0, 0, TG_FOE),  # LATER (Gen 4)
+
+    # --- 40 moves for the species whose real movesets this list left empty ---
+    # 207 species learned fewer than three moves by level before level 40,
+    # because their real moves were simply not in this list (BANETTE: 14 of its
+    # 97). These are the damaging moves that close most of that gap, chosen by
+    # how many of those species learn each one by level-up in the real games;
+    # the learnsets come from the same PokeAPI data as everything above.
+    #
+    # Each is SIMPLIFIED to what the engine models, the same way OUTRAGE and
+    # PSYCHIC already are: the power, accuracy, type and category are the real
+    # ones, and an effect stays only if the engine has it (recoil, drain,
+    # multi-hit, priority, never-miss, recharge, a burn/paralysis/poison/freeze/
+    # confusion chance). What is dropped: flinch, raised critical-hit ratios,
+    # secondary stat changes, trapping, conditions on power (PAYBACK, WEATHER
+    # BALL, FURY CUTTER, SUCKER PUNCH's "only if the target attacks", FAKE OUT's
+    # first turn) and anything about held items (KNOCK OFF), which do not exist.
+    #
+    # Moves that cannot be simplified without breaking their balance (CLOSE
+    # COMBAT, OVERHEAT, EXPLOSION...) or their meaning (SNORE, FUTURE SIGHT) were
+    # left out.
+    ("ASTONISH",   "astonish",     'ghost',    MC_PHYS,  30, 100, EF_NONE,      0, 0, 0, TG_FOE),
+    ("TAKE DOWN",  "take-down",    'normal',   MC_PHYS,  90,  85, EF_RECOIL,    4, 0, 0, TG_FOE),
+    ("SLASH",      "slash",        'normal',   MC_PHYS,  70, 100, EF_NONE,      0, 0, 0, TG_FOE),
+    ("HEADBUTT",   "headbutt",     'normal',   MC_PHYS,  70, 100, EF_NONE,      0, 0, 0, TG_FOE),
+    ("RAPID SPIN", "rapid-spin",   'normal',   MC_PHYS,  50, 100, EF_NONE,      0, 0, 0, TG_FOE),
+    ("DRAGON PULSE","dragon-pulse", 'dragon',   MC_SPEC,  85, 100, EF_NONE,      0, 0, 0, TG_FOE),
+    ("STOMP",      "stomp",        'normal',   MC_PHYS,  65, 100, EF_NONE,      0, 0, 0, TG_FOE),
+    ("AIR SLASH",  "air-slash",    'flying',   MC_SPEC,  75,  95, EF_NONE,      0, 0, 0, TG_FOE),
+    ("SUCKER PUNCH","sucker-punch", 'dark',     MC_PHYS,  70, 100, EF_PRIORITY,  1, 0, 0, TG_FOE),
+    ("SLAM",       "slam",         'normal',   MC_PHYS,  80,  75, EF_NONE,      0, 0, 0, TG_FOE),
+    ("STRUGGLE BUG","struggle-bug", 'bug',      MC_SPEC,  50, 100, EF_NONE,      0, 0, 0, TG_FOE),
+    ("MIRROR SHOT","mirror-shot",  'steel',    MC_SPEC,  65,  85, EF_NONE,      0, 0, 0, TG_FOE),
+    ("DISARM VOICE","disarming-voice",'fairy',    MC_SPEC,  40,   0, EF_NEVER_MISS,0, 0, 0, TG_FOE),
+    ("KNOCK OFF",  "knock-off",    'dark',     MC_PHYS,  65, 100, EF_NONE,      0, 0, 0, TG_FOE),
+    ("FURY SWIPES","fury-swipes",  'normal',   MC_PHYS,  18,  80, EF_MULTI,     0, 0, 0, TG_FOE),
+    ("HYPER VOICE","hyper-voice",  'normal',   MC_SPEC,  90, 100, EF_NONE,      0, 0, 0, TG_FOE),
+    ("AQUA JET",   "aqua-jet",     'water',    MC_PHYS,  40, 100, EF_PRIORITY,  1, 0, 0, TG_FOE),
+    ("WHIRLPOOL",  "whirlpool",    'water',    MC_SPEC,  35,  85, EF_NONE,      0, 0, 0, TG_FOE),
+    ("BULLDOZE",   "bulldoze",     'ground',   MC_PHYS,  60, 100, EF_NONE,      0, 0, 0, TG_FOE),
+    ("PAYBACK",    "payback",      'dark',     MC_PHYS,  50, 100, EF_NONE,      0, 0, 0, TG_FOE),
+    ("GIGA DRAIN", "giga-drain",   'grass',    MC_SPEC,  75, 100, EF_DRAIN,     50, 0, 0, TG_FOE),
+    ("DRAIN KISS", "draining-kiss",'fairy',    MC_SPEC,  50, 100, EF_DRAIN,     75, 0, 0, TG_FOE),
+    ("FEINT ATTACK","feint-attack", 'dark',     MC_PHYS,  60,   0, EF_NEVER_MISS,0, 0, 0, TG_FOE),
+    ("GUST",       "gust",         'flying',   MC_SPEC,  40, 100, EF_NONE,      0, 0, 0, TG_FOE),
+    ("CHARGE BEAM","charge-beam",  'electric', MC_SPEC,  50,  90, EF_NONE,      0, 0, 0, TG_FOE),
+    ("WEATHER BALL","weather-ball", 'normal',   MC_SPEC,  50, 100, EF_NONE,      0, 0, 0, TG_FOE),
+    ("METAL CLAW", "metal-claw",   'steel',    MC_PHYS,  50,  95, EF_NONE,      0, 0, 0, TG_FOE),
+    ("GIGA IMPACT","giga-impact",  'normal',   MC_PHYS, 150,  90, EF_RECHARGE,  0, 0, 0, TG_FOE),
+    ("MUD-SLAP",   "mud-slap",     'ground',   MC_SPEC,  20, 100, EF_NONE,      0, 0, 0, TG_FOE),
+    ("WATER PULSE","water-pulse",  'water',    MC_SPEC,  60, 100, EF_NONE,      0, 0, 0, TG_FOE, AIL_CONFUSE, 20),
+    ("SHOCK WAVE", "shock-wave",   'electric', MC_SPEC,  60,   0, EF_NEVER_MISS,0, 0, 0, TG_FOE),
+    ("MAGICAL LEAF","magical-leaf", 'grass',    MC_SPEC,  60,   0, EF_NEVER_MISS,0, 0, 0, TG_FOE),
+    ("FURY CUTTER","fury-cutter",  'bug',      MC_PHYS,  40,  95, EF_NONE,      0, 0, 0, TG_FOE),
+    ("FAKE OUT",   "fake-out",     'normal',   MC_PHYS,  40, 100, EF_PRIORITY,  3, 0, 0, TG_FOE),
+    ("POWDER SNOW","powder-snow",  'ice',      MC_SPEC,  40, 100, EF_NONE,      0, 0, 0, TG_FOE, AIL_FREEZE, 10),
+    ("SMOG",       "smog",         'poison',   MC_SPEC,  30,  70, EF_NONE,      0, 0, 0, TG_FOE, AIL_POISON, 40),
+    ("NUZZLE",     "nuzzle",       'electric', MC_PHYS,  20, 100, EF_NONE,      0, 0, 0, TG_FOE, AIL_PARA, 100),
+    ("CLAMP",      "clamp",        'water',    MC_PHYS,  35,  85, EF_NONE,      0, 0, 0, TG_FOE),
+    ("SHADOW SNEAK","shadow-sneak", 'ghost',    MC_PHYS,  40, 100, EF_PRIORITY,  1, 0, 0, TG_FOE),
+    ("SHADOW CLAW","shadow-claw",  'ghost',    MC_PHYS,  70, 100, EF_NONE,      0, 0, 0, TG_FOE),
 ]
 
 # Accuracy drops (SAND ATTACK, SMOKESCREEN, FLASH) are deliberately left out:

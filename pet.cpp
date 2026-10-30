@@ -1092,6 +1092,36 @@ uint8_t moveUnlockLevel(int16_t dex, uint8_t idx) {
   return tmLevelFor(MOVE_TBL[mv]);       // a TM: no natural level, so the gate
 }
 
+// One step back: the species whose evolution lands on `dex`, or 0. The table
+// only stores the forward link, and a branch target (every Eevee form; with the
+// branch table, Gallade and the rest) is not the evolvesTo of anything, so the
+// branch lists are searched too.
+static int16_t preEvolutionOf(int16_t dex) {
+  for (int16_t d = 1; d <= DEX_COUNT; d++)
+    if (DEX_TBL[d].evolvesTo == dex) return d;
+  for (uint8_t i = 0; i < EEVEE_EVO_COUNT; i++)
+    if (EEVEE_EVOS[i] == dex) return 133;
+#ifdef EVO_BRANCH_COUNT
+  for (uint8_t i = 0; i < EVO_BRANCH_COUNT; i++)
+    for (uint8_t k = 0; k < EVO_BRANCHES[i].count; k++)
+      if (EVO_BRANCHES[i].to[k] == dex) return EVO_BRANCHES[i].from;
+#endif
+  return 0;
+}
+
+uint8_t preEvolutions(int16_t dex, int16_t *out, uint8_t max) {
+  uint8_t n = 0;
+  int16_t cur = dex;
+  // bounded: a cycle in the data must not hang the picker
+  while (n < max) {
+    const int16_t p = preEvolutionOf(cur);
+    if (p <= 0 || p == dex) break;
+    out[n++] = p;
+    cur = p;
+  }
+  return n;
+}
+
 void Pet::relearnFromLevel() {
   for (int i = 0; i < MOVE_SLOTS; i++) moves[i] = 0;
   if (isEgg()) return;
@@ -1146,11 +1176,13 @@ void Pet::relearnFromLevel() {
   // recoil-laden, so pure scoring left it with four generic attacks and nothing
   // that reads as a Machamp. If the set came out with no STAB, the weakest slot
   // gives way to the best same-type attack the species can actually learn.
+  bool hasStab = false;
   for (int i = 0; i < MOVE_SLOTS; i++) {
     if (!moves[i]) continue;
     const MoveEntry &m = MOVE_TBL[moves[i]];
-    if (m.cat != MC_STATUS && (m.type == d.type1 || m.type == d.type2)) return;
+    if (m.cat != MC_STATUS && (m.type == d.type1 || m.type == d.type2)) hasStab = true;
   }
+  if (hasStab) { ensureCoverage(); return; }
   uint8_t best = 0;
   int16_t bestSc = 0;
   for (uint8_t i = 0; i < n; i++) {
@@ -1171,6 +1203,50 @@ void Pet::relearnFromLevel() {
     if (sc > bestSc) { bestSc = sc; best = mv; }
   }
   if (best) moves[MOVE_SLOTS - 1] = best;
+  ensureCoverage();
+}
+
+// Guarantee a second attacking TYPE, when the species has one to offer. The
+// scoring above favours STAB, which used to be harmless with one or two
+// same-type moves per species; with SLASH, HEADBUTT, TAKE DOWN and GIGA IMPACT
+// in the list, a Normal type came out with four Normal attacks and nothing at
+// all to throw at a Ghost. If every attack in the set shares a type, the
+// weakest attack gives way to the best one of another type the species can
+// legally use at this level -- the same gates as everything above.
+void Pet::ensureCoverage() {
+  const DexEntry &d = DEX_TBL[speciesId];
+  int8_t type = -1;
+  int weakest = -1;
+  int16_t weakestPow = 0x7FFF;
+  for (int i = 0; i < MOVE_SLOTS; i++) {
+    if (!moves[i]) continue;
+    const MoveEntry &m = MOVE_TBL[moves[i]];
+    if (m.cat == MC_STATUS) continue;
+    if (type < 0) type = (int8_t)m.type;
+    else if (m.type != (uint8_t)type) return;     // already covers two types
+    if ((int16_t)m.power < weakestPow) { weakestPow = (int16_t)m.power; weakest = i; }
+  }
+  if (type < 0 || weakest < 0) return;
+  // only when the set is full of attacks: a free slot is the player's to fill
+  for (int i = 0; i < MOVE_SLOTS; i++) if (!moves[i]) return;
+  const uint8_t lvl = level(), n = learnCount(speciesId);
+  uint8_t best = 0;
+  int16_t bestSc = 0;
+  for (uint8_t i = 0; i < n; i++) {
+    uint8_t at = learnLevel(speciesId, i);
+    if (at > lvl) continue;
+    uint8_t mv = learnMove(speciesId, i);
+    if (!mv || mv >= MOVE_COUNT || knowsMove(mv)) continue;
+    const MoveEntry &m = MOVE_TBL[mv];
+    if (m.cat == MC_STATUS || m.type == (uint8_t)type) continue;
+    if (at == 0 && lvl < tmLevelFor(m)) continue;
+    int16_t sc = (int16_t)m.power;
+    if (m.type == d.type1 || m.type == d.type2) sc += 40;
+    if (m.effect == EF_RECHARGE) sc -= 35;
+    if (m.effect == EF_RECOIL) sc -= 20;
+    if (sc > bestSc) { bestSc = sc; best = mv; }
+  }
+  if (best) moves[weakest] = best;
 }
 
 // Queues every level-up move unlocked since the last check. A free slot is

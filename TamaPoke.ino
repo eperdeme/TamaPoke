@@ -2463,7 +2463,7 @@ void onTap(int16_t x, int16_t y) {
     return;
   }
   if (movePickOpen) {
-    uint8_t all[64];
+    uint8_t all[MOVE_COUNT];
     uint8_t n = learnableList(all, sizeof(all));
     for (uint8_t i = 0; i < MOVE_PICK_PER_PAGE; i++) {
       uint8_t idx = movePickPage * MOVE_PICK_PER_PAGE + i;
@@ -2908,7 +2908,7 @@ static uint8_t *uiRimTarget(uint8_t *pages) {
     // same table, so the second page advertises itself with no new control.
     case SCR_CLOCK:   p = &clockPage;   n = CLOCK_PAGES; break;
     case SCR_MOVEPICK: {
-      uint8_t all[64];
+      uint8_t all[MOVE_COUNT];
       uint8_t k = learnableList(all, sizeof(all));
       p = &movePickPage;
       n = k ? (uint8_t)((k + MOVE_PICK_PER_PAGE - 1) / MOVE_PICK_PER_PAGE) : 1;
@@ -4281,22 +4281,32 @@ void renderCardMoves() {
 }
 
 // Every move the species can learn by this level, so a slot can be swapped for
-// anything legal -- not just the handful a level-up would have offered.
+// anything legal -- not just the handful a level-up would have offered. That
+// includes what its earlier forms learn, each behind THEIR level: evolving late
+// skips the prompts for the levels already passed, and some later forms drop a
+// move the earlier one had (Sirfetch'd and Air Slash). Either way it stays here.
 uint8_t learnableFor(int16_t dex, uint8_t lvl, uint8_t *out, uint8_t max) {
   if (dex < 1 || dex > DEX_COUNT) return 0;
-  uint8_t n = learnCount(dex), w = 0;
-  for (uint8_t i = 0; i < n && w < max; i++) {
-    // moveUnlockLevel(), NOT learnLevel(): a TM is stored as level 0 and would
-    // otherwise clear this check at level 1. That is how a level 22 Charmeleon
-    // came to be offered FIRE BLAST -- the same class of bug as the level 1
-    // Squirtle with SURF, in the one path that fix did not reach.
-    if (moveUnlockLevel(dex, i) > lvl) continue;
-    uint8_t mv = learnMove(dex, i);
-    if (!mv || mv >= MOVE_COUNT) continue;
-    bool dup = false;
-    for (uint8_t j = 0; j < w; j++)
-      if (out[j] == mv) { dup = true; break; }
-    if (!dup) out[w++] = mv;
+  int16_t line[1 + PRE_EVO_MAX];
+  line[0] = dex;
+  const uint8_t forms = 1 + preEvolutions(dex, line + 1, PRE_EVO_MAX);
+  uint8_t w = 0;
+  for (uint8_t f = 0; f < forms; f++) {
+    const int16_t sp = line[f];
+    const uint8_t n = learnCount(sp);
+    for (uint8_t i = 0; i < n && w < max; i++) {
+      // moveUnlockLevel(), NOT learnLevel(): a TM is stored as level 0 and would
+      // otherwise clear this check at level 1. That is how a level 22 Charmeleon
+      // came to be offered FIRE BLAST -- the same class of bug as the level 1
+      // Squirtle with SURF, in the one path that fix did not reach.
+      if (moveUnlockLevel(sp, i) > lvl) continue;
+      uint8_t mv = learnMove(sp, i);
+      if (!mv || mv >= MOVE_COUNT) continue;
+      bool dup = false;
+      for (uint8_t j = 0; j < w; j++)
+        if (out[j] == mv) { dup = true; break; }
+      if (!dup) out[w++] = mv;
+    }
   }
   return w;
 }
@@ -4326,7 +4336,7 @@ void renderMovePick() {
   gfx->setCursor(CX - strlen(T(S_MOVE_PICK)) * 6, 40);
   gfx->print(T(S_MOVE_PICK));
 
-  uint8_t all[64];
+  uint8_t all[MOVE_COUNT];
   uint8_t n = learnableList(all, sizeof(all));
   uint8_t pages = n ? (n + MOVE_PICK_PER_PAGE - 1) / MOVE_PICK_PER_PAGE : 1;
   if (movePickPage >= pages) movePickPage = 0;
