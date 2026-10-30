@@ -23,24 +23,37 @@
 #define HEART_MS 1500UL
 #define EVOLVE_ANIM_MS 5200UL              // animacion de evolucion (mas larga = mas epica)
 #define CEREMONY_MS 10000UL                // duracion de la despedida en pantalla
-#define FAREWELL_AGE_MIN (72UL * MINUTES_PER_LEVEL)   // 3 dias de juego = nivel 73 (en forma final)
+// The DEFAULT farewell, as an age: level 73. The live rule is gFarewellLevel
+// (see below); this stays for code and tests that mean "the original game's".
+#define FAREWELL_AGE_MIN ((uint32_t)(FAREWELL_LVL_DEFAULT - 1) * MINUTES_PER_LEVEL)
 // Retiring a creature BEFORE it has earned its farewell costs the NEXT one a
 // day's worth of evolution. Derived from MINUTES_PER_LEVEL rather than written
 // as 24, so it stays "a day" if the level rate is ever retuned.
 // Stated in LEVELS (24 = one day at the normal rate), so a faster level speed
 // keeps the same rule.
 #define EVO_PENALTY_LEVELS ((uint8_t)24)
-// Level speed, a player setting: real minutes per level. 60 is the original game.
-// Only growth speeds up -- needs, sleep, neglect and the egg still run in real
-// minutes. Persisted under "lvspd"; a missing or junk value reads as 60.
-#define LEVEL_SPEED_COUNT 5
-extern const uint8_t LEVEL_SPEED_OPTS[LEVEL_SPEED_COUNT];   // 60, 30, 15, 5, 1
+// Level speed, a player setting: real minutes per level, 1..60. 60 is the
+// original game. ageMinutes stays GAME minutes at MINUTES_PER_LEVEL a level --
+// level(), evolution and the farewell all read it unchanged -- and each real
+// minute adds 60 / gLevelMins of them, exactly: Pet::growMinute() carries the
+// remainder in growFrac, so a level takes exactly gLevelMins real minutes at
+// any value, with no drift. Only growth speeds up -- needs, sleep, neglect and
+// the egg still run in real minutes. Persisted under "lvspd"; junk reads as 60.
+#define LEVEL_SPEED_MIN 1
+#define LEVEL_SPEED_MAX 60
 extern uint8_t gLevelMins;
 void levelSpeedLoad();
-void levelSpeedSet(uint8_t realMinsPerLevel);   // ignores values not in the list
-void levelSpeedCycle();                         // next option, wraps to 60
-// Game minutes added per real minute (1, 2, 4, 12 or 60).
-inline uint8_t levelSpeedStep() { return (uint8_t)(MINUTES_PER_LEVEL / (gLevelMins ? gLevelMins : MINUTES_PER_LEVEL)); }
+void levelSpeedSet(int realMinsPerLevel);       // clamped to 1..60
+
+// The farewell level, a player setting: 50..100, default 73 (the original game:
+// 72 levels after hatching, three days at the normal speed). Offered only once
+// the creature is ALSO in its final form, as before. Persisted under "fwlv".
+#define FAREWELL_LVL_MIN 50
+#define FAREWELL_LVL_MAX 100
+#define FAREWELL_LVL_DEFAULT 73
+extern uint8_t gFarewellLevel;
+void farewellLevelLoad();
+void farewellLevelSet(int level);               // clamped to 50..100
 #define RUNAWAY_TICKS 60                   // se escapa tras 1 h con TODO a cero
 // Night, by the RTC: midnight to 06:00. Auto-sleep needs BOTH: the screen off
 // AND this window.
@@ -183,6 +196,16 @@ public:
   bool berryKnown = false;  // ya descubrio su baya favorita
   bool shiny = false;       // variante de color rara (se sortea en el huevo)
   uint32_t ageMinutes = 0;
+  // Real minutes alive and active, whatever the level speed (see PartyMon). The
+  // card shows this; nothing in the game's rules reads it.
+  uint32_t realAgeMin = 0;
+  // The part of a game minute already earned at the current speed, in 1/60ths
+  // of a real minute's worth (see growMinute()). Always below gLevelMins.
+  uint8_t growFrac = 0;
+  // One real minute of growth at the current speed.
+  void growMinute();
+  // Real minutes until the next level at the current speed, exact.
+  uint32_t realMinutesToNextLevel() const;
   int16_t speciesId = -1;      // numero de Pokedex (1..DEX_COUNT), -1 = huevo
   int16_t prevSpeciesId = -1;  // para la animacion de evolucion
   uint8_t careMistakes = 0;   // descuidos: cada uno retrasa la evolucion 1 nivel

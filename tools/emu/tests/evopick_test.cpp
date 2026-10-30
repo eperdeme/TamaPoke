@@ -107,6 +107,32 @@ int main(){
     galleryFilter = 0;
   }
 
+  // --- the PARTIDA settings page: four buttons a row, stopping at the ends ---
+  {
+    extern bool clockOpen; extern uint8_t clockPage;
+    int uiGameRowY(int r); int uiGameBtnX(int step);
+    clockOpen = true; clockPage = 2;
+    levelSpeedSet(60); farewellLevelSet(73);
+    render();
+    ck(on("clock"), "the settings screen is up on its third page");
+    onTap(uiGameBtnX(-1), uiGameRowY(0));
+    ck(gLevelMins == 59, "< lowers the minutes per level by one");
+    onTap(uiGameBtnX(-10), uiGameRowY(0));
+    ck(gLevelMins == 49, "<< by ten");
+    onTap(uiGameBtnX(10), uiGameRowY(0)); onTap(uiGameBtnX(10), uiGameRowY(0));
+    ck(gLevelMins == 60, ">> stops at 60 instead of wrapping");
+    onTap(uiGameBtnX(1), uiGameRowY(0));
+    ck(gLevelMins == 60, "and > at 60 does nothing");
+    onTap(uiGameBtnX(-10), uiGameRowY(1)); onTap(uiGameBtnX(-10), uiGameRowY(1));
+    onTap(uiGameBtnX(-10), uiGameRowY(1));
+    ck(gFarewellLevel == 50, "the farewell level goes down by ten and stops at 50");
+    onTap(uiGameBtnX(1), uiGameRowY(1));
+    ck(gFarewellLevel == 51, "and up by one");
+    render();
+    clockOpen = false; clockPage = 0;
+    levelSpeedSet(60); farewellLevelSet(73);
+  }
+
   printf("%s\n", bad?"FAILURES":"all good");
   return bad?1:0;
 }

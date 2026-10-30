@@ -44,33 +44,54 @@ static void hatched(Clocked &c, int16_t dex) {
 }
 
 int main(){
-  // --- the setting itself ---------------------------------------------------
+  // --- the settings themselves ---------------------------------------------
   levelSpeedLoad();
-  ck(gLevelMins == 60 && levelSpeedStep() == 1, "a save with no setting plays at the original 60 min per level");
-  levelSpeedSet(60);
-  const uint8_t order[] = { 30, 15, 5, 1, 60 };
-  bool inOrder = true;
-  for (uint8_t want : order) { levelSpeedCycle(); if (gLevelMins != want) inOrder = false; }
-  ck(inOrder, "tapping cycles 60 -> 30 -> 15 -> 5 -> 1 -> 60");
-  levelSpeedSet(5);
-  levelSpeedSet(7);
-  ck(gLevelMins == 5, "a value not in the list is ignored");
-  gLevelMins = 60;
-  levelSpeedLoad();
-  ck(gLevelMins == 5, "the choice survives a reboot");
+  farewellLevelLoad();
+  ck(gLevelMins == 60 && gFarewellLevel == 73,
+     "a save with no settings plays the original game: 60 min per level, farewell at 73");
+  levelSpeedSet(0);   ck(gLevelMins == 1, "the speed stops at 1, it does not wrap");
+  levelSpeedSet(75);  ck(gLevelMins == 60, "and at 60");
+  farewellLevelSet(10);  ck(gFarewellLevel == 50, "the farewell level stops at 50");
+  farewellLevelSet(140); ck(gFarewellLevel == 100, "and at 100");
+  levelSpeedSet(7); farewellLevelSet(61);
+  gLevelMins = 60; gFarewellLevel = 73;
+  levelSpeedLoad(); farewellLevelLoad();
+  ck(gLevelMins == 7 && gFarewellLevel == 61, "both survive a reboot");
   {
-    Preferences pr; pr.begin("tamapoke", false); pr.putUChar("lvspd", 42); pr.end();
-    levelSpeedLoad();
-    ck(gLevelMins == 60, "a junk stored value reads as 60");
+    Preferences pr; pr.begin("tamapoke", false);
+    pr.putUChar("lvspd", 0); pr.putUChar("fwlv", 200); pr.end();
+    levelSpeedLoad(); farewellLevelLoad();
+    ck(gLevelMins == 60 && gFarewellLevel == 73, "junk stored values read as the defaults");
   }
-  const uint8_t steps[] = { 1, 2, 4, 12, 60 };
-  const uint8_t mins[]  = { 60, 30, 15, 5, 1 };
-  bool stepsOk = true;
-  for (int i = 0; i < 5; i++) { levelSpeedSet(mins[i]); if (levelSpeedStep() != steps[i]) stepsOk = false; }
-  ck(stepsOk, "each speed adds 60/N game minutes per real minute");
+
+  // --- EVERY speed from 1 to 60 levels exactly, with no drift ----------------
+  {
+    bool exact = true;
+    for (int mpl = 1; mpl <= 60 && exact; mpl++) {
+      levelSpeedSet(mpl);
+      Clocked c; hatched(c, 6);
+      run(c, mpl * 5 - 1);
+      const bool before = c.p.level() == 5;
+      run(c, 1);
+      if (!before || c.p.level() != 6) {
+        printf("      %d min per level: level %u after %d min\n", mpl, c.p.level(), mpl * 5);
+        exact = false;
+      }
+    }
+    ck(exact, "at every speed from 1 to 60, five levels take exactly five times that many minutes");
+  }
+  {
+    levelSpeedSet(7);
+    Clocked c; hatched(c, 6);
+    run(c, 3);
+    ck(c.p.realMinutesToNextLevel() == 4, "the minutes to the next level are exact at a speed that does not divide 60");
+    run(c, 7 * 90);
+    ck(c.p.level() == 91 && c.p.realMinutesToNextLevel() == 4, "and still exact ninety levels later");
+  }
+  const uint8_t mins[]  = { 60, 30, 20, 15, 5, 1 };
 
   // --- each speed levels exactly as advertised ------------------------------
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < 6; i++) {
     levelSpeedSet(mins[i]);
     Clocked c; hatched(c, 6);                     // CHARIZARD: nothing to evolve into
     run(c, mins[i] - 1);
@@ -137,6 +158,35 @@ int main(){
     ck(c.p.canFarewellNow(), "it is at 72: the same level-73 rule, in minutes");
   }
 
+  {
+    // 20 min per level is one life a day: the farewell exactly 24 h after hatching
+    levelSpeedSet(20);
+    Clocked c; hatched(c, 6);
+    c.p.fullness = c.p.joy = c.p.energy = c.p.hygiene = 100;
+    run(c, 24 * 60 - 1);
+    c.p.sleeping = false;
+    const bool notYet = !c.p.canFarewellNow();
+    run(c, 1);
+    c.p.sleeping = false;
+    ck(notYet && c.p.canFarewellNow(), "at 20 min per level the farewell comes exactly 24 h after hatching");
+  }
+
+  {
+    // the farewell level setting: 60 at 1 min per level -> offered after 59 minutes
+    levelSpeedSet(1); farewellLevelSet(60);
+    Clocked c; hatched(c, 6);
+    c.p.fullness = c.p.joy = c.p.energy = c.p.hygiene = 100;
+    run(c, 58); c.p.sleeping = false;
+    const bool notYet = !c.p.canFarewellNow();
+    run(c, 1); c.p.sleeping = false;
+    ck(notYet && c.p.canFarewellNow(), "with the farewell at 60 it is offered at level 60, not 73");
+    farewellLevelSet(80); c.p.sleeping = false;
+    ck(!c.p.canFarewellNow(), "raising the setting takes the offer back until the new level");
+    farewellLevelSet(50); c.p.sleeping = false;
+    ck(c.p.canFarewellNow(), "lowering it below the current level offers it at once");
+    farewellLevelSet(FAREWELL_LVL_DEFAULT);
+  }
+
   // --- offline catch-up uses the speed too ----------------------------------
   {
     levelSpeedSet(1);
@@ -150,6 +200,45 @@ int main(){
     d.p.setClock(t0);
     d.p.syncClock(t0 + 30UL * 60UL);
     ck(d.p.level() == 1, "and at 60 min per level it is half of one");
+  }
+  // --- the REAL age: what the card shows, at any speed --------------------
+  {
+    levelSpeedSet(1);
+    Clocked c; hatched(c, 6);
+    c.p.realAgeMin = 0;
+    run(c, 90);
+    ck(c.p.realAgeMin == 90 && c.p.level() >= 91 - 1,
+       "at 1 min per level the real age counts real minutes while the level races");
+    // offline too
+    const uint32_t t0 = CLOCK_EPOCH_FLOOR + 2000000UL;
+    c.p.setClock(t0);
+    c.p.syncClock(t0 + 30UL * 60UL);
+    ck(c.p.realAgeMin == 120, "time switched off adds real minutes, not game ones");
+    // it survives a save and reload
+    c.p.saveNow();
+    Pet r; r.begin();
+    ck(r.realAgeMin == 120, "the real age survives a save and reload");
+    // it travels through the party and back
+    PartyMon m = c.p.toPartyMon();
+    ck(m.hasRealAge() && m.realAgeMin == 120, "a banked record keeps the real age");
+    Pet q; q.begin(); q.dbgHatchAs(1, false);
+    q.switchTo(m);
+    ck(q.realAgeMin == 120, "and making it active again restores it");
+    // a record from before the field existed is estimated from its game age
+    PartyMon old = m; old.stateVersion = 1; old.realAgeMin = 0;
+    old.ageMinutes = 2UL * 1440;
+    q.switchTo(old);
+    ck(q.realAgeMin == 2UL * 1440, "an older record's real age is its game age, as it was before");
+    // a capture starts at zero
+    PartyMon wild; wild.dex = 25; wild.level = 30; wild.stateVersion = PARTYMON_STATE_VERSION;
+    wild.ageMinutes = 29UL * MINUTES_PER_LEVEL; wild.realAgeMin = 0;
+    q.switchTo(wild);
+    ck(q.realAgeMin == 0 && q.level() == 30, "a fresh capture is level 30 but zero real minutes old");
+    // a frozen companion does not age, in real time either
+    q.frozen = true;
+    uint32_t now = millis();
+    for (int k = 0; k < 10; k++) { now += PET_TICK_MS; q.update(now); }
+    ck(q.realAgeMin == 0, "a frozen companion's real age stands still");
   }
   levelSpeedSet(60);
 

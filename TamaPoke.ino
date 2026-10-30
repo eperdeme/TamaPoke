@@ -206,7 +206,7 @@ int clockH = 12, clockM = 0;  // hora en edicion
 // the reset. Declared up here with the other screen state because openClock()
 // resets both, and uiRimTarget() pages it -- both of which sit above the
 // settings screen's own section.
-#define CLOCK_PAGES 2
+#define CLOCK_PAGES 3   // the clock, the options, and PARTIDA (speed + farewell)
 uint8_t clockPage = 0;
 // The reset confirm, on the settings screen. Its own flag rather than another
 // choiceKind: that dialog is drawn over the MAIN screen, and this one is modal
@@ -765,7 +765,7 @@ static inline bool btlCellHit(int i, int16_t x, int16_t y) {
 #define TRAIN_ROW_MEMO 3
 
 // Settings page 2's rows. See the essay above renderClockOptions().
-#define SET_ROWS 6
+#define SET_ROWS 5
 #define SET_ROW_H UI_TAP_MIN
 #define SET_ROW_GAP 10
 #define SET_ROW_Y(i) (92 + (i) * (SET_ROW_H + SET_ROW_GAP))
@@ -774,8 +774,7 @@ static inline bool btlCellHit(int i, int16_t x, int16_t y) {
 #define SET_VOL   1
 #define SET_BRIGHT 2
 #define SET_LANG  3
-#define SET_SPEED 4   // real minutes per level, cycles 60/30/15/5/1
-#define SET_RESET 5
+#define SET_RESET 4
 
 // The memory game. See the essay above startMemoGame().
 #define MEMO_PADS 4
@@ -933,10 +932,33 @@ uint8_t starterCountShown(uint8_t region) {
 // First boot runs region -> starter. This is NOT persisted: a reset between the
 // two lands back on the region, which is the harmless direction to fail in --
 // nothing has been chosen yet, and pet.setRegion() is idempotent.
-static bool starterRegionDone = false;
+bool starterRegionDone = false;   // not static: starter_test drives both steps
 #define STARTER_ROW_Y 110
 #define STARTER_ROW_H 70
 #define STARTER_ROW_GAP 8
+// Two random buttons, neither of which says which starter it chose: the egg
+// hatches as a surprise, the same as every egg after it.
+//  * Under the three rows of the starter screen: one of THAT region's three.
+//  * On the region screen, where the gyms' LAN button sits elsewhere: one of the
+//    canonical three of EVERY region whose sprites are on the card, all equally
+//    likely. No region was chosen, so the eggs after it come from all of them.
+#define STARTER_RAND_X 110
+#define STARTER_RAND_W 246
+#define STARTER_RAND_Y 350
+#define STARTER_RAND_H 48
+int16_t randomStarterIn(uint8_t region) {
+  const uint8_t n = starterCountShown(region);
+  return starterOf(region, n ? (uint8_t)random(n) : 0);
+}
+int16_t randomStarter() {
+  int16_t pool[REGION_COUNT * STARTER_SHOWN];
+  int n = 0;
+  for (uint8_t r = 0; r < REGION_COUNT; r++) {
+    if (r == REGION_ALL || !regionAvailable(r)) continue;
+    for (uint8_t i = 0; i < starterCountShown(r); i++) pool[n++] = starterOf(r, i);
+  }
+  return n ? pool[random(n)] : starterOf(pet.region, 0);
+}
 // boton-CTA de evolucion (centrado, mitad de pantalla)
 #define EVO_BTN_W 256
 #define EVO_BTN_H 64
@@ -1077,7 +1099,8 @@ void setup() {
   resetRecover();
   loadLang();  // idioma guardado (ES por defecto)
   brightLoad();  // brillo guardado (por defecto: el de siempre)
-  levelSpeedLoad();  // minutos por nivel (por defecto: 60, el juego original)
+  levelSpeedLoad();     // minutos por nivel (por defecto: 60, el juego original)
+  farewellLevelLoad();  // nivel de despedida (por defecto: 73, el juego original)
   Wire.begin(IIC_SDA, IIC_SCL);
   // CST9217 (tactil), AXP2101 (PMU) y PCF85063 (RTC) comparten este bus I2C.
   // Red de seguridad para PMU/RTC (SensorLib NO respeta este timeout en el
@@ -2303,12 +2326,26 @@ void onSwipe(int dir) {
 void onTap(int16_t x, int16_t y) {
   if (pet.awaitingStarter()) {  // primera partida: region y luego inicial
     if (!starterRegionDone) {
+      if (x >= LANBTN_X && x <= LANBTN_X + LANBTN_W &&
+          y >= LANBTN_Y && y <= LANBTN_Y + LANBTN_H) {      // random, any region
+        pet.setRegion(REGION_ALL);   // first: setRegion re-rolls a waiting egg
+        pet.chooseStarter(randomStarter());
+        starterRegionDone = true;
+        sfxPlay(SFX_TAP);
+        return;
+      }
       int r = regionPickTap(x, y, RPICK_FOR_START);
       if (r >= 0) {
         pet.setRegion((uint8_t)r);   // the region picked here is where eggs come from too
         starterRegionDone = true;
         sfxPlay(SFX_TAP);
       }
+      return;
+    }
+    if (x >= STARTER_RAND_X && x <= STARTER_RAND_X + STARTER_RAND_W &&
+        y >= STARTER_RAND_Y && y <= STARTER_RAND_Y + STARTER_RAND_H) {
+      pet.chooseStarter(randomStarterIn(pet.region));
+      sfxPlay(SFX_TAP);
       return;
     }
     for (int i = 0; i < starterCountShown(pet.region); i++) {
@@ -2806,6 +2843,15 @@ void renderStarterSelect() {
     gfx->setTextSize(3);
     gfx->setCursor(178, ry + 24);
     gfx->print(de.name);
+  }
+  {
+    const char *rl = T(S_STARTER_RANDOM);
+    gfx->fillRoundRect(STARTER_RAND_X, STARTER_RAND_Y, STARTER_RAND_W, STARTER_RAND_H, 14, UI_WHITE);
+    gfx->drawRoundRect(STARTER_RAND_X, STARTER_RAND_Y, STARTER_RAND_W, STARTER_RAND_H, 14, UI_INK);
+    gfx->setTextColor(UI_INK);
+    gfx->setTextSize(2);
+    gfx->setCursor(CX - (int)strlen(rl) * 6, STARTER_RAND_Y + STARTER_RAND_H / 2 - 8);
+    gfx->print(rl);
   }
   gfx->flush();
 }
@@ -3996,19 +4042,6 @@ static void renderClockOptions() {
     gfx->setCursor(CX - (int)strlen(lp) * 6, ry + rh / 2 - 8);
     gfx->print(lp);
   }
-  // level speed: a pill that cycles, like the language
-  {
-    setRowRect(SET_SPEED, &rx, &ry, &rw, &rh);
-    gfx->fillRoundRect(rx, ry, rw, rh, 10, UI_WHITE);   // a choice, not a warning
-    gfx->drawRoundRect(rx, ry, rw, rh, 10, UI_INK);
-    char sp[32];
-    snprintf(sp, sizeof(sp), T(S_LEVEL_SPEED_FMT), (unsigned)gLevelMins);
-    strncat(sp, " >", sizeof(sp) - strlen(sp) - 1);
-    gfx->setTextColor(UI_INK);
-    gfx->setTextSize(2);
-    gfx->setCursor(CX - (int)strlen(sp) * 6, ry + rh / 2 - 8);
-    gfx->print(sp);
-  }
   // reset: drawn as the destructive thing it is, and it only ever OPENS the
   // confirm -- see clockTap()
   {
@@ -4022,11 +4055,115 @@ static void renderClockOptions() {
   }
 }
 
+// ---------- page 3: PARTIDA -------------------------------------------------
+// The two settings that change how a life runs: real minutes per level (1..60)
+// and the farewell level (50..100). Each is a value between four buttons --
+// -10 and -1 on the left, +1 and +10 on the right -- because stepping 50 values
+// one tap at a time is too slow, and a wheel would be one more gesture to learn.
+// They STOP at the ends rather than wrapping: one tap past 60 must not turn the
+// game sixty times faster, nor one past 100 offer a farewell at once. A button
+// that would do nothing is drawn greyed, as the volume and brightness are.
+// Under them, what the two add up to: how long one life lasts.
+#define GAME_ROW_H 48
+#define GAME_BTN_W 48
+#define GAME_BTN_GAP 4
+#define GAME_HALF 170          // the row spans CX - 170 .. CX + 170
+#define GAME_LBL_Y(r) (90 + (r) * 96)
+#define GAME_ROW_Y(r) (GAME_LBL_Y(r) + 24)
+#define GAME_LIFE_Y 296
+// Which of the four buttons of row `r` a tap is on: -10, -1, +1, +10, or 0.
+int gameStepAt(int r, int16_t x, int16_t y) {
+  if (y < GAME_ROW_Y(r) || y > GAME_ROW_Y(r) + GAME_ROW_H) return 0;
+  const int l0 = CX - GAME_HALF, l1 = l0 + GAME_BTN_W + GAME_BTN_GAP;
+  const int r1 = CX + GAME_HALF - GAME_BTN_W, r0 = r1 - GAME_BTN_W - GAME_BTN_GAP;
+  if (x >= l0 && x < l0 + GAME_BTN_W) return -10;
+  if (x >= l1 && x < l1 + GAME_BTN_W) return -1;
+  if (x >= r0 && x < r0 + GAME_BTN_W) return 1;
+  if (x >= r1 && x < r1 + GAME_BTN_W) return 10;
+  return 0;
+}
+int uiGameRowY(int r) { return GAME_ROW_Y(r) + GAME_ROW_H / 2; }
+int uiGameBtnX(int step) {
+  const int l0 = CX - GAME_HALF, l1 = l0 + GAME_BTN_W + GAME_BTN_GAP;
+  const int r1 = CX + GAME_HALF - GAME_BTN_W, r0 = r1 - GAME_BTN_W - GAME_BTN_GAP;
+  const int x = step == -10 ? l0 : step == -1 ? l1 : step == 1 ? r0 : r1;
+  return x + GAME_BTN_W / 2;
+}
+
+static void drawGameRow(int r, const char *label, int v, int lo, int hi) {
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - (int)strlen(label) * 6, GAME_LBL_Y(r));
+  gfx->print(label);
+  const int y = GAME_ROW_Y(r);
+  static const int steps[4] = { -10, -1, 1, 10 };
+  static const char *const glyph[4] = { "<<", "<", ">", ">>" };
+  for (int k = 0; k < 4; k++) {
+    const int bx = uiGameBtnX(steps[k]) - GAME_BTN_W / 2;
+    const bool live = steps[k] < 0 ? v > lo : v < hi;
+    gfx->fillRoundRect(bx, y, GAME_BTN_W, GAME_ROW_H, 10, live ? UI_WHITE : UI_TRACK);
+    gfx->drawRoundRect(bx, y, GAME_BTN_W, GAME_ROW_H, 10, UI_INK);
+    gfx->setTextColor(live ? UI_INK : 0x8410);
+    gfx->setTextSize(2);
+    gfx->setCursor(bx + GAME_BTN_W / 2 - (int)strlen(glyph[k]) * 6, y + GAME_ROW_H / 2 - 8);
+    gfx->print(glyph[k]);
+  }
+  char val[8];
+  snprintf(val, sizeof(val), "%d", v);
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(3);
+  gfx->setCursor(CX - (int)strlen(val) * 9, y + GAME_ROW_H / 2 - 11);
+  gfx->print(val);
+}
+
+// "2 d 11 h", "5 h 40 min", "49 min": a life from hatching to the farewell.
+void lifeSpanText(char *out, size_t cap) {
+  const uint32_t mins = (uint32_t)(gFarewellLevel - 1) * gLevelMins;
+  const uint32_t d = mins / 1440, h = (mins % 1440) / 60, m = mins % 60;
+  if (d) snprintf(out, cap, "%lu d %lu h", (unsigned long)d, (unsigned long)h);
+  else if (h) snprintf(out, cap, "%lu h %lu min", (unsigned long)h, (unsigned long)m);
+  else snprintf(out, cap, "%lu min", (unsigned long)m);
+}
+
+void renderGameOptions() {
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(3);
+  gfx->setCursor(CX - strlen(T(S_GAME_TITLE)) * 9, 44);
+  gfx->print(T(S_GAME_TITLE));
+  drawGameRow(0, T(S_LEVEL_SPEED_FMT), gLevelMins, LEVEL_SPEED_MIN, LEVEL_SPEED_MAX);
+  drawGameRow(1, T(S_FAREWELL_LVL), gFarewellLevel, FAREWELL_LVL_MIN, FAREWELL_LVL_MAX);
+  char span[24], life[40];
+  lifeSpanText(span, sizeof(span));
+  snprintf(life, sizeof(life), T(S_LIFE_FMT), span);
+  gfx->setTextColor(UI_INK_SOFT);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - (int)strlen(life) * 6, GAME_LIFE_Y);
+  gfx->print(life);
+}
+
+void gameOptionsTap(int16_t x, int16_t y) {
+  for (int r = 0; r < 2; r++) {
+    const int step = gameStepAt(r, x, y);
+    if (!step) continue;
+    if (r == 0) {
+      const uint8_t before = gLevelMins;
+      levelSpeedSet((int)gLevelMins + step);
+      sfxPlay(gLevelMins != before ? SFX_TAP : SFX_DENY);
+    } else {
+      const uint8_t before = gFarewellLevel;
+      farewellLevelSet((int)gFarewellLevel + step);
+      sfxPlay(gFarewellLevel != before ? SFX_TAP : SFX_DENY);
+    }
+    return;
+  }
+}
+
 void renderClock() {
   gfx->fillScreen(RGB565_BLACK);
   gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
   if (clockPage == 0) renderClockTime();
-  else renderClockOptions();
+  else if (clockPage == 1) renderClockOptions();
+  else renderGameOptions();
 
   // version del firmware (discreta, abajo del todo)
   char ver[20];
@@ -4074,6 +4211,7 @@ void clockTap(int16_t x, int16_t y) {
     return;      // anything else while it is up does nothing at all
   }
 
+  if (clockPage == 2) { gameOptionsTap(x, y); return; }
   if (clockPage != 0) {
     for (int i = 0; i < SET_ROWS; i++) {
       int rx, ry, rw, rh;
@@ -4104,11 +4242,6 @@ void clockTap(int16_t x, int16_t y) {
       }
       if (i == SET_LANG) {
         setLang((Lang)((gLang + 1) % LANG_COUNT));
-        sfxPlay(SFX_TAP);
-        return;
-      }
-      if (i == SET_SPEED) {
-        levelSpeedCycle();
         sfxPlay(SFX_TAP);
         return;
       }
@@ -4224,7 +4357,7 @@ void renderCardProfile() {
                                           : T(S_BERRY_GREEN);
   char info[40];
   snprintf(info, sizeof(info), T(S_INFO_FMT), berry,
-           (unsigned long)(pet.ageMinutes / 1440));
+           (unsigned long)(pet.realAgeMin / 1440));   // REAL days, at any speed
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(2);
   gfx->setCursor(CX - strlen(info) * 6, 296);
@@ -6779,6 +6912,15 @@ static void renderRegionPick(uint8_t mode) {
       gfx->print(sub);
     }
   }
+  if (mode == RPICK_FOR_START) {          // the random starter from any region
+    const char *rl = T(S_STARTER_RANDOM);
+    gfx->fillRoundRect(LANBTN_X, LANBTN_Y, LANBTN_W, LANBTN_H, 11, UI_WHITE);
+    gfx->drawRoundRect(LANBTN_X, LANBTN_Y, LANBTN_W, LANBTN_H, 11, UI_INK);
+    gfx->setTextColor(UI_INK);
+    gfx->setTextSize(2);
+    gfx->setCursor(CX - (int)strlen(rl) * 6, LANBTN_Y + 14);
+    gfx->print(rl);
+  }
   if (forGyms) {
     gfx->fillRoundRect(LANBTN_X, LANBTN_Y, LANBTN_W, LANBTN_H, 11, UI_BG_DAY);
     gfx->drawRoundRect(LANBTN_X, LANBTN_Y, LANBTN_W, LANBTN_H, 11, UI_INK);
@@ -6913,14 +7055,13 @@ void renderCardProgress() {
   // barra de progreso al siguiente nivel (1 nivel = 60 min de juego; the
   // speed setting decides how many real minutes that is)
   uint8_t into = pet.ageMinutes % MINUTES_PER_LEVEL;
-  const uint8_t step = levelSpeedStep();
   int bx = 93, bw = 280, by = 158, bh = 22;
   gfx->fillRoundRect(bx, by, bw, bh, 6, UI_TRACK);
   int fw = (bw - 4) * into / MINUTES_PER_LEVEL;
   if (fw > 0) gfx->fillRoundRect(bx + 2, by + 2, fw, bh - 4, 5, UI_BAR_OK);
   char nx[26];
   snprintf(nx, sizeof(nx), T(S_NEXT_LVL_FMT),
-           (unsigned)((MINUTES_PER_LEVEL - into + step - 1) / step), pet.level() + 1);
+           (unsigned)pet.realMinutesToNextLevel(), pet.level() + 1);
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(2);
   gfx->setCursor(CX - strlen(nx) * 6, by + 32);
@@ -7319,8 +7460,9 @@ PartyMon wildToPartyMon() {
   // A caught creature has real care state from the start rather than being a
   // v0 record, so switching to it does not reset a creature that was never
   // banked in the first place. Its age IS its level: nothing raised it.
-  m.stateVersion = 1;
+  m.stateVersion = PARTYMON_STATE_VERSION;
   m.ageMinutes = (uint32_t)(wildLvl ? wildLvl - 1 : 0) * MINUTES_PER_LEVEL;
+  m.realAgeMin = 0;            // its real age is counted from the capture
   m.lastLearnLevel = wildLvl;   // do not replay gates it already passed
   m.setOrigin(ORIGIN_WILD);     // a capture, and so is everything it evolves into
   return m;
@@ -8605,7 +8747,7 @@ const char *statusMsg() {
   if (pet.energy < 25) return T(S_EXHAUSTED);
   if (pet.joy < 25) return T(S_SAD);
   if (pet.weight > 60) return T(S_CHUBBY);
-  if (pet.shiny && pet.ageMinutes < 15UL * levelSpeedStep()) return T(S_IS_SHINY);  // ~15 real min
+  if (pet.shiny && pet.realAgeMin < 15) return T(S_IS_SHINY);   // its first 15 real minutes
   return T(S_HAPPY);
 }
 

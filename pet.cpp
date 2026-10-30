@@ -120,7 +120,11 @@ static constexpr size_t PET_TAIL_RSVD = PET_FIXED + 1;      // u8  reserved, 2-b
 static constexpr size_t PET_TAIL_MONLEN = PET_FIXED + 2;    // u16 stored sizeof(PartyMon)
 static constexpr size_t PET_TAIL_MON = PET_FIXED + 4;       // the record itself
 static constexpr size_t PET_BODY = PET_TAIL_MON + sizeof(PartyMon);
-static_assert(PET_BODY + CKPT_CRC <= PET_CORE_CAP, "raise PET_CORE_CAP");
+// v3 appends the live creature's real age (u32) AFTER the handover record. A
+// reader finds it at PET_TAIL_MON + the record's STORED length, so a record of
+// any stride locates it, and one without it (any older build) simply ends there.
+static constexpr size_t PET_BODY_V3 = PET_BODY + 5;
+static_assert(PET_BODY_V3 + CKPT_CRC <= PET_CORE_CAP, "raise PET_CORE_CAP");
 
 // Takes a validated blob and copies whatever body prefix the stored record and
 // this build have in common. Anything this build has that the record did not
@@ -391,6 +395,7 @@ void Pet::newEgg() {
   hygiene = 100;
   poops = 0;
   ageMinutes = 0;
+  realAgeMin = 0;
   careMistakes = 0;
   mistakeCooldown = 0;
   sleeping = false;
@@ -398,14 +403,12 @@ void Pet::newEgg() {
   save();
 }
 
-// ---- level speed setting (see pet.h) ----
-const uint8_t LEVEL_SPEED_OPTS[LEVEL_SPEED_COUNT] = { 60, 30, 15, 5, 1 };
+// ---- level speed and farewell level settings (see pet.h) ----
 uint8_t gLevelMins = MINUTES_PER_LEVEL;
+uint8_t gFarewellLevel = FAREWELL_LVL_DEFAULT;
 
-static bool levelSpeedValid(uint8_t m) {
-  for (int i = 0; i < LEVEL_SPEED_COUNT; i++)
-    if (LEVEL_SPEED_OPTS[i] == m) return true;
-  return false;
+static uint8_t clampU8(int v, int lo, int hi) {
+  return (uint8_t)(v < lo ? lo : v > hi ? hi : v);
 }
 
 void levelSpeedLoad() {
@@ -413,22 +416,52 @@ void levelSpeedLoad() {
   if (!p.begin("tamapoke", true)) return;
   uint8_t v = p.getUChar("lvspd", MINUTES_PER_LEVEL);
   p.end();
-  gLevelMins = levelSpeedValid(v) ? v : MINUTES_PER_LEVEL;   // junk reads as 60
+  gLevelMins = (v >= LEVEL_SPEED_MIN && v <= LEVEL_SPEED_MAX) ? v : MINUTES_PER_LEVEL;
 }
 
-void levelSpeedSet(uint8_t m) {
-  if (!levelSpeedValid(m)) return;
-  gLevelMins = m;
+void levelSpeedSet(int m) {
+  gLevelMins = clampU8(m, LEVEL_SPEED_MIN, LEVEL_SPEED_MAX);
   Preferences p;
   if (!p.begin("tamapoke", false)) return;
   p.putUChar("lvspd", gLevelMins);
   p.end();
 }
 
-void levelSpeedCycle() {
-  int i = 0;
-  while (i < LEVEL_SPEED_COUNT && LEVEL_SPEED_OPTS[i] != gLevelMins) i++;
-  levelSpeedSet(LEVEL_SPEED_OPTS[(i + 1) % LEVEL_SPEED_COUNT]);
+void farewellLevelLoad() {
+  Preferences p;
+  if (!p.begin("tamapoke", true)) return;
+  uint8_t v = p.getUChar("fwlv", FAREWELL_LVL_DEFAULT);
+  p.end();
+  gFarewellLevel = (v >= FAREWELL_LVL_MIN && v <= FAREWELL_LVL_MAX) ? v : FAREWELL_LVL_DEFAULT;
+}
+
+void farewellLevelSet(int lv) {
+  gFarewellLevel = clampU8(lv, FAREWELL_LVL_MIN, FAREWELL_LVL_MAX);
+  Preferences p;
+  if (!p.begin("tamapoke", false)) return;
+  p.putUChar("fwlv", gFarewellLevel);
+  p.end();
+}
+
+// Each real minute is worth MINUTES_PER_LEVEL "parts"; every gLevelMins parts
+// make one game minute. Over gLevelMins real minutes that is exactly
+// MINUTES_PER_LEVEL game minutes -- one level -- whatever the value, so there
+// is no rounding to drift. A speed change keeps the parts already earned: they
+// are simply spent at the new rate.
+void Pet::growMinute() {
+  const uint8_t m = gLevelMins ? gLevelMins : MINUTES_PER_LEVEL;
+  uint16_t f = (uint16_t)growFrac + MINUTES_PER_LEVEL;
+  while (f >= m) { f -= m; ageMinutes++; }
+  growFrac = (uint8_t)f;
+}
+
+uint32_t Pet::realMinutesToNextLevel() const {
+  const uint32_t m = gLevelMins ? gLevelMins : MINUTES_PER_LEVEL;
+  const uint32_t gameLeft = MINUTES_PER_LEVEL - ageMinutes % MINUTES_PER_LEVEL;
+  // parts still needed, then whole real minutes (each brings MINUTES_PER_LEVEL)
+  const uint32_t frac = growFrac < m ? growFrac : 0;
+  const uint32_t parts = gameLeft * m - frac;
+  return (parts + MINUTES_PER_LEVEL - 1) / MINUTES_PER_LEVEL;
 }
 
 // progresion offline: el tiempo paso aunque estuviera apagado, pero con
@@ -498,7 +531,8 @@ void Pet::syncClock(uint32_t nowEpoch) {
       if (ageMinutes >= 3) hatch();  // eclosiona en tu ausencia
       continue;
     }
-    ageMinutes += levelSpeedStep();
+    growMinute();
+    realAgeMin++;
     if (sleeping) {  // descanso: baja lento y con suelo, igual que en vivo
       energy = clamp100(energy + 6);
       if (liveMinutes % 2 == 0) {
@@ -547,12 +581,16 @@ void Pet::tick() {
   liveMinutes++;
   const uint8_t lvlBefore = level();
   // a revived companion does not age; the egg keeps real minutes at any speed
-  if (!frozen) ageMinutes += isEgg() ? 1 : levelSpeedStep();
+  if (!frozen) {
+    if (isEgg()) ageMinutes++;   // the egg keeps real minutes at any speed
+    else growMinute();
+  }
 
   if (isEgg()) {
     if (ageMinutes >= 3) hatch();  // si no lo tocas, eclosiona solo a los 3 min
     return;
   }
+  if (!frozen) realAgeMin++;
 
   applyAutoSleep();   // put down at 21:00 still goes to bed at 22:00
 
@@ -642,6 +680,10 @@ void Pet::reviveFrom(const PartyMon &m) {
   for (int i = 0; i < MOVE_SLOTS; i++) moves[i] = m.moves[i];
   // its banked level expressed as an age, so level() needs no special case
   ageMinutes = (uint32_t)(m.level ? m.level - 1 : 0) * MINUTES_PER_LEVEL;
+  // A record from before real age was kept: its game age is the best estimate,
+  // and exact for every creature raised at the normal speed.
+  realAgeMin = m.hasRealAge() ? m.realAgeMin : ageMinutes;
+  growFrac = 0;
   lastLearnLevel = level();     // do not replay every gate it already passed
   learnQCount = 0;
   medals = m.medals;
@@ -684,7 +726,7 @@ PartyMon Pet::toPartyMon() const {
   for (int i = 0; i < MOVE_SLOTS; i++) m.moves[i] = moves[i];
   strncpy(m.nick, nick, sizeof(m.nick) - 1);
   m.nick[sizeof(m.nick) - 1] = 0;
-  m.stateVersion = 1;
+  m.stateVersion = PARTYMON_STATE_VERSION;
   m.fullness = fullness;
   m.joy = joy;
   m.energy = energy;
@@ -697,6 +739,7 @@ PartyMon Pet::toPartyMon() const {
   m.evoDeclinedLv = evoDeclinedLv;
   m.lastLearnLevel = lastLearnLevel;
   m.ageMinutes = ageMinutes;
+  m.realAgeMin = realAgeMin;
   m.setOrigin(originKind);
   return m;
 }
@@ -751,6 +794,10 @@ void Pet::switchTo(const PartyMon &m) {
     evoDeclinedLv = 0;
     lastLearnLevel = level();   // do not replay every gate it already passed
   }
+  // Set after ageMinutes on both paths above: the estimate for an older record
+  // is the game age it was given there.
+  realAgeMin = m.hasRealAge() ? m.realAgeMin : ageMinutes;
+  growFrac = 0;
   originKind = m.originKind();   // a capture stays a capture, whoever raises it
   strncpy(nick, m.nick, sizeof(nick) - 1);
   nick[sizeof(nick) - 1] = 0;
@@ -1367,7 +1414,7 @@ uint16_t Pet::registeredCount() const {
 bool Pet::canFarewellNow() const {
   if (frozen) return false;     // a companion cannot be lost; that is the point
   return !isEgg() && !sleeping && ceremony == CER_NONE &&
-         DEX_TBL[speciesId].evolvesTo == 0 && ageMinutes >= FAREWELL_AGE_MIN;
+         DEX_TBL[speciesId].evolvesTo == 0 && level() >= gFarewellLevel;
 }
 
 // abandono total durante 1h: lista para escaparse. La dispara el usuario con el
@@ -1442,6 +1489,8 @@ void Pet::release() {
 }
 
 void Pet::hatch() {
+  realAgeMin = 0;      // its real age starts now, not with the egg
+  growFrac = 0;
   speciesId = eggTarget;
   shiny = eggShiny;
   // IV del individuo (cada crianza es unica). Se tiran ANTES de resetear el
@@ -1839,8 +1888,10 @@ bool Pet::saveCoreSnapshot() {
   buf[PET_TAIL_RSVD] = 0;
   ckptWr16(buf + PET_TAIL_MONLEN, (uint16_t)sizeof(PartyMon));
   memcpy(buf + PET_TAIL_MON, &endedMon, sizeof(PartyMon));
+  memcpy(buf + PET_BODY, &realAgeMin, 4);   // v3 tail: the real age
+  buf[PET_BODY + 4] = growFrac;              // and the part-minute of growth
 
-  uint16_t total = ckptSeal(buf, PET_BODY, PET_CORE_MAGIC, PET_CORE_VERSION, nextGen);
+  uint16_t total = ckptSeal(buf, PET_BODY_V3, PET_CORE_MAGIC, PET_CORE_VERSION, nextGen);
   const char *key = ckptSlot(nextGen, "petA", "petB");
   const size_t writtenBytes = prefs.putBytes(key, buf, total);
   if (writtenBytes != total) {
@@ -1872,8 +1923,16 @@ bool Pet::loadCoreSnapshot() {
   const size_t body = n - CKPT_CRC;
   endedKind = CER_NONE;
   endedMon = PartyMon();
+  bool haveLive = false;
+  growFrac = 0;
+  uint32_t live = 0;
   if (body >= PET_TAIL_MON) {
     size_t monLen = ckptRd16(buf + PET_TAIL_MONLEN);
+    if (monLen && PET_TAIL_MON + monLen + 4 <= body) {
+      memcpy(&live, buf + PET_TAIL_MON + monLen, 4);
+      haveLive = true;
+    }
+    growFrac = (monLen && PET_TAIL_MON + monLen + 5 <= body) ? buf[PET_TAIL_MON + monLen + 4] : 0;
     if (monLen && PET_TAIL_MON + monLen <= body) {
       // Prefix rule again: a record from before PartyMon grew lands in the front
       // and the care block keeps its initialisers, which stateVersion 0 already
@@ -1892,6 +1951,9 @@ bool Pet::loadCoreSnapshot() {
 
   saveGeneration = snapshot.generation;
   ageMinutes = snapshot.ageMinutes;
+  // No real age stored (a save from before it existed): its game age, which is
+  // exactly right for everything raised at the normal speed.
+  realAgeMin = haveLive ? live : ageMinutes;
   lastSeenEpoch = snapshot.lastSeenEpoch;
   speciesId = snapshot.speciesId;
   eggTarget = snapshot.eggTarget;
@@ -1978,6 +2040,7 @@ void Pet::load() {
   loadBlob(prefs, "dexsh", dexShinyReg, sizeof(dexShinyReg));
   lastSeenEpoch = prefs.getUInt("seen", 0);
   ageMinutes = prefs.getUInt("age", 0);
+  realAgeMin = ageMinutes;    // the legacy keys predate the speed setting
   if (prefs.isKey("dexn")) {
     speciesId = prefs.getShort("dexn", -1);
     eggTarget = prefs.getShort("eggT2", 4);

@@ -220,6 +220,10 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
     for (int d = 1; d <= 200; d++) pet.dbgHatchAs(d, false);
   }
   else if (!strcmp(screen, "clock"))   clockOpen = true;
+  else if (!strcmp(screen, "game")) {      // page 3: speed and farewell level
+    extern uint8_t clockPage;
+    clockOpen = true; clockPage = 2; levelSpeedSet(20); farewellLevelSet(60);
+  }
   else if (!strcmp(screen, "settings")) {   // page 2, at the fastest level speed
     extern uint8_t clockPage;
     clockOpen = true; clockPage = 1; levelSpeedSet(1);

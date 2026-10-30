@@ -69,9 +69,17 @@ struct PartyMon {
   // The real age. `level` stays as its cached mirror so every list, the battle
   // squad builder and the box screen keep reading one byte instead of dividing.
   uint32_t ageMinutes = 0;
+  // ---- real age, appended for the level speed setting (stateVersion 2) ------
+  // ageMinutes is GAME time: the level speed setting makes it run faster, and
+  // level, evolution and the farewell all hang off it. This is the REAL time
+  // the creature has been alive and active -- what the card shows as its age.
+  // Like ageMinutes it stops while stored. 0 on a record older than this field
+  // means "unknown", which is why it is only trusted at stateVersion >= 2.
+  uint32_t realAgeMin = 0;
 
   bool empty() const { return dex < 1; }
   bool hasCareState() const { return stateVersion >= 1; }
+  bool hasRealAge() const { return stateVersion >= 2; }
   uint8_t originKind() const {
     if (originChk != (uint8_t)~origin) return ORIGIN_UNKNOWN;
     if (origin == ORIGIN_SIG_EGG) return ORIGIN_EGG;
@@ -84,9 +92,15 @@ struct PartyMon {
   }
   bool hatched() const { return originKind() == ORIGIN_EGG; }
 };
-// The origin bytes took padding, not new space: the on-disk stride must not move.
-static_assert(offsetof(PartyMon, ageMinutes) == 44 && sizeof(PartyMon) == 48,
-              "PartyMon layout changed -- the origin bytes must stay in the padding");
+// The origin bytes took padding, not new space; realAgeMin is the one append.
+// Every store of these records carries its stride and reads a shorter one by
+// the prefix rule (the project notes on sizeof(PartyMon) being load-bearing), so growing
+// is allowed -- moving a field is not.
+static_assert(offsetof(PartyMon, ageMinutes) == 44 && offsetof(PartyMon, realAgeMin) == 48 &&
+              sizeof(PartyMon) == 52,
+              "PartyMon layout changed -- fields may only be appended");
+// What a record written by this build says about itself.
+#define PARTYMON_STATE_VERSION 2
 
 class Party {
 public:
