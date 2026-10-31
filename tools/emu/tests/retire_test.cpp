@@ -212,6 +212,41 @@ int main(){
        "an older record keeps its berry and reads as farewell not yet said");
   }
 
+  // --- the daily bond allowance from actions is ONE per day for every creature:
+  // a swap does not refill it, a reboot does not refill it, a new day does.
+  {
+    Pet p; Party q; p.begin(); q.begin();
+    const uint32_t day = 20000;                 // any real calendar day
+    p.dbgHatchAs(25, false);
+    p.fullness=p.joy=p.energy=p.hygiene=100; p.sleeping=false;
+    p.dbgSetSeen(day * 86400 + 3600);
+    p.bond = 0;
+    for (int i = 0; i < 40; i++) p.caress();
+    const uint8_t first = p.bond;              // +4 for the day, +20ish from caresses
+    ck(first >= 20 && first <= 30, "a day of caresses stops at the daily allowance");
+    PartyMon other; other.dex = 1; other.level = 20; other.stateVersion = 1;
+    other.ageMinutes = 19UL * MINUTES_PER_LEVEL;
+    other.fullness = other.joy = other.energy = other.hygiene = 100;
+    PartyMon mine = p.toPartyMon();
+    p.switchTo(other); p.sleeping = false;
+    const uint8_t otherBefore = p.bond;
+    for (int i = 0; i < 10; i++) p.caress();
+    ck(p.bond == otherBefore, "the allowance is shared: another creature gets none today");
+    p.switchTo(mine); p.sleeping = false;
+    for (int i = 0; i < 10; i++) p.caress();
+    ck(p.bond == first, "and swapping back does not refill it");
+    p.saveNow();
+    {
+      Pet r; r.begin(); r.sleeping = false;
+      const uint8_t b = r.bond;
+      for (int i = 0; i < 10; i++) r.caress();
+      ck(r.bond == b, "nor does a reboot");
+      r.dbgSetSeen((day + 1) * 86400 + 3600);
+      r.caress();
+      ck(r.bond == b + 5, "a new day does: +4 for the day and the caress counts");
+    }
+  }
+
   printf("%s\n", bad?"FAILURES":"all good");
   return bad?1:0;
 }

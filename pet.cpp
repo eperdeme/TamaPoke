@@ -345,6 +345,9 @@ void Pet::begin() {
   } else {
     load();
   }
+  // Without a clock no day is ever counted (registerCare() needs one), so a
+  // saved count would never reset: keep the old per-boot allowance there.
+  if (lastCareDay == 0) bondToday = 0;
   lastTick = millis();
 }
 
@@ -593,7 +596,6 @@ void Pet::reviveFrom(const PartyMon &m) {
   mistakeCooldown = 0;
   sleeping = false;
   bond = 0;
-  bondToday = 0;
   berryKnown = m.berryFound();
   farewellDone = m.farewellDone();
   weight = 0;
@@ -664,7 +666,9 @@ void Pet::switchTo(const PartyMon &m) {
   mistakeCooldown = 0;
   sleeping = false;
   sleepAuto = SLEEP_NONE;
-  bondToday = 0;
+  // bondToday is NOT cleared: the daily bond allowance is shared by every
+  // creature, so swapping cannot refill it (it used to: A -> B -> A was a fresh
+  // 20 for A, as often as you liked).
   learnQCount = 0;
   frozen = false;          // the whole point: it ages and levels again
   if (m.hasCareState()) {
@@ -975,6 +979,10 @@ void Pet::registerCare() {
 }
 
 void Pet::addBond(uint8_t amt) {
+  // Every caller adds the bond BEFORE its own registerCare(). With the day's
+  // count now saved, yesterday's would block the first action of a new day, so
+  // the new day starts here (registerCare() is idempotent within a day).
+  registerCare();
   if (bondToday >= 20) return;  // tope diario: el vinculo no se farmea
   bond = clamp100(bond + amt);
   bondToday += amt;
@@ -1382,7 +1390,6 @@ void Pet::hatch() {
   berryKnown = false;
   farewellDone = false;
   bond = 0;          // vinculo, medallas y nombre son del individuo
-  bondToday = 0;
   medals = 0;
   newMedal = 0;
   nick[0] = 0;
@@ -1758,7 +1765,9 @@ bool Pet::saveCoreSnapshot() {
   // The pending handover rides along, so the new egg and the creature it
   // replaced commit in the same write.
   buf[PET_TAIL_KIND] = endedKind;
-  buf[PET_TAIL_RSVD] = 0;
+  // The day's bond count, so a reboot does not refill the allowance. This byte
+  // was written as 0 until now, which reads back as "nothing gained today".
+  buf[PET_TAIL_RSVD] = bondToday;
   ckptWr16(buf + PET_TAIL_MONLEN, (uint16_t)sizeof(PartyMon));
   memcpy(buf + PET_TAIL_MON, &endedMon, sizeof(PartyMon));
 
@@ -1794,6 +1803,7 @@ bool Pet::loadCoreSnapshot() {
   const size_t body = n - CKPT_CRC;
   endedKind = CER_NONE;
   endedMon = PartyMon();
+  if (body > PET_TAIL_RSVD) bondToday = buf[PET_TAIL_RSVD];
   if (body >= PET_TAIL_MON) {
     size_t monLen = ckptRd16(buf + PET_TAIL_MONLEN);
     if (monLen && PET_TAIL_MON + monLen <= body) {

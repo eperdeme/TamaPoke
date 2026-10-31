@@ -647,7 +647,10 @@ private:
   uint8_t neglectTicks = 0;
   uint16_t goodTicks = 0;  // racha bien cuidado: forja la DEF
   uint32_t ceremonyUntil = 0;
-  uint8_t bondToday = 0;       // tope diario de subida de vinculo
+  // Bond gained today from actions, against the daily cap. Player-wide, like
+  // the streak: shared by every creature, saved with the pet checkpoint, and
+  // reset only by the first care of a new day -- not by a swap or a reboot.
+  uint8_t bondToday = 0;
   uint32_t medalUntil = 0;     // celebracion de medalla en pantalla
   uint32_t milestoneUntil = 0; // celebracion de hito de racha
 
