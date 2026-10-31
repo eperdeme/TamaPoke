@@ -166,6 +166,52 @@ int main(){
     ck(again.isEgg(), "and so is the egg it came with");
   }
 
+  // --- a farewell is said ONCE. Activated again, the creature lives on but is
+  // never offered a second one; retiring it banks it again for free and the egg
+  // is neutral. Without this: farewell, activate, farewell -- blessed eggs on
+  // demand from a creature nobody is raising.
+  {
+    Pet p; Party q; p.begin(); q.begin();
+    for (int i = 0; i < PARTY_SLOTS; i++) q.releaseAt(i);
+    p.dbgHatchAs(6, false);
+    p.ageMinutes = FAREWELL_AGE_MIN + 60;
+    p.fullness=p.joy=p.energy=p.hygiene=100;
+    p.berryKnown = true;
+    ck(p.canFarewellNow() && !p.farewellDone, "a first farewell is offered");
+    p.startFarewell();
+    finish(p, q);
+    ck(q.count() == 1 && q.slots[0].farewellDone(), "the banked record remembers its farewell");
+    ck(q.slots[0].berryFound(), "and still remembers its berry");
+    ck(p.lastEnd == CER_FAREWELL, "the first farewell blesses the egg");
+
+    p.dbgHatchAs(1, false);                 // raising something new
+    PartyMon back = q.slots[0];
+    q.replaceAt(0, p.toPartyMon());
+    p.switchTo(back);
+    p.fullness=p.joy=p.energy=p.hygiene=100; p.sleeping = false;
+    ck(p.speciesId == 6 && p.farewellDone && p.berryKnown, "activated again, flags and all");
+    { Pet r; r.begin(); ck(r.speciesId == 6 && r.farewellDone && r.berryKnown,
+                          "and both flags survive a reboot (the pet checkpoint)"); }
+    ck(!p.canFarewellNow() && !p.wantFarewellButton(), "no second farewell is offered");
+    ck(p.retireIsFree(), "retiring it is free");
+    p.startRetire();
+    ck(!p.retireIsEarly(), "and it is not an early retire");
+    finish(p, q);
+    bool banked = false;
+    for (int i = 0; i < PARTY_SLOTS; i++) if (q.slots[i].dex == 6) banked = true;
+    ck(banked, "so it is banked again, not given up");
+    ck(p.lastEnd == CER_RELEASE, "but the egg is neutral: one blessing per life");
+    ck(p.evoPenalty() == 0, "and the next creature owes nothing");
+
+    // a record from before the flag: 0 or 1 in that byte, berry only
+    PartyMon legacy; legacy.dex = 6; legacy.level = 74; legacy.stateVersion = 1;
+    legacy.ageMinutes = FAREWELL_AGE_MIN + 60; legacy.berryKnown = 1;
+    legacy.fullness = legacy.joy = legacy.energy = legacy.hygiene = 100;
+    p.switchTo(legacy); p.sleeping = false;
+    ck(p.berryKnown && !p.farewellDone && p.canFarewellNow(),
+       "an older record keeps its berry and reads as farewell not yet said");
+  }
+
   printf("%s\n", bad?"FAILURES":"all good");
   return bad?1:0;
 }

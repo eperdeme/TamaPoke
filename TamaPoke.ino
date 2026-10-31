@@ -7195,6 +7195,11 @@ PartyMon wildToPartyMon() {
   m.stateVersion = 1;
   m.ageMinutes = (uint32_t)(wildLvl ? wildLvl - 1 : 0) * MINUTES_PER_LEVEL;
   m.lastLearnLevel = wildLvl;   // do not replay gates it already passed
+  // Caught already past the farewell age: nobody raised it there, so its
+  // farewell -- and the blessed egg that comes with it -- is not on offer.
+  // Otherwise a high-level capture made active could say goodbye at once.
+  // It still lives on as your active creature as long as you like.
+  if (m.ageMinutes >= FAREWELL_AGE_MIN) m.berryKnown |= PM_FAREWELL;
   return m;
 }
 

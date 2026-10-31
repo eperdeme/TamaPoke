@@ -594,7 +594,8 @@ void Pet::reviveFrom(const PartyMon &m) {
   sleeping = false;
   bond = 0;
   bondToday = 0;
-  berryKnown = false;
+  berryKnown = m.berryFound();
+  farewellDone = m.farewellDone();
   weight = 0;
   fullness = joy = energy = 80;
   hygiene = 100;
@@ -635,7 +636,7 @@ PartyMon Pet::toPartyMon() const {
   m.poops = poops;
   m.weight = weight;
   m.bond = bond;
-  m.berryKnown = berryKnown ? 1 : 0;
+  m.berryKnown = (berryKnown ? PM_BERRY : 0) | (farewellDone ? PM_FAREWELL : 0);
   m.careMistakes = careMistakes;
   m.evoDeclinedLv = evoDeclinedLv;
   m.lastLearnLevel = lastLearnLevel;
@@ -659,6 +660,7 @@ void Pet::switchTo(const PartyMon &m) {
   trAtk = m.trAtk; trDef = m.trDef; trSpe = m.trSpe;
   for (int i = 0; i < MOVE_SLOTS; i++) moves[i] = m.moves[i];
   medals = m.medals;
+  farewellDone = m.farewellDone();   // a spent farewell stays spent
   mistakeCooldown = 0;
   sleeping = false;
   sleepAuto = SLEEP_NONE;
@@ -674,7 +676,7 @@ void Pet::switchTo(const PartyMon &m) {
     poops = m.poops;
     weight = m.weight;
     bond = m.bond;
-    berryKnown = m.berryKnown != 0;
+    berryKnown = m.berryFound();
     careMistakes = m.careMistakes;
     evoDeclinedLv = m.evoDeclinedLv;
     lastLearnLevel = m.lastLearnLevel;
@@ -1289,7 +1291,8 @@ uint16_t Pet::registeredCount() const {
 bool Pet::canFarewellNow() const {
   if (frozen) return false;     // a companion cannot be lost; that is the point
   return !isEgg() && !sleeping && ceremony == CER_NONE &&
-         DEX_TBL[speciesId].evolvesTo == 0 && ageMinutes >= FAREWELL_AGE_MIN;
+         DEX_TBL[speciesId].evolvesTo == 0 && ageMinutes >= FAREWELL_AGE_MIN &&
+         !farewellDone;           // a life is said goodbye to once
 }
 
 // abandono total durante 1h: lista para escaparse. La dispara el usuario con el
@@ -1317,7 +1320,10 @@ bool Pet::canRetireNow() const {
 // penalty rather than applying it to a creature that never got retired.
 void Pet::startRetire() {
   if (!canRetireNow()) return;
-  retirePending = !canFarewellNow();
+  const bool earned = canFarewellNow();
+  // Early = gives the creature up and costs the next one a day. A creature whose
+  // farewell is already spent is neither: it is banked again, for free.
+  retirePending = !earned && !farewellDone;
   save();
   startFarewell();
   // An early retire is NOT the good ending and must not pay like one.
@@ -1327,8 +1333,9 @@ void Pet::startRetire() {
   // retire, check the egg, retire again, with nothing accumulating to regret.
   // Neutral instead, exactly like a release. The ceremony on screen is still the
   // farewell -- this was a choice the player made, not a neglected creature
-  // walking out -- but the reward is not.
-  if (retirePending) {
+  // walking out -- but the reward is not. The same goes for a creature whose
+  // farewell was already spent: banking it again is free, blessing an egg is not.
+  if (!earned) {
     lastEnd = CER_RELEASE;
     save();
   }
@@ -1338,6 +1345,7 @@ void Pet::startFarewell() {
   if (isEgg() || ceremony != CER_NONE) return;
   lastEnd = CER_FAREWELL;
   ceremony = CER_FAREWELL;
+  farewellDone = true;       // carried into the record snapshotForParty() banks
   ceremonyUntil = millis() + CEREMONY_MS;
   heartUntil = ceremonyUntil;  // corazones durante toda la despedida
   sfxPlay(SFX_BYE);
@@ -1372,6 +1380,7 @@ void Pet::hatch() {
   trAtk = trDef = trSpe = 0;
   goodTicks = 0;
   berryKnown = false;
+  farewellDone = false;
   bond = 0;          // vinculo, medallas y nombre son del individuo
   bondToday = 0;
   medals = 0;
@@ -1735,7 +1744,8 @@ bool Pet::saveCoreSnapshot() {
   snapshot.trAtk = trAtk; snapshot.trDef = trDef; snapshot.trSpe = trSpe;
   memcpy(snapshot.moves, moves, sizeof(moves));
   snapshot.lastLearnLevel = lastLearnLevel;
-  snapshot.berryKnown = berryKnown; snapshot.shiny = shiny;
+  snapshot.berryKnown = (berryKnown ? PM_BERRY : 0) | (farewellDone ? PM_FAREWELL : 0);
+  snapshot.shiny = shiny;
   snapshot.eggShiny = eggShiny; snapshot.starterPick = starterPick;
   snapshot.evoPen = evoPen; snapshot.sleepAuto = sleepAuto;
   snapshot.retirePending = retirePending; snapshot.eggTaps = eggTaps;
@@ -1816,7 +1826,9 @@ bool Pet::loadCoreSnapshot() {
   trAtk = snapshot.trAtk; trDef = snapshot.trDef; trSpe = snapshot.trSpe;
   memcpy(moves, snapshot.moves, sizeof(moves));
   lastLearnLevel = snapshot.lastLearnLevel;
-  berryKnown = snapshot.berryKnown != 0; shiny = snapshot.shiny != 0;
+  berryKnown = (snapshot.berryKnown & PM_BERRY) != 0;
+  farewellDone = (snapshot.berryKnown & PM_FAREWELL) != 0;
+  shiny = snapshot.shiny != 0;
   eggShiny = snapshot.eggShiny != 0; starterPick = snapshot.starterPick != 0;
   evoPen = snapshot.evoPen; sleepAuto = snapshot.sleepAuto;
   retirePending = snapshot.retirePending != 0; eggTaps = snapshot.eggTaps;

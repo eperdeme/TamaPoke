@@ -161,6 +161,12 @@ public:
   uint8_t ivAtk = 16, ivDef = 16, ivSpe = 16, ivHp = 16;
   uint8_t trAtk = 0, trDef = 0, trSpe = 0;
   bool berryKnown = false;  // ya descubrio su baya favorita
+  // This creature's farewell is spent: it already said it, or it was caught
+  // past the farewell age. Making it active again lets it live on -- it just
+  // never offers the farewell, and its blessed egg, a second time. Without
+  // this a retired creature could be activated and say goodbye again every few
+  // minutes, each time handing out a blessed egg nobody raised.
+  bool farewellDone = false;
   bool shiny = false;       // variante de color rara (se sortea en el huevo)
   uint32_t ageMinutes = 0;
   int16_t speciesId = -1;      // numero de Pokedex (1..DEX_COUNT), -1 = huevo
@@ -429,7 +435,11 @@ public:
   // has already earned its farewell costs nothing: it is then just the button.
   void startRetire();
   bool canRetireNow() const;
-  bool retireIsFree() const { return canFarewellNow(); }
+  // Free when the farewell is earned now, or was already spent: retiring a
+  // creature that has had its farewell banks it again at no cost (the egg is
+  // neutral; see startRetire()). Without the second half the old companion
+  // would be retired "early" -- and an early retire gives it up for good.
+  bool retireIsFree() const { return canFarewellNow() || farewellDone; }
   // Was the retire NOW IN PROGRESS an early one? THE single answer, asked by
   // snapshotForParty() and by the tests. Distinct from retireIsFree(), which asks
   // whether a retire started right now WOULD be free: this one remembers what the
