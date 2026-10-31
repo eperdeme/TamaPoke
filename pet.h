@@ -34,6 +34,15 @@
 #define NIGHT_END 6
 enum : uint8_t { SLEEP_NONE = 0, SLEEP_AUTO, SLEEP_PLAYER };
 #define DEF_TRAIN_TICKS 60                 // minutos de bienestar por +1 de DEF
+// Passive bond: +1 for every BOND_CALM_TICKS minutes (not necessarily in a row)
+// the active creature spends with every need at or above BOND_CALM_MIN, awake
+// or asleep, at most BOND_CALM_DAILY a day for the whole game. Separate from the
+// allowance actions draw on. Needs drain 4x slower asleep and settle at 30-45
+// overnight, so a creature cared for and put down earns through a nap, a night
+// is worth about 1.5, and one left awake and ignored earns nothing.
+#define BOND_CALM_MIN 50
+#define BOND_CALM_TICKS 60
+#define BOND_CALM_DAILY 10
 
 // ---------------------------------------------------------------------------
 // WHAT A CLOCK READING IS WORTH.
@@ -636,6 +645,12 @@ private:
   bool retirePending = false;   // an early retire is under way; newEgg() spends it
   uint8_t neglectTicks = 0;
   uint16_t goodTicks = 0;  // racha bien cuidado: forja la DEF
+  uint8_t calmTicks = 0;   // minutes toward the next passive bond point (per creature)
+  // Passive points given today, and the day they belong to. Player-wide: a
+  // swap does not refill the day's BOND_CALM_DAILY. Saved in the player record.
+  uint8_t calmToday = 0;
+  uint32_t calmDay = 0;
+  void calmBondTick();
   uint32_t ceremonyUntil = 0;
   uint8_t bondToday = 0;       // tope diario de subida de vinculo
   uint32_t medalUntil = 0;     // celebracion de medalla en pantalla

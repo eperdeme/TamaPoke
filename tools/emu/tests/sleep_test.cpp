@@ -201,6 +201,64 @@ int main(){
     ck(!p.sleeping, "an egg does not sleep");
   }
 
+  // --- passive bond: +1 per hour with every need at or above BOND_CALM_MIN,
+  // awake or asleep, at most BOND_CALM_DAILY a day for the whole game
+  {
+    const uint32_t D = 20000UL * 86400UL;      // a real calendar day
+    auto run = [](Pet &p, uint32_t from, int minutes, bool topUp) {
+      for (int i = 0; i < minutes; i++) {
+        p.lastSeenEpoch = from + (uint32_t)i * 60;
+        if (topUp) { p.fullness = p.joy = p.energy = p.hygiene = 100; p.poops = 0; }
+        p.dbgTick();
+      }
+    };
+    Pet p; fresh(p, 13);
+    // put down for a nap after care: needs drain 4x slower, so it earns
+    p.bond = 0; p.sleeping = true; p.sleepAuto = SLEEP_PLAYER;
+    run(p, D + 13 * 3600, 90, false);
+    printf("      a 90-minute nap after care: bond +%u\n", p.bond);
+    ck(p.bond == 1, "a creature cared for and put down for a nap earns a point");
+
+    // left awake and ignored: needs fall under the threshold within half an hour
+    p.sleeping = false; p.sleepAuto = SLEEP_NONE;
+    p.fullness = p.joy = p.energy = p.hygiene = 100; p.poops = 0;
+    uint8_t b = p.bond;
+    run(p, D + 15 * 3600, 120, false);
+    ck(p.bond == b, "one left awake and ignored earns nothing");
+
+    // kept at 100: one point per counted hour, until the day's allowance
+    p.bond = 0;
+    run(p, D + 17 * 3600, 6 * 60, true);
+    printf("      six hours at full care: bond +%u\n", p.bond);
+    ck(p.bond == 6, "it pays one point per counted hour");
+    run(p, D + 23 * 3600, 59, true);           // the rest of the day, well cared for
+    printf("      ...and to midnight: bond +%u (the nap's point came first)\n", p.bond);
+    ck(p.bond == 7, "minutes carry over between counted stretches");
+    // past midnight is the NEXT calendar day: no care needed for the refill
+    run(p, D + 24 * 3600, 3 * 60, true);
+    ck(p.bond == 10, "a new calendar day starts its own allowance, even without care");
+
+    // the cap for a day, a swap and a reboot
+    Pet q; fresh(q, 13);
+    const uint32_t D2 = 20002UL * 86400UL;
+    q.bond = 0;
+    run(q, D2 + 8 * 3600, 14 * 60, true);
+    ck(q.bond == BOND_CALM_DAILY, "fourteen hours at full care still stop at the daily allowance");
+    PartyMon other; other.dex = 1; other.level = 20; other.stateVersion = 1;
+    other.ageMinutes = 19UL * MINUTES_PER_LEVEL;
+    q.switchTo(other); q.sleeping = false;
+    uint8_t ob = q.bond;
+    run(q, D2 + 22 * 3600, 90, true);
+    ck(q.bond == ob, "the allowance is shared: another creature gets none that day");
+    q.saveNow();
+    {
+      Pet r; r.begin(); r.sleeping = false;
+      uint8_t rb = r.bond;
+      run(r, D2 + 23 * 3600 + 30 * 60, 25, true);
+      ck(r.bond == rb, "and a reboot does not refill it");
+    }
+  }
+
   printf("%s\n", bad?"FAILURES":"all good");
   return bad?1:0;
 }
