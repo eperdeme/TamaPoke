@@ -443,6 +443,23 @@ void farewellLevelSet(int lv) {
   p.end();
 }
 
+bool gEggPreferNew = true;
+
+void eggPreferNewLoad() {
+  Preferences p;
+  if (!p.begin("tamapoke", true)) return;
+  gEggPreferNew = p.getUChar("eggnew", 1) != 0;
+  p.end();
+}
+
+void eggPreferNewSet(bool on) {
+  gEggPreferNew = on;
+  Preferences p;
+  if (!p.begin("tamapoke", false)) return;
+  p.putUChar("eggnew", on ? 1 : 0);
+  p.end();
+}
+
 // Each real minute is worth MINUTES_PER_LEVEL "parts"; every gLevelMins parts
 // make one game minute. Over gLevelMins real minutes that is exactly
 // MINUTES_PER_LEVEL game minutes -- one level -- whatever the value, so there
@@ -983,8 +1000,11 @@ int16_t Pet::pickEggSpecies() {
   }
 
   // candidatos del tier con linea incompleta; si no hay, baja de tier;
-  // si la pokedex del tier esta completa, vale cualquiera del tier
-  for (int pass = 0; pass < 2; pass++) {
+  // si la pokedex del tier esta completa, vale cualquiera del tier.
+  // With the setting off only the second pass runs: any species of the rolled
+  // tier, finished or not. It still steps down a tier if the region has NONE of
+  // that tier at all, which is a hole in the data, not a completed Pokedex.
+  for (int pass = gEggPreferNew ? 0 : 1; pass < 2; pass++) {
     for (int t = tier; t >= R_COMUN; t--) {
       int16_t cand[CAND_MAX];
       int n = 0;

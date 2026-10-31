@@ -54,6 +54,14 @@ void levelSpeedSet(int realMinsPerLevel);       // clamped to 1..60
 extern uint8_t gFarewellLevel;
 void farewellLevelLoad();
 void farewellLevelSet(int level);               // clamped to 50..100
+
+// Eggs favour lines the player has not finished (the default, as the game has
+// always done). Off: the rarity is rolled the same way, then ANY species of it
+// may hatch, repeats included -- no skipping what is already registered and no
+// dropping to a lower tier because this one is complete.
+extern bool gEggPreferNew;
+void eggPreferNewLoad();
+void eggPreferNewSet(bool on);
 #define RUNAWAY_TICKS 60                   // se escapa tras 1 h con TODO a cero
 // Night, by the RTC: midnight to 06:00. Auto-sleep needs BOTH: the screen off
 // AND this window.

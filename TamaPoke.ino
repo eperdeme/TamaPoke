@@ -1101,6 +1101,7 @@ void setup() {
   brightLoad();  // brillo guardado (por defecto: el de siempre)
   levelSpeedLoad();     // minutos por nivel (por defecto: 60, el juego original)
   farewellLevelLoad();  // nivel de despedida (por defecto: 73, el juego original)
+  eggPreferNewLoad();   // huevos: priorizar lineas nuevas (por defecto: si)
   Wire.begin(IIC_SDA, IIC_SCL);
   // CST9217 (tactil), AXP2101 (PMU) y PCF85063 (RTC) comparten este bus I2C.
   // Red de seguridad para PMU/RTC (SensorLib NO respeta este timeout en el
@@ -4071,6 +4072,10 @@ static void renderClockOptions() {
 #define GAME_LBL_Y(r) (90 + (r) * 96)
 #define GAME_ROW_Y(r) (GAME_LBL_Y(r) + 24)
 #define GAME_LIFE_Y 296
+#define GAME_EGG_LBL_Y 330     // the egg setting: a label and one SI/NO button
+#define GAME_EGG_Y 352
+#define GAME_EGG_W 120
+#define GAME_EGG_H 44
 // Which of the four buttons of row `r` a tap is on: -10, -1, +1, +10, or 0.
 int gameStepAt(int r, int16_t x, int16_t y) {
   if (y < GAME_ROW_Y(r) || y > GAME_ROW_Y(r) + GAME_ROW_H) return 0;
@@ -4083,6 +4088,11 @@ int gameStepAt(int r, int16_t x, int16_t y) {
   return 0;
 }
 int uiGameRowY(int r) { return GAME_ROW_Y(r) + GAME_ROW_H / 2; }
+int uiGameEggY() { return GAME_EGG_Y + GAME_EGG_H / 2; }
+bool gameEggAt(int16_t x, int16_t y) {
+  return y >= GAME_EGG_Y && y <= GAME_EGG_Y + GAME_EGG_H &&
+         x >= CX - GAME_EGG_W / 2 && x <= CX + GAME_EGG_W / 2;
+}
 int uiGameBtnX(int step) {
   const int l0 = CX - GAME_HALF, l1 = l0 + GAME_BTN_W + GAME_BTN_GAP;
   const int r1 = CX + GAME_HALF - GAME_BTN_W, r0 = r1 - GAME_BTN_W - GAME_BTN_GAP;
@@ -4139,9 +4149,27 @@ void renderGameOptions() {
   gfx->setTextSize(2);
   gfx->setCursor(CX - (int)strlen(life) * 6, GAME_LIFE_Y);
   gfx->print(life);
+
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - (int)strlen(T(S_EGG_NEW)) * 6, GAME_EGG_LBL_Y);
+  gfx->print(T(S_EGG_NEW));
+  const char *yn = T(gEggPreferNew ? S_YES : S_NO);
+  const int bx = CX - GAME_EGG_W / 2;
+  gfx->fillRoundRect(bx, GAME_EGG_Y, GAME_EGG_W, GAME_EGG_H, 10, UI_WHITE);
+  gfx->drawRoundRect(bx, GAME_EGG_Y, GAME_EGG_W, GAME_EGG_H, 10, UI_INK);
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(3);
+  gfx->setCursor(CX - (int)strlen(yn) * 9, GAME_EGG_Y + GAME_EGG_H / 2 - 11);
+  gfx->print(yn);
 }
 
 void gameOptionsTap(int16_t x, int16_t y) {
+  if (gameEggAt(x, y)) {
+    eggPreferNewSet(!gEggPreferNew);
+    sfxPlay(SFX_TAP);
+    return;
+  }
   for (int r = 0; r < 2; r++) {
     const int step = gameStepAt(r, x, y);
     if (!step) continue;

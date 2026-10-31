@@ -131,6 +131,13 @@ int main(){
     ck(gFarewellLevel == 50, "the farewell level goes down by ten and stops at 50");
     onTap(uiGameBtnX(1), uiGameRowY(1));
     ck(gFarewellLevel == 51, "and up by one");
+    int uiGameEggY();
+    eggPreferNewSet(true);
+    onTap(233, uiGameEggY());
+    ck(!gEggPreferNew, "the egg button turns prefer-new off");
+    render();
+    onTap(233, uiGameEggY());
+    ck(gEggPreferNew, "and back on");
     render();
     clockOpen = false; clockPage = 0;
     levelSpeedSet(60); farewellLevelSet(73);

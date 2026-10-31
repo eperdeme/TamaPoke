@@ -181,6 +181,7 @@ enum StrId : uint8_t {
   S_FAREWELL_LVL,   // PARTIDA page: label of the farewell level row
   S_LIFE_FMT,       // PARTIDA page: "one life: %s" (a duration)
   S_GAME_TITLE,     // PARTIDA page: its title
+  S_EGG_NEW,        // PARTIDA page: label of the "eggs prefer new lines" toggle
   STR_COUNT
 };
 
