@@ -13,6 +13,7 @@
 #include "party.h"
 #include "items.h"
 #include "inventory.h"
+#include "battle.h"   // Combatant, for the battle bag check
 #include <cstdio>
 uint32_t g_seed=2; FakeSerial Serial; FakeESP ESP; FakeWire Wire;
 volatile int g_touchX=0,g_touchY=0; volatile bool g_touchDown=false;
@@ -374,6 +375,45 @@ int main(){
     if (learnableFor(5, 40, l, sizeof(l)) <= n) {
       printf("FAIL  picker     TMs never arrive at all\n"); bad++;
     } else printf("PASS  picker     and the TMs arrive once it is built\n");
+  }
+
+  // The battle bag holds up to 8 kinds but shows 4 a page. It had a page
+  // counter nothing ever moved, so the 5th kind on could not be used in a fight.
+  {
+    extern uint8_t btlMenu, btlBagPage; extern Combatant btlYou;
+    void startTrainerBattle(uint8_t idx, bool hard);
+    clearAll();
+    bag.clear();
+    const ItemKey kinds[8] = { IT_POKEBALL, IT_GREATBALL, IT_ULTRABALL, IT_MASTERBALL,
+                               IT_POTION, IT_SUPERPOTION, IT_HYPERPOTION, IT_FULLHEAL };
+    for (ItemKey k : kinds) bag.add(k);
+    bag.add(IT_PROTEIN);                         // a vitamin never shows in battle
+    startTrainerBattle(0, false);
+    btlMenu = 3; btlBagPage = 0;
+    render();
+    if (uiRimPages() != 2) { printf("FAIL  battle bag  8 kinds should be 2 pages, got %u\n", uiRimPages()); bad++; }
+    else printf("PASS  battle bag  8 battle items page in two, the vitamin is left out\n");
+    onRim(1);
+    render();
+    if (btlBagPage != 1) { printf("FAIL  battle bag  the rim does not page it\n"); bad++; }
+    else printf("PASS  battle bag  the rim turns to the second page\n");
+    btlYou.hp = 1;                               // so a potion is worth using
+    const uint8_t before = bag.count(IT_POTION);
+    onTap(89, 290);                              // first cell of page 2: the 5th kind, POTION
+    if (bag.count(IT_POTION) != before - 1) { printf("FAIL  battle bag  the 5th item still cannot be used\n"); bad++; }
+    else printf("PASS  battle bag  the 5th kind (POTION) is usable from page 2\n");
+    extern uint8_t btlMsgCount; btlMsgCount = 0;   // past the "used POTION" message
+    btlMenu = 3; btlBagPage = 1;
+    while (bag.count(IT_SUPERPOTION)) bag.consume(IT_SUPERPOTION);
+    while (bag.count(IT_HYPERPOTION)) bag.consume(IT_HYPERPOTION);
+    while (bag.count(IT_FULLHEAL)) bag.consume(IT_FULLHEAL);
+    render();                                    // page 2 is now empty
+    if (btlBagPage != 0) { printf("FAIL  battle bag  stayed on a page past the end\n"); bad++; }
+    else printf("PASS  battle bag  a page emptied by use falls back to the last one\n");
+    btlMenu = 0; render();
+    if (uiRimPages() != 1) { printf("FAIL  battle bag  the move grid pages\n"); bad++; }
+    else printf("PASS  battle bag  only the bag pages, not the move grid\n");
+    battleOpen = false; btlMenu = 0;
   }
 
   printf("%s\n", bad?"FAILURES":"every paged screen pages");
