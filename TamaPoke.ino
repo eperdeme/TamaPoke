@@ -311,6 +311,7 @@ void drawSaveWarning();
 void renderBag();
 void bagTap(int16_t x, int16_t y);
 uint8_t bagPages();
+uint8_t btlBagPages();   // the battle bag, paged by the rim like every other list
 bool startWildBattle(uint8_t region, bool hard);
 PartyMon wildToPartyMon();
 bool focusSwap(uint8_t slot);
@@ -2999,6 +3000,10 @@ static uint8_t *uiRimTarget(uint8_t *pages) {
       break;
     case SCR_BAGSCR:  p = &bagPage;     n = bagPages(); break;
     case SCR_CARD:    p = &cardPage;    n = CARD_PAGES; break;
+    // Only while the bag is open; the move grid and the switch list never page.
+    case SCR_BATTLE:
+      if (btlMenu == 3) { p = &btlBagPage; n = btlBagPages(); }
+      break;
     // Settings became two pages when brightness and the reset arrived; the rim
     // is how every other paged screen here works, and uiDrawRimBar() reads the
     // same table, so the second page advertises itself with no new control.
@@ -5290,9 +5295,11 @@ void renderBattle() {
     drawBtlBack();
     // The battle bag: balls and medicine, never vitamins -- training is
     // permanent and belongs to the care sim.
+    // Using up the last item of the last page leaves the page past the end.
+    if (btlBagPage >= btlBagPages()) btlBagPage = btlBagPages() - 1;
     uint8_t shown = 0;
     uint8_t n = bag.distinctCount();
-    for (uint8_t idx = 0; idx < n && shown < 4; idx++) {
+    for (uint8_t idx = 0; idx < n; idx++) {
       ItemKey k = bag.keyAt(idx);
       if (!itemUsableInBattle(k)) continue;
       if (shown < btlBagPage * 4) { shown++; continue; }
@@ -5363,6 +5370,7 @@ void renderBattle() {
       }
     }
   }
+  if (btlMenu == 3) uiDrawRimBar();   // the bag pages: say so, as every list does
   gfx->flush();
 }
 
@@ -5525,6 +5533,7 @@ void battleTap(int16_t x, int16_t y) {
   }
   if (btlMenu == 3) {
     if (btlBackTap(x, y)) return;
+    if (btlBagPage >= btlBagPages()) btlBagPage = btlBagPages() - 1;   // as the draw does
     uint8_t shown = 0;
     uint8_t n = bag.distinctCount();
     for (uint8_t idx = 0; idx < n; idx++) {
@@ -7140,6 +7149,17 @@ void focusRecover() {
 uint8_t bagPages() {
   uint8_t n = bag.distinctCount();
   return n ? (uint8_t)((n + BAG_PER_PAGE - 1) / BAG_PER_PAGE) : 1;
+}
+
+// The battle bag shows 4 items a page -- the move grid's cells -- and holds up
+// to 8 kinds (four balls, three potions, FULL HEAL). btlBagPage existed but
+// nothing ever moved it, and the draw stopped after 4, so the 5th kind on was
+// carried and could not be used in a fight. The rim pages it now.
+uint8_t btlBagPages() {
+  uint8_t n = 0;
+  for (uint8_t i = 0; i < bag.distinctCount(); i++)
+    if (itemUsableInBattle(bag.keyAt(i))) n++;
+  return n ? (uint8_t)((n + 3) / 4) : 1;
 }
 
 int uiBagRowCenterY(int i) { return BAG_ROW_Y(i) + 25; }
