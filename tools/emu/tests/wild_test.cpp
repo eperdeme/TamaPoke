@@ -185,6 +185,33 @@ int main(){
   ck(wildPickSpecies(REGION_ALL, R_COMUN, 1)!=0,
      "and the pool comes back when the packs do");
 
+  // An evolved form is never met below the level it evolves at. The species
+  // and level were rolled independently, so a level 2 INFERNAPE was possible.
+  ck(speciesMinLevel(390) == 1 && speciesMinLevel(391) == 14 && speciesMinLevel(392) == 36,
+     "CHIMCHAR exists from 1, MONFERNO from 14, INFERNAPE from 36");
+  ck(speciesMinLevel(136) == DEX_TBL[DEX_EEVEE].evolveLevel,
+     "an Eevee form (FLAREON) from Eevee's evolution level");
+  {
+    bool none = true, early = true, infernape = false, below = false;
+    for (uint32_t r = 0; r < 4000; r++) {
+      if (wildPickSpecies(REGION_ALL, R_EVO, r * 7919u, 6)) none = false;
+      int16_t d7 = wildPickSpecies(REGION_ALL, R_EVO, r * 7919u, 7);
+      if (d7 && speciesMinLevel(d7) > 7) early = false;
+      int16_t d = wildPickSpecies(3, R_EVO, r * 104729u, 40);   // Sinnoh
+      if (d == 392) infernape = true;
+      if (d && speciesMinLevel(d) > 40) below = true;
+    }
+    ck(none, "below the first evolution level (7) no evolved form is picked");
+    ck(early, "at 7 only forms that evolve by 7 (the cocoons)");
+    ck(infernape && !below, "at 40 INFERNAPE can appear, nothing above its level does");
+    bool base = true;
+    for (uint32_t r = 0; r < 200; r++) {
+      if (!wildPickSpecies(0, R_COMUN, r * 31u, 1)) base = false;
+      if (!wildPickSpecies(0, R_RARO, r * 31u, 1)) base = false;
+    }
+    ck(base, "common and rare picks are unaffected: base forms exist at every level");
+  }
+
   printf(bad?"FAILED %d\n":"OK\n", bad);
   return bad?1:0;
 }

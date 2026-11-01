@@ -66,4 +66,14 @@ uint8_t wildTierForRoll(uint8_t roll);
 // draw as a dex number would be a permanent defect -- the same fault CLAUDE.md
 // records being removed from the gym rosters. `region` is a REGIONS index, or
 // REGION_ALL for the mixed pool. 0 if the tier has nothing available.
-int16_t wildPickSpecies(uint8_t region, uint8_t tier, uint32_t roll);
+//
+// `level` is the level the encounter was rolled at: only species that can
+// exist at it are picked, so an evolved form never shows up below the level it
+// evolves at (a level 2 INFERNAPE). It only narrows the evolved tier in
+// practice -- base forms are always level 1 -- and the tier roll is untouched.
+int16_t wildPickSpecies(uint8_t region, uint8_t tier, uint32_t roll,
+                        uint8_t level = 255);
+
+// The lowest level a species can have: the level the form before it evolves
+// at, or 1 for a base form. EEVEE's forms take EEVEE's level.
+uint8_t speciesMinLevel(int16_t dex);
