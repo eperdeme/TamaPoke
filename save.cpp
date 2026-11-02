@@ -25,6 +25,11 @@ const SaveField SAVE_FIELDS[] = {
   // .tpsave already in a player's hands. Bumping the version would refuse all of
   // them outright -- saveImport() tests it for exact equality.
   { "brt", SK_U8 },
+  // The GAME page: minutes per level, farewell level, egg preference. Without
+  // them a restore put a player back on 60 / 73 / YES. A backup from before
+  // they were listed has none of the three, so a restore of it reads the
+  // defaults -- the same as the game did before the page existed.
+  { "lvspd", SK_U8 },   { "fwlv", SK_U8 },    { "eggnew", SK_U8 },
 };
 const uint16_t SAVE_FIELD_COUNT = sizeof(SAVE_FIELDS) / sizeof(SAVE_FIELDS[0]);
 
