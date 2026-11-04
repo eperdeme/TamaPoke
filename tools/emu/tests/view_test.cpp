@@ -42,16 +42,17 @@ const char *personalityName();
 int uiGoalCount();
 bool uiGoalMet(int i);
 int uiGoalsMet();
-// the memory game, driven as the panel drives it
-extern bool memoOpen, memoShowing;
-extern uint32_t memoOverUntil;
-extern uint8_t memoSeq[], memoLen, memoAt, memoBest;
+// the type quiz, driven as the panel drives it
+extern bool memoOpen;
+extern uint32_t memoOverUntil, quizFlashUntil;
+extern uint8_t memoBest, quizDef, quizOpt[], quizAns, quizLives;
 void startMemoGame();
 void memoTap(int16_t x, int16_t y);
 void leaveMemo();
-void memoPadPos(int i, int *cx, int *cy);
-int uiMemoPads();
-#define MEMO_PADS_T uiMemoPads()
+void quizNextQuestion();
+void quizOptRect(int i, int *x, int *y, int *w, int *h);
+void quizResetOnce();
+int uiQuizOpts();
 // The emulator's clock, nudged deterministically so the sequence can be walked
 // forward without the test sleeping for seconds. See clock.cpp.
 void emuAdvanceMs(uint32_t ms);
@@ -415,75 +416,103 @@ int main(){
     ck(!uiGoalMet(0), "tomorrow the care line is open again, with nothing to clear");
   }
 
-  // ------------------------------------------------------------ the memory game
+  // ------------------------------------------------------------ the type quiz
   //
   // Driven through the real thing -- startMemoGame(), memoTap() and render() --
-  // rather than through pet.playMemo() alone. CLAUDE.md is explicit that a rule
-  // proven in isolation says nothing about its caller, and here the CALLER is
-  // where the interesting behaviour lives: the sequence, the reward being applied
-  // exactly once, and the score surviving.
+  // rather than through pet.playMemo() alone: the questions, the clock, the
+  // lives and the reward being applied exactly once all live in the caller.
   {
+    // Every question is answerable: one super effective option, the others not,
+    // across many questions so every defending type comes up.
+    {
+      int bad = 0, repeats = 0;
+      std::set<int> seen;
+      startMemoGame();
+      uint8_t prev = quizDef;
+      for (int q = 0; q < 2000; q++) {
+        quizNextQuestion();
+        seen.insert(quizDef);
+        if (q && quizDef == prev) repeats++;
+        prev = quizDef;
+        int good = 0;
+        for (int i = 0; i < uiQuizOpts(); i++)
+          if (TYPE_FX[quizOpt[i]][quizDef] > 10) good++;
+        if (good != 1 || TYPE_FX[quizOpt[quizAns]][quizDef] <= 10) bad++;
+        if (quizOpt[0] == quizOpt[1] || quizOpt[0] == quizOpt[2] || quizOpt[1] == quizOpt[2]) bad++;
+      }
+      leaveMemo();
+      ck(seen.size() == TYPE_COUNT, "every one of the 18 types comes up as the question");
+      ck(bad == 0, "each question has exactly one super effective answer, all three different");
+      ck(repeats == 0, "and the same type is never asked twice in a row");
+    }
+
     pet.dbgHatchAs(6, false);
     while (pet.hasLearnOffer()) pet.declineLearn();
     pet.joy = 40; pet.energy = 80; pet.fullness = 80;
     pet.memoHi = 0;
     pet.saveNow();
 
+    auto tapOpt = [](int i) {
+      int x, y, w, h; quizOptRect(i, &x, &y, &w, &h);
+      memoTap((int16_t)(x + w / 2), (int16_t)(y + h / 2));
+    };
+    auto settle = []() { while (quizFlashUntil && !memoOverUntil) { emuAdvanceMs(50); render(); } };
+
     startMemoGame();
-    ck(memoOpen, "the game opens");
-    ck(memoLen == 1, "with a one-step sequence to learn");
-    ck(memoShowing, "and it shows you the sequence before asking for anything");
-
-    // A tap while the sequence is still playing must be ignored, not counted as
-    // an answer -- otherwise a fast finger loses on step one through no fault.
-    const uint8_t atWas = memoAt;
-    int px, py; memoPadPos((memoSeq[0] + 1) % MEMO_PADS_T, &px, &py);
-    memoTap((int16_t)px, (int16_t)py);
-    ck(memoAt == atWas && !memoOverUntil,
-       "tapping while it is still showing does nothing at all");
-
-    // Play it correctly for several rounds, driving render() to walk the sequence
-    // out exactly as the panel does.
-    int rounds = 0;
-    for (int guard = 0; guard < 4000 && rounds < 5 && !memoOverUntil; guard++) {
-      if (memoShowing) { emuAdvanceMs(60); render(); continue; }
-      const uint8_t want = memoSeq[memoAt];
-      int wx, wy; memoPadPos(want, &wx, &wy);
-      const uint8_t lenWas = memoLen;
-      memoTap((int16_t)wx, (int16_t)wy);
-      if (memoLen > lenWas) rounds++;      // a round was completed
-      render();
-    }
-    ck(rounds >= 4 && !memoOverUntil,
-       "playing the sequence back correctly keeps extending it");
-    ck(memoBest >= 4, "and the score is the longest sequence remembered");
-
-    // A WRONG answer ends it, and the reward is applied once.
-    const uint8_t bestWas = memoBest;
+    ck(memoOpen && quizLives == 3 && memoBest == 0, "the quiz opens with three lives and no score");
+    tapOpt(quizAns);
+    const uint8_t afterOne = memoBest;
+    tapOpt(quizAns);   // while the answer is still showing: ignored
+    ck(afterOne == 1 && memoBest == 1, "a right answer scores, and a second tap while it shows does nothing");
+    settle();
+    for (int i = 0; i < 4; i++) { tapOpt(quizAns); settle(); }
+    ck(memoBest == 5 && quizLives == 3 && !memoOverUntil, "right answers keep scoring without costing lives");
+    tapOpt((quizAns + 1) % uiQuizOpts()); settle();
+    ck(quizLives == 2 && memoBest == 5 && !memoOverUntil, "a wrong answer costs a life, not the score");
+    tapOpt((quizAns + 1) % uiQuizOpts()); settle();
     const uint8_t joyWas = pet.joy;
-    while (memoShowing) { emuAdvanceMs(60); render(); }
-    int bx, by; memoPadPos((memoSeq[memoAt] + 1) % MEMO_PADS_T, &bx, &by);
-    memoTap((int16_t)bx, (int16_t)by);
-    ck(memoOverUntil != 0, "a wrong answer ends the session");
+    tapOpt((quizAns + 2) % uiQuizOpts()); settle();
+    ck(memoOverUntil != 0 && quizLives == 0, "the third mistake ends it");
     ck(pet.joy > joyWas, "which pays out in JOY");
-    ck(pet.memoHi == bestWas, "and records the run");
-    // Rendering the results screen repeatedly must NOT pay again. memoFinish()
-    // guards on memoOverUntil for exactly this; without it the reward would be
-    // applied on every frame the result was up.
+    ck(pet.memoHi == 5, "and records the score");
     const uint8_t joyAfter = pet.joy;
     const uint16_t hiAfter = pet.memoHi;
     for (int i = 0; i < 10; i++) render();
     ck(pet.joy == joyAfter && pet.memoHi == hiAfter,
        "and holding the results screen does not pay twice");
-    // Walking away must not pay a third time either.
     leaveMemo();
     ck(pet.joy == joyAfter, "nor does leaving it");
     ck(!memoOpen, "and the game is closed");
 
+    // The clock: 20 seconds for the whole game, then it ends by itself and pays.
+    {
+      pet.joy = 40; pet.energy = 80; pet.fullness = 80;
+      startMemoGame();
+      tapOpt(quizAns); settle();
+      const uint8_t j = pet.joy;
+      for (int t = 0; t < 21000 / 100 && !memoOverUntil; t++) { emuAdvanceMs(100); render(); }
+      ck(memoOverUntil != 0 && quizLives == 3, "the 20-second clock ends it with lives to spare");
+      ck(pet.joy > j, "and still pays what was earned");
+      ck(pet.memoHi == hiAfter, "a lower score leaves the record alone");
+      leaveMemo();
+    }
+
     // The record is PLAYER-WIDE, so it survives a reload -- and it is a new field
     // on an old record, which is the part that could have gone wrong.
     { Pet r; r.begin();
-      ck(r.memoHi == hiAfter, "the memory record survives a reload"); }
+      ck(r.memoHi == hiAfter, "the quiz record survives a reload"); }
+
+    // The old memory-game record is cleared once, and only once.
+    {
+      Preferences p; p.begin("tamapoke", false); p.remove("tq"); p.end();
+      pet.memoHi = 9; pet.saveNow();
+      quizResetOnce();
+      ck(pet.memoHi == 0, "an old memory record is cleared for the quiz");
+      { Pet r; r.begin(); ck(r.memoHi == 0, "and the clear is saved"); }
+      pet.memoHi = 7; pet.saveNow();
+      quizResetOnce();
+      ck(pet.memoHi == 7, "a quiz record is never cleared again");
+    }
 
     // It pays in joy and bond, and trains NO stat: all three trainable stats
     // already have a game, and a fourth grind is not what this is for.

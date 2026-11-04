@@ -174,7 +174,7 @@ int main(int argc, char **argv) {
       { 0, &sackOpen, "STRENGTH routes to the punching bag" },
       { 1, &spdOpen,  "SPEED routes to the reaction test" },
       { 2, &gameOpen, "DEFENCE routes to the ball game" },
-      { 3, &memoOpen, "MEMORY routes to the memory game" },
+      { 3, &memoOpen, "TYPES routes to the type quiz" },
     };
     for (const Route &r : route) {
       if (!trainOpen) click(tbx, tby);

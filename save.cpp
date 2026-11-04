@@ -25,6 +25,10 @@ const SaveField SAVE_FIELDS[] = {
   // .tpsave already in a player's hands. Bumping the version would refuse all of
   // them outright -- saveImport() tests it for exact equality.
   { "brt", SK_U8 },
+  // Set once the old memory-game record has been cleared for the type quiz that
+  // replaced it (see quizResetOnce()). In the backup so restoring a new save
+  // keeps its quiz record; an older backup lacks it and is cleared again.
+  { "tq", SK_BOOL },
 };
 const uint16_t SAVE_FIELD_COUNT = sizeof(SAVE_FIELDS) / sizeof(SAVE_FIELDS[0]);
 

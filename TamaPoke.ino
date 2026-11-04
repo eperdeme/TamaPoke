@@ -328,8 +328,8 @@ void startMemoGame();
 void renderMemo();
 void memoTap(int16_t x, int16_t y);
 void leaveMemo();
-void memoPadPos(int i, int *cx, int *cy);
-int memoPadAt(int16_t x, int16_t y);
+void quizOptRect(int i, int *x, int *y, int *w, int *h);
+int quizOptAt(int16_t x, int16_t y);
 uint8_t boxSlotFor(uint8_t visual);
 const char *boxSortName();
 uint8_t galleryFilterCount();
@@ -758,14 +758,14 @@ static inline bool btlCellHit(int i, int16_t x, int16_t y) {
 #define SET_LANG  3
 #define SET_RESET 4
 
-// The memory game. See the essay above startMemoGame().
-#define MEMO_PADS 4
-#define MEMO_MAX 16          // sixteen is far past what anyone will reach
-#define MEMO_FLASH_MS 420    // how long each pad lights while showing
-#define MEMO_GAP_MS 180      // and the dark gap between them
-#define MEMO_R 62            // pad radius
-#define MEMO_RING 116        // how far the pads sit from the centre
-#define MEMO_INPUT_MS 4000   // per-tap patience: a pause is not a wrong answer
+// The type quiz (it took the memory game's place). See the essay above startMemoGame().
+#define QUIZ_MS 20000UL      // one clock for the whole game, like the ball game
+#define QUIZ_LIVES 3         // ...or three mistakes, whichever comes first
+#define QUIZ_OPTS 3          // three attacking types, exactly one super effective
+#define QUIZ_FLASH_MS 450    // how long a right / wrong answer shows before the next
+#define QUIZ_OPT_W 240
+#define QUIZ_OPT_H 54
+#define QUIZ_OPT_Y(i) (168 + (i) * (QUIZ_OPT_H + 10))
 
 // Today's care checklist rows. See the essay above renderPlayerGoals().
 #define GOAL_ROW_H UI_TAP_MIN
@@ -984,6 +984,21 @@ uint8_t brightBase(uint8_t level, bool usb) {
   return (uint8_t)(lo < 8 ? 8 : lo);
 }
 
+// The type quiz took the memory game's place and its record (pet.memoHi), but
+// a sequence length and a count of right answers are not the same score, so
+// the old record is cleared ONCE. The "tq" key says it has been done.
+void quizResetOnce() {
+  Preferences p;
+  if (!p.begin("tamapoke", true)) return;
+  const bool done = p.getBool("tq", false);
+  p.end();
+  if (done) return;
+  if (pet.memoHi) { pet.memoHi = 0; pet.saveNow(); }
+  if (!p.begin("tamapoke", false)) return;
+  p.putBool("tq", true);
+  p.end();
+}
+
 void brightLoad() {
   Preferences p;
   if (!p.begin("tamapoke", true)) return;
@@ -1097,6 +1112,7 @@ void setup() {
   party.begin();
   bag.begin();
   pet.begin();
+  quizResetOnce();
   // AFTER pet.begin(), because it compares against the pet checkpoint's loaded
   // generation, and BEFORE syncClock() below, so offline progression is applied
   // to whichever creature the swap actually settled on.
@@ -1997,12 +2013,7 @@ void uiButtonHeights(int *out, int max, int *n) {
   // icons are a 72 px graphic inside a 94 px disc.
   const int h[] = { PSLOT_HUB_R * 2, PSLOT_R * 2, PARTYCLOSE_H, LANBTN_H,
                     BTL_CELL_H + BTL_HIT_PAD * 2,
-                    EXPLORE_BTN_H + EXPLORE_BTN_PAD * 2, BTN_HIT * 2,
-                    // The memory game's pads. COMPACT controls, like everything
-                    // else here -- a disc you aim at, so height is the whole
-                    // story. Full-width list rows are a different shape and are
-                    // held to a different rule; see uiRowHeights() below.
-                    MEMO_R * 2 };
+                    EXPLORE_BTN_H + EXPLORE_BTN_PAD * 2, BTN_HIT * 2 };
   int c = (int)(sizeof(h) / sizeof(h[0]));
   if (c > max) c = max;
   for (int i = 0; i < c; i++) out[i] = h[i];
@@ -2023,7 +2034,9 @@ void uiButtonHeights(int *out, int max, int *n) {
 // pitch was just retuned to fit a fourth row, which is exactly the change that
 // could have quietly dropped it under.
 void uiRowHeights(int *out, int max, int *n) {
-  const int h[] = { MENU_ROW_H, TRAIN_ROW_H, SET_ROW_H, GOAL_ROW_H, GYM_ROW_H };
+  // The type quiz's three answers are rows too: 240 px wide, stacked, nothing
+  // beside them to hit instead.
+  const int h[] = { MENU_ROW_H, TRAIN_ROW_H, SET_ROW_H, GOAL_ROW_H, GYM_ROW_H, QUIZ_OPT_H };
   int c = (int)(sizeof(h) / sizeof(h[0]));
   if (c > max) c = max;
   for (int i = 0; i < c; i++) out[i] = h[i];
@@ -3841,8 +3854,8 @@ int uiTrainRowTop(int i) { return TRAIN_ROW_Y(i); }
 int uiTrainPanelTop() { return TRAIN_Y; }
 int uiTrainPanelBot() { return TRAIN_Y + TRAIN_H; }
 int uiTrainPanelHalfW() { return TRAIN_W / 2; }
-int uiMemoPads() { return MEMO_PADS; }
-int uiMemoPadR() { return MEMO_R; }
+int uiQuizOpts() { return QUIZ_OPTS; }
+int uiQuizOptH() { return QUIZ_OPT_H; }
 
 static const char *const LANG_CODES[LANG_COUNT] = { "ES", "EN", "FR", "DE", "IT", "PT" };
 
@@ -5840,88 +5853,87 @@ void renderSpeed() {
   gfx->flush();
 }
 
-// ---------- memory game (joy and bond, no stat) ----------
+// ---------- type quiz (joy and bond, no stat) ----------
 //
 // The fourth thing to do with a creature, and deliberately NOT a fourth stat
-// trainer: the bag trains ATK, the reaction test SPE and the ball DEF, so there
-// is no stat left that a new game would not simply duplicate. This one pays in
-// joy and bond, which makes it the game you play when the creature is too worn
-// out for the other three -- it costs almost no energy and burns no weight.
+// trainer: the bag trains ATK, the reaction test SPE and the ball DEF. This one
+// pays in joy and bond. It took the place of a colour-sequence memory game,
+// which had nothing to do with Pokemon and was not timed like the others; the
+// function and flag names (startMemoGame, memoOpen, pet.memoHi...) are kept so
+// the menu, the reward and the record are exactly what they were.
 //
-// Four pads flash a sequence and you repeat it. One more step each round, so the
-// score IS the longest sequence remembered, and the difficulty curve is the
-// player's memory rather than a timer that gets meaner.
-// Its metrics live up with the other layout constants, for the same reason the
-// settings rows do: uiButtonHeights() and uiMemoPadR() sit far above this.
+// One defending type is shown; three attacking types are offered and exactly
+// one of them is super effective against it. 20 seconds for the whole game, or
+// three mistakes. The score is the number of right answers.
 
 uint32_t memoOverUntil = 0;
-uint8_t memoSeq[MEMO_MAX];
-uint8_t memoLen = 0;         // how long the sequence currently is
-uint8_t memoAt = 0;          // how much of it the player has repeated
-uint8_t memoShowAt = 0;      // which step is being shown, while showing
-bool memoShowing = false;
-uint32_t memoStepUntil = 0;  // when the current shown step (or gap) ends
-bool memoGap = false;
-uint32_t memoDeadline = 0;   // when the player's patience runs out
-int8_t memoLit = -1;         // which pad is lit right now, -1 for none
-uint8_t memoBest = 0;        // longest sequence completed this session
-bool memoWrong = false;      // the last answer was wrong, for one flash of red
+uint8_t memoBest = 0;        // right answers this session (the score)
 bool memoNewHi = false;
 uint8_t memoGain = 0;
+uint8_t quizDef = 0;                 // the defending type asked about
+uint8_t quizOpt[QUIZ_OPTS];          // the three attacking types offered
+uint8_t quizAns = 0;                 // which of them is the super effective one
+uint8_t quizLives = QUIZ_LIVES;
+uint32_t quizUntil = 0;              // when the clock runs out
+uint32_t quizFlashUntil = 0;         // showing the last answer until then
+int8_t quizPicked = -1;              // what was tapped, while that shows
 
-// The pads sit on a ring, like the party slots, so the round panel is used rather
-// than fought. ONE answer for where a pad is: the draw path and the tap path both
-// ask, which is the rule every other control here follows.
-void memoPadPos(int i, int *cx, int *cy) {
-  const float a = (-90.0f + 90.0f * (float)i) * 0.01745329f;
-  if (cx) *cx = CX + (int)(cosf(a) * MEMO_RING);
-  if (cy) *cy = CY + (int)(sinf(a) * MEMO_RING);
+// ONE answer for where an option is: the draw path and the tap path both ask.
+void quizOptRect(int i, int *x, int *y, int *w, int *h) {
+  if (x) *x = CX - QUIZ_OPT_W / 2;
+  if (y) *y = QUIZ_OPT_Y(i);
+  if (w) *w = QUIZ_OPT_W;
+  if (h) *h = QUIZ_OPT_H;
 }
-int memoPadAt(int16_t x, int16_t y) {
-  for (int i = 0; i < MEMO_PADS; i++) {
-    int px, py;
-    memoPadPos(i, &px, &py);
-    const int dx = x - px, dy = y - py;
-    if (dx * dx + dy * dy <= MEMO_R * MEMO_R) return i;
+int quizOptAt(int16_t x, int16_t y) {
+  for (int i = 0; i < QUIZ_OPTS; i++) {
+    int bx, by, bw, bh;
+    quizOptRect(i, &bx, &by, &bw, &bh);
+    if (x >= bx && x < bx + bw && y >= by && y < by + bh) return i;
   }
   return -1;
 }
-static uint16_t memoPadColour(int i) {
-  static const uint16_t C[MEMO_PADS] = {
-    C565(0xe0, 0x5a, 0x5a), C565(0x4c, 0xa8, 0xe0),
-    C565(0x5c, 0xc0, 0x6a), C565(0xe8, 0xc0, 0x4a),
-  };
-  return C[i % MEMO_PADS];
-}
 
-// Extends the sequence and starts showing it from the beginning. Replaying the
-// WHOLE sequence each round is the point -- that is what makes it memory rather
-// than reaction.
-static void memoNextRound() {
-  if (memoLen < MEMO_MAX) memoSeq[memoLen++] = (uint8_t)random(MEMO_PADS);
-  memoAt = 0;
-  memoShowAt = 0;
-  memoShowing = true;
-  memoGap = true;                       // a beat of dark before the first pad
-  memoLit = -1;
-  memoStepUntil = millis() + MEMO_GAP_MS * 2;
+// A question: a defending type (never the same twice in a row), one attacker
+// that is super effective against it and two that are not, in random places.
+// Every one of the 18 types has at least one weakness, so there is always one.
+void quizNextQuestion() {
+  uint8_t d;
+  do { d = (uint8_t)random(TYPE_COUNT); } while (d == quizDef);   // 0xFF on a fresh game
+  quizDef = d;
+  uint8_t good[TYPE_COUNT], bad[TYPE_COUNT], ng = 0, nb = 0;
+  for (uint8_t a = 0; a < TYPE_COUNT; a++) {
+    if (TYPE_FX[a][d] > 10) good[ng++] = a;
+    else bad[nb++] = a;
+  }
+  quizAns = (uint8_t)random(QUIZ_OPTS);
+  const uint8_t right = good[random(ng)];
+  const uint8_t b1 = bad[random(nb)];
+  uint8_t b2;
+  do { b2 = bad[random(nb)]; } while (b2 == b1);
+  uint8_t k = 0;
+  for (uint8_t i = 0; i < QUIZ_OPTS; i++)
+    quizOpt[i] = (i == quizAns) ? right : (k++ == 0 ? b1 : b2);
+  quizPicked = -1;
 }
 
 void startMemoGame() {
   if (pet.isEgg() || pet.sleeping || pet.ceremony) return;
   memoOpen = true;
   memoOverUntil = 0;
-  memoLen = 0;
   memoBest = 0;
-  memoWrong = false;
   memoNewHi = false;
   memoGain = 0;
-  memoNextRound();
+  quizLives = QUIZ_LIVES;
+  quizFlashUntil = 0;
+  quizDef = 0xFF;
+  quizUntil = millis() + QUIZ_MS;
+  quizNextQuestion();
 }
 
 // Ends the session and banks what was earned. Its own function because three
-// paths reach it -- a wrong answer, running out of patience, and walking away --
-// and the reward must be applied exactly once however it ended.
+// paths reach it -- the clock, the third mistake, and walking away -- and the
+// reward must be applied exactly once however it ended.
 static void memoFinish() {
   if (memoOverUntil) return;            // already ended
   memoNewHi = (memoBest > pet.memoHi);
@@ -5930,34 +5942,25 @@ static void memoFinish() {
   memoOverUntil = millis() + 3500;
 }
 
-// Leaving early BANKS what was earned rather than voiding it, exactly as the other
-// three do. Quitting used to be the only way to lose a session's work, and it was
-// removed from all of them for the same reason.
+// Leaving early BANKS what was earned rather than voiding it, exactly as the
+// other three do.
 void leaveMemo() {
   memoFinish();
   memoOpen = false;
 }
 
 void memoTap(int16_t x, int16_t y) {
-  if (memoOverUntil || memoShowing) return;   // not your turn yet
-  const int pad = memoPadAt(x, y);
-  if (pad < 0) return;
-  memoLit = pad;                              // light what was pressed
-  memoStepUntil = millis() + 160;
-  if (memoSeq[memoAt] != (uint8_t)pad) {
-    memoWrong = true;
+  if (memoOverUntil || quizFlashUntil) return;   // over, or still showing the last answer
+  const int o = quizOptAt(x, y);
+  if (o < 0) return;
+  quizPicked = (int8_t)o;
+  quizFlashUntil = millis() + QUIZ_FLASH_MS;
+  if (o == quizAns) {
+    memoBest++;
+    sfxPlay(SFX_TAP);
+  } else {
     sfxPlay(SFX_DENY);
-    memoFinish();
-    return;
-  }
-  sfxPlay(SFX_TAP);
-  memoAt++;
-  memoDeadline = millis() + MEMO_INPUT_MS;
-  if (memoAt >= memoLen) {                    // the whole sequence, repeated
-    if (memoLen > memoBest) memoBest = memoLen;
-    if (memoLen >= MEMO_MAX) { memoFinish(); return; }
-    sfxPlay(SFX_PLAY);
-    memoNextRound();
+    if (quizLives) quizLives--;
   }
 }
 
@@ -5997,63 +6000,79 @@ void renderMemo() {
     return;
   }
 
-  // --- advance the sequence being shown, or the player's patience
-  if (memoShowing) {
-    if (now >= memoStepUntil) {
-      if (memoGap) {                    // the gap just ended: light the next pad
-        if (memoShowAt >= memoLen) {
-          memoShowing = false;          // the whole sequence has been shown
-          memoLit = -1;
-          memoDeadline = now + MEMO_INPUT_MS;
-        } else {
-          memoLit = memoSeq[memoShowAt];
-          memoGap = false;
-          memoStepUntil = now + MEMO_FLASH_MS;
-        }
-      } else {                          // the flash just ended
-        memoLit = -1;
-        memoShowAt++;
-        memoGap = true;
-        memoStepUntil = now + MEMO_GAP_MS;
-      }
-    }
-  } else {
-    if (memoLit >= 0 && now >= memoStepUntil) memoLit = -1;
-    // Running out of patience ends the session rather than counting as a wrong
-    // answer, so putting the device down mid-round still banks what was earned.
-    if (memoDeadline && now >= memoDeadline) { memoFinish(); gfx->flush(); return; }
+  // the last answer has been shown long enough: the third mistake ends it,
+  // anything else moves on to the next question
+  if (quizFlashUntil && now >= quizFlashUntil) {
+    quizFlashUntil = 0;
+    if (!quizLives) { memoFinish(); gfx->flush(); return; }
+    quizNextQuestion();
+  }
+  if (!quizFlashUntil && now >= quizUntil) {   // time: banks what was earned
+    sfxPlay(SFX_PLAY);
+    memoFinish(); gfx->flush(); return;
   }
 
-  for (int i = 0; i < MEMO_PADS; i++) {
-    int px, py;
-    memoPadPos(i, &px, &py);
-    const bool lit = (memoLit == i);
-    const uint16_t base = memoPadColour(i);
-    gfx->fillCircle(px, py, MEMO_R, lit ? UI_WHITE : base);
-    if (lit) gfx->fillCircle(px, py, MEMO_R - 10, base);
-    gfx->drawCircle(px, py, MEMO_R, ink);
-    gfx->drawCircle(px, py, MEMO_R - 1, ink);
-  }
-
-  // How far in you are, in the middle where the pads leave a hole
-  char c[10];
-  snprintf(c, sizeof(c), "%u", memoShowing ? memoLen : memoAt);
-  gfx->setTextColor(memoWrong ? UI_BAR_BAD : ink);
-  gfx->setTextSize(4);
-  gfx->setCursor(CX - strlen(c) * 12, CY - 16);
-  gfx->print(c);
-
-  // WATCH or YOUR TURN. Without it the two halves of a round look identical and
-  // there is no way to know whether a tap is expected.
-  const char *hint = memoShowing ? T(S_MEMO_WATCH) : T(S_MEMO_GO);
+  // the question
   gfx->setTextColor(ink);
   gfx->setTextSize(2);
-  gfx->setCursor(CX - strlen(hint) * 6, 42);
-  gfx->print(hint);
+  gfx->setCursor(CX - (int)strlen(T(S_MEMO_WATCH)) * 6, 62);
+  gfx->print(T(S_MEMO_WATCH));
+  {
+    const char *nm = typeName(quizDef);
+    const int w = (int)strlen(nm) * 18 + 36;
+    gfx->fillRoundRect(CX - w / 2, 92, w, 52, 14, typeColor(quizDef));
+    gfx->drawRoundRect(CX - w / 2, 92, w, 52, 14, ink);
+    gfx->setTextColor(typeColorIsLight(quizDef) ? UI_INK : UI_WHITE);
+    gfx->setTextSize(3);
+    gfx->setCursor(CX - (int)strlen(nm) * 9, 106);
+    gfx->print(nm);
+  }
+
+  // the three answers; after a tap the right one turns green, a wrong pick red
+  for (int i = 0; i < QUIZ_OPTS; i++) {
+    int bx, by, bw, bh;
+    quizOptRect(i, &bx, &by, &bw, &bh);
+    const uint8_t t = quizOpt[i];
+    uint16_t edge = ink;
+    if (quizFlashUntil) {
+      if (i == quizAns) edge = UI_BAR_OK;
+      else if (i == quizPicked) edge = UI_BAR_BAD;
+    }
+    gfx->fillRoundRect(bx, by, bw, bh, 12, typeColor(t));
+    gfx->drawRoundRect(bx, by, bw, bh, 12, edge);
+    if (edge != ink) {
+      gfx->drawRoundRect(bx + 1, by + 1, bw - 2, bh - 2, 11, edge);
+      gfx->drawRoundRect(bx + 2, by + 2, bw - 4, bh - 4, 10, edge);
+      gfx->drawRoundRect(bx + 3, by + 3, bw - 6, bh - 6, 9, edge);
+    }
+    const char *nm = typeName(t);
+    gfx->setTextColor(typeColorIsLight(t) ? UI_INK : UI_WHITE);
+    gfx->setTextSize(2);
+    gfx->setCursor(CX - (int)strlen(nm) * 6, by + bh / 2 - 7);
+    gfx->print(nm);
+  }
+
+  // the clock, the lives and the score
+  const uint32_t left = quizUntil > now ? quizUntil - now : 0;
+  const int tw = 200, tx = CX - tw / 2, ty = 366;
+  gfx->fillRoundRect(tx, ty, tw, 10, 4, UI_TRACK);
+  const int fw = (int)((uint32_t)(tw - 4) * left / QUIZ_MS);
+  if (fw > 0) gfx->fillRoundRect(tx + 2, ty + 2, fw, 6, 3, left < 5000 ? UI_BAR_BAD : UI_BAR_OK);
+  for (int i = 0; i < QUIZ_LIVES; i++) {
+    const int lx = CX - 70 + i * 22, ly = 396;
+    if (i < quizLives) gfx->fillCircle(lx, ly, 7, UI_BAR_BAD);
+    else gfx->drawCircle(lx, ly, 7, ink);
+  }
+  char sc[8];
+  snprintf(sc, sizeof(sc), "%u", memoBest);
+  gfx->setTextColor(ink);
+  gfx->setTextSize(3);
+  gfx->setCursor(CX + 40, 386);
+  gfx->print(sc);
   char rec[22];
   snprintf(rec, sizeof(rec), T(S_REC_FMT), pet.memoHi);
   gfx->setTextSize(1);
-  gfx->setCursor(CX - (int)strlen(rec) * 3, 74);
+  gfx->setCursor(CX - (int)strlen(rec) * 3, 418);
   gfx->print(rec);
   gfx->flush();
 }
