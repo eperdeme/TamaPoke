@@ -26,10 +26,10 @@ int uiTileIndex(); void uiTileGo(int i);
 uint8_t uiCurrentScreen(); uint8_t uiRimPages(); uint8_t uiRimPage();
 extern Pet pet;
 extern bool cardOpen, galleryOpen, clockOpen, kbOpen, menuOpen, partyOpen, partyPick;
-extern bool trainOpen, movePickOpen, battleOpen, gymOpen, playerOpen, boxOpen, pickOpen;
+extern bool trainOpen, movePickOpen, battleOpen, gymOpen, playerOpen, medalsOpen, boxOpen, pickOpen;
 extern bool exploreOpen;
 extern bool btlWild;
-extern uint8_t cardPage, gymPage, playerPage, movePickPage, boxPage, pickPage, partyDetail;
+extern uint8_t medalsPage, cardPage, gymPage, playerPage, movePickPage, boxPage, pickPage, partyDetail;
 extern uint8_t galleryPage; extern bool galleryDirty; extern uint8_t galleryDetail;
 extern uint8_t galleryRegion;
 extern uint8_t gymRegion;
@@ -55,7 +55,7 @@ static int bad=0;
 static void clearAll(){
   gymPick=galleryPick=false;
   cardOpen=galleryOpen=clockOpen=kbOpen=menuOpen=partyOpen=partyPick=false;
-  trainOpen=movePickOpen=battleOpen=gymOpen=playerOpen=boxOpen=pickOpen=false;
+  trainOpen=movePickOpen=battleOpen=gymOpen=playerOpen=medalsOpen=boxOpen=pickOpen=false;
   exploreOpen=false;
   bagOpen=false;
   partyDetail=0; boxSel=boxSwapFrom=0;
@@ -93,6 +93,7 @@ int main(){
   clearAll(); cardOpen=true;                      check("card",     &cardOpen,     &cardPage);
   clearAll(); gymOpen=true; gymPick=false;        check("gyms",     &gymOpen,      &gymPage);
   clearAll(); playerOpen=true;                    check("player",   &playerOpen,   &playerPage);
+  clearAll(); medalsOpen=true;                    check("medals",   &medalsOpen,   &medalsPage);
   clearAll(); partyOpen=true; boxOpen=true;       check("box",      &boxOpen,      &boxPage);
   clearAll(); movePickOpen=true; movePickParty=0; movePickSlot=0;
                                                   check("movepick", &movePickOpen, &movePickPage);
@@ -215,6 +216,24 @@ int main(){
   // Opening either screen must land on the REGION CHOOSER, not on whichever
   // region happened to be set last. Without it the Johto and Hoenn content is
   // built, reachable only by an invisible gesture, and so looks absent.
+  // The left side, in order: the team beside the pet, then the creature's own
+  // screen (opening on TODAY's checklist, the rim turning to its medals), then
+  // the trainer card at the end.
+  {
+    clearAll();
+    onSwipe(1);
+    const bool p1 = partyOpen;
+    onSwipe(1);
+    const bool p2 = medalsOpen && medalsPage == 0;
+    onRim(1);
+    const bool p2b = medalsOpen && medalsPage == 1;
+    onSwipe(1);
+    const bool p3 = playerOpen;
+    if (!p1 || !p2 || !p2b || !p3) {
+      printf("FAIL  medals     left side is not PARTY, MEDALS (today, then medals), PLAYER (%d%d%d%d)\n", p1, p2, p2b, p3); bad++;
+    } else printf("PASS  %-10s left side is PARTY, MEDALS (today first, rim to medals), PLAYER\n", "medals");
+  }
+
   {
     clearAll();
     onSwipe(-1);                       // the first world-facing stop is Explore

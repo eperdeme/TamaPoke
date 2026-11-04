@@ -269,7 +269,7 @@ enum : uint8_t {
   SCR_STARTER = 0, SCR_REGION, SCR_GALLERY, SCR_DEXPICK, SCR_MOVEPICK, SCR_BOX,
   SCR_PARTY, SCR_KEYBOARD, SCR_CARD, SCR_PLAYER, SCR_CLOCK, SCR_GYM, SCR_GYMPICK,
   SCR_EXPLORE, SCR_LAN, SCR_PICK, SCR_BATTLE, SCR_WIN, SCR_LEARN, SCR_TRAIN, SCR_MENU,
-  SCR_BAGSCR, SCR_GAME, SCR_MAIN, SCR_TRANSFER, SCR_COUNT
+  SCR_BAGSCR, SCR_GAME, SCR_MAIN, SCR_TRANSFER, SCR_MEDALS, SCR_COUNT
 };
 extern const char *const SCREEN_NAME[SCR_COUNT];   // const is internal linkage in C++
 
@@ -347,7 +347,7 @@ const char *const SCREEN_NAME[SCR_COUNT] = {
   "starter", "region", "gallery", "dexpick", "movepick", "box",
   "party", "keyboard", "card", "player", "clock", "gym", "gympick",
   "explore", "lan", "pick", "battle", "win", "learn", "train", "menu",
-  "bag", "minigame", "main", "transfer"
+  "bag", "minigame", "main", "transfer", "medals"
 };
 
 // Badge art for a region, or nullptr when that region has none yet.
@@ -572,13 +572,17 @@ uint8_t pickPage = 0;
 #define PICK_BACK_X (233 - PICK_BTN_W - 7)
 #define PICK_GO_X (233 + 7)
 bool playerOpen = false;
-// One badge page per gym region, then the medals. Three ladders will not fit on
-// one page, and the page you are on IS the region -- no extra control needed,
-// and horizontal paging already works everywhere else.
-uint8_t playerPage = 0;
-// One page per gym region, then the medals, then TODAY's checklist. Derived from
+// One badge page per gym region. Three ladders will not fit on one page, and
+// the page you are on IS the region -- no extra control needed. Derived from
 // GYM_REGIONS rather than written out, so adding a ladder adds its own page.
-#define PLAYER_PAGES (GYM_REGIONS + 2)
+uint8_t playerPage = 0;
+#define PLAYER_PAGES GYM_REGIONS
+// The creature's own screen, between the trainer card and the team: TODAY's
+// checklist first, the rim turns to its medals. Both are about the creature in
+// front of you, where the trainer card is about you.
+bool medalsOpen = false;
+uint8_t medalsPage = 0;
+#define MEDALS_PAGES 2
 #define playerBadgeRegion (playerPage % GYM_REGIONS)
 uint8_t gymPage = 0;
 #define GYM_ROWS 5
@@ -821,8 +825,8 @@ void uiArc(int cx, int cy, int r, int a0, int a1, int w, uint16_t col) {
 
 // The gesture model. Its tables and handlers live down beside uiCurrentScreen(),
 // but handleTouch() and onSwipe() sit ~1000 lines above them.
-#define TILE_COUNT 6   // PLAYER . PARTY . [PET] . EXPLORE . GYM . DEX
-#define TILE_PET 2
+#define TILE_COUNT 7   // PLAYER . MEDALS . PARTY . [PET] . EXPLORE . GYM . DEX
+#define TILE_PET 3
 #define RIM_R0 186     // a drag starting outside this radius pages, not swipes
 #define RIM_STEP 20    // degrees of arc per page
 #define RIM_BAR_R 222  // where the arc scrollbar is drawn
@@ -1855,6 +1859,7 @@ void onSwipeV(int dir) {
     return;
   }
   if (playerOpen) { if (back) uiTileGo(TILE_PET); return; }
+  if (medalsOpen) { if (back) uiTileGo(TILE_PET); return; }
   if (partyOpen) {
     if (partyDetail) { if (back) partyDetail = 0; return; }
     if (back) {
@@ -2342,6 +2347,10 @@ void onTap(int16_t x, int16_t y) {
     playerOpen = false;
     return;
   }
+  if (medalsOpen) {   // nothing on it is live: a tap backs out, as on the card
+    medalsOpen = false;
+    return;
+  }
   if (pickOpen) {
     pickTap(x, y);
     return;
@@ -2805,6 +2814,7 @@ uint8_t uiCurrentScreen() {
   if (kbOpen) return SCR_KEYBOARD;
   if (cardOpen) return SCR_CARD;
   if (playerOpen) return SCR_PLAYER;
+  if (medalsOpen) return SCR_MEDALS;
   if (clockOpen) return SCR_CLOCK;
   if (btlWinUntil) return SCR_WIN;
   if (battleOpen) return SCR_BATTLE;
@@ -2842,12 +2852,13 @@ uint8_t uiCurrentScreen() {
 // and Pokedex tiles until a region is picked. One table, so uiTileIndex() and
 // uiTileGo() cannot end up with different ideas of what is on the axis.
 //
-// PLAYER . PARTY . [PET] . EXPLORE . GYM . DEX -- yours on the left, the world
+// PLAYER . MEDALS . PARTY . [PET] . EXPLORE . GYM . DEX -- yours on the left, the world
 // on the right. Exploration is a primary loop, not a gym action, so it gets the
 // first world-facing stop and the main screen can name it directly.
 struct TileDef { uint8_t scr, alt; };
 static const TileDef TILE[TILE_COUNT] = {
-  { SCR_PLAYER, SCR_PLAYER }, { SCR_PARTY, SCR_PARTY }, { SCR_MAIN, SCR_MAIN },
+  { SCR_PLAYER, SCR_PLAYER }, { SCR_MEDALS, SCR_MEDALS }, { SCR_PARTY, SCR_PARTY },
+  { SCR_MAIN, SCR_MAIN },
   { SCR_EXPLORE, SCR_EXPLORE }, { SCR_GYM, SCR_GYMPICK },
   { SCR_GALLERY, SCR_DEXPICK },
 };
@@ -2864,7 +2875,7 @@ int uiTileIndex() {
 void uiTileGo(int i) {
   if (i < 0) i = 0;
   if (i >= TILE_COUNT) i = TILE_COUNT - 1;
-  exploreOpen = gymOpen = partyOpen = galleryOpen = playerOpen = false;
+  exploreOpen = gymOpen = partyOpen = galleryOpen = playerOpen = medalsOpen = false;
   boxOpen = false;
   boxDetail = partyDetail = 0;
   galleryDetail = 0;
@@ -2880,6 +2891,7 @@ void uiTileGo(int i) {
       galleryDirty = true;
       break;
     case SCR_PLAYER: playerOpen = true; playerPage = 0; break;
+    case SCR_MEDALS: medalsOpen = true; medalsPage = 0; break;   // opens on TODAY
     default: break;   // the pet tile is everything else being shut
   }
   sfxPlay(SFX_TAP);
@@ -2900,6 +2912,7 @@ static uint8_t *uiRimTarget(uint8_t *pages) {
     // the region, and paging past the filtered end draws an empty screen.
     case SCR_GALLERY: p = &galleryPage; n = galleryPages(); break;
     case SCR_PLAYER:  p = &playerPage;  n = PLAYER_PAGES; break;
+    case SCR_MEDALS:  p = &medalsPage;  n = MEDALS_PAGES; break;
     case SCR_BOX:     p = &boxPage;     n = BOX_SLOTS / BOX_PER_PAGE; break;
     case SCR_BAGSCR:  p = &bagPage;     n = bagPages(); break;
     case SCR_CARD:    p = &cardPage;    n = CARD_PAGES; break;
@@ -3243,6 +3256,10 @@ void render() {
   }
   if (playerOpen) {
     renderPlayer();
+    return;
+  }
+  if (medalsOpen) {
+    renderMedals();
     return;
   }
   if (pet.hasLearnOffer()) {
@@ -5566,8 +5583,7 @@ static void renderPlayerBadges() {
   gfx->print(l);
 }
 
-// Page 2: the medals. They used to sit on the creature's card; they belong with
-// the player, since totalMedals accumulates across every pet you raise.
+// The medals of the creature in front of you: the creature screen's second page.
 static void renderPlayerMedals() {
   int got = 0;
   for (int i = 0; i < MED_COUNT; i++)
@@ -5705,9 +5721,22 @@ static void renderPlayerGoals() {
 void renderPlayer() {
   gfx->fillScreen(RGB565_BLACK);
   gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
-  if (playerPage < GYM_REGIONS) renderPlayerBadges();
-  else if (playerPage == GYM_REGIONS) renderPlayerMedals();
-  else renderPlayerGoals();
+  renderPlayerBadges();
+
+  gfx->setTextColor(UI_INK_SOFT);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 392);
+  gfx->print(T(S_BACK));
+  uiChrome();
+  gfx->flush();
+}
+
+// The creature screen: today's checklist, and on the rim its medals.
+void renderMedals() {
+  gfx->fillScreen(RGB565_BLACK);
+  gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
+  if (medalsPage == 0) renderPlayerGoals();
+  else renderPlayerMedals();
 
   gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(2);
