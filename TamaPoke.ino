@@ -75,8 +75,8 @@ bool galleryOpen = false;
 bool galleryDirty = false;
 // 16 to a page, and the Pokedex is browsed ONE REGION AT A TIME. Three
 // generations flat is 25 pages of swiping to reach Hoenn, which is not a
-// Pokedex, it is a scroll. A vertical swipe changes region and a horizontal one
-// pages within it, so nothing is ever more than ten pages from the front.
+// Pokedex, it is a scroll: the vertical swipe pages, running on from one region
+// into the next (each region starts on a fresh page), and the rim jumps region.
 // ALL is deliberately not offered here -- it is the thing being replaced.
 #define GAL_PER_PAGE 16
 #define GAL_REGIONS (REGION_COUNT - 1)          // the real regions, not ALL
@@ -117,6 +117,17 @@ bool galleryMember(int16_t dex) { return pet.inDex(gvWhich(), gvShiny(), dex); }
 // how many there are -- a test that restates a count silently stops covering the
 // mode somebody adds next.
 uint8_t galleryFilterCount() { return GFILT_COUNT; }
+#define GAL_VIEWS 4
+#define GAL_VBTN_Y 61
+#define GAL_VBTN_H 21
+#define GAL_VBTN_GAP 4
+// Each button as wide as its label (+ margins, at least 56 px), the row centred:
+// "ECLOSIONADOS" needs 82 px where "ALL" needs 56.
+void galleryViewRect(uint8_t i, int *x, int *w);
+extern const uint8_t GAL_VIEW[GAL_VIEWS];
+extern const StrId GAL_VIEW_LABEL[GAL_VIEWS];
+int8_t galleryViewAt(int16_t x, int16_t y);
+void galleryStep(int dir);
 int16_t galleryDetail = 0;  // dex en vista detalle, 0 = rejilla
 
 bool screenOff = false;       // pulsacion corta del boton PWR
@@ -1887,19 +1898,7 @@ void onSwipeV(int dir) {
       if (back) { galleryDetail = 0; galleryPmd.unload(); galleryDirty = true; }
       return;
     }
-    if (galleryPick) { if (back) uiTileGo(TILE_PET); return; }
-    if (back) {
-      galleryPick = true; rpickPage = 0;
-      galleryPmd.unload();
-      galleryDirty = true;
-      sfxPlay(SFX_TAP);
-      return;
-    }
-    galleryRegion = (uint8_t)((galleryRegion + 1) % GAL_REGIONS);
-    galleryPage = 0;
-    galleryClampPage();
-    galleryDirty = true;
-    sfxPlay(SFX_TAP);
+    galleryStep(back ? -1 : 1);   // scroll: the next page, running on into the next region
     return;
   }
   if (playerOpen) { if (back) uiTileGo(TILE_PET); return; }
@@ -2515,7 +2514,7 @@ void onTap(int16_t x, int16_t y) {
       menuOpen = false;
       if (i == 0) { cardOpen = true; cardPage = 1; }   // straight to the stats page
       else if (i == 1) { bagOpen = true; bagPage = 0; }
-      else if (i == 2) { galleryOpen = true; galleryPick = true; galleryPage = 0; rpickPage = 0; galleryDetail = 0; galleryDirty = true; }
+      else if (i == 2) { galleryOpen = true; galleryPick = false; galleryRegion = 0; galleryPage = 0; galleryDetail = 0; galleryDirty = true; }
       else if (i == 3) { openClock(); }
       else if (i == 4) {
         if (!pet.canRetireNow()) { sfxPlay(SFX_DENY); return; }
@@ -2956,7 +2955,7 @@ void uiTileGo(int i) {
     case SCR_EXPLORE: exploreOpen = true; break;
     case SCR_PARTY: partyOpen = true; break;
     case SCR_GALLERY:
-      galleryOpen = true; galleryPick = true; galleryPage = 0; rpickPage = 0;
+      galleryOpen = true; galleryPick = false; galleryRegion = 0; galleryPage = 0;
       galleryDirty = true;
       break;
     case SCR_PLAYER: playerOpen = true; playerPage = 0; break;
@@ -2978,7 +2977,8 @@ static uint8_t *uiRimTarget(uint8_t *pages) {
     case SCR_GYM:     p = &gymPage;     n = (TRAINER_COUNT + GYM_ROWS - 1) / GYM_ROWS; break;
     // galleryPages(), not GAL_PAGES: with a filter on, the grid is shorter than
     // the region, and paging past the filtered end draws an empty screen.
-    case SCR_GALLERY: p = &galleryPage; n = galleryPages(); break;
+    // The rim changes REGIONAL Pokedex; the vertical swipe pages (galleryStep).
+    case SCR_GALLERY: p = &galleryRegion; n = GAL_REGIONS; break;
     case SCR_PLAYER:  p = &playerPage;  n = PLAYER_PAGES; break;
     case SCR_BOX:     p = &boxPage;     n = BOX_SLOTS / BOX_PER_PAGE; break;
     case SCR_BAGSCR:  p = &bagPage;     n = bagPages(); break;
@@ -3036,7 +3036,7 @@ void onRim(int dir) {
   if (v >= n) v = n - 1;          // CLAMPS: the rim can never close a screen
   if (v == (int)(*p)) return;
   *p = (uint8_t)v;
-  if (uiCurrentScreen() == SCR_GALLERY) galleryDirty = true;
+  if (uiCurrentScreen() == SCR_GALLERY) { galleryPage = 0; galleryDirty = true; }   // its first page
   sfxPlay(SFX_TAP);
 }
 
@@ -7977,6 +7977,52 @@ const char *galleryFilterName() {
   return buf;
 }
 
+// ---- the four view buttons and the scroll ----------------------------------
+// ALL is everything raised or caught; HATCHED your eggs and what they became;
+// CAUGHT the captures; SHINY is ALL, shinies only. The hatched/caught SHINY
+// sub-views stay in the enum (the data is there) but have no button.
+const uint8_t GAL_VIEW[GAL_VIEWS] = { GFILT_COMPLETE, GFILT_HATCHED, GFILT_CAUGHT, GFILT_COMPLETE_SHINY };
+const StrId GAL_VIEW_LABEL[GAL_VIEWS] = { S_FILT_ALL, S_FILT_HATCHED, S_FILT_CAUGHT, S_FILT_SHINY };
+
+static int galleryViewW(uint8_t i) {
+  const int w = (int)strlen(T(GAL_VIEW_LABEL[i])) * 6 + 10;
+  return w < 56 ? 56 : w;
+}
+
+void galleryViewRect(uint8_t i, int *x, int *w) {
+  int total = (GAL_VIEWS - 1) * GAL_VBTN_GAP;
+  for (uint8_t k = 0; k < GAL_VIEWS; k++) total += galleryViewW(k);
+  int at = CX - total / 2;
+  for (uint8_t k = 0; k < i; k++) at += galleryViewW(k) + GAL_VBTN_GAP;
+  *x = at; *w = galleryViewW(i);
+}
+
+int8_t galleryViewAt(int16_t x, int16_t y) {
+  if (y < GAL_VBTN_Y - 2 || y > GAL_VBTN_Y + GAL_VBTN_H + 1) return -1;
+  for (uint8_t i = 0; i < GAL_VIEWS; i++) {
+    int bx, bw; galleryViewRect(i, &bx, &bw);
+    if (x >= bx - 2 && x < bx + bw + 2) return (int8_t)i;
+  }
+  return -1;
+}
+
+// One page on (+1) or back (-1). Each region starts on a fresh page, and paging
+// past its last one lands on the next region's first -- one continuous dex. It
+// bumps at Kanto's first page and the last region's last.
+void galleryStep(int dir) {
+  if (dir > 0) {
+    if (galleryPage + 1 < galleryPages()) galleryPage++;
+    else if (galleryRegion + 1 < GAL_REGIONS) { galleryRegion++; galleryPage = 0; }
+    else { sfxPlay(SFX_DENY); return; }
+  } else {
+    if (galleryPage > 0) galleryPage--;
+    else if (galleryRegion > 0) { galleryRegion--; galleryPage = galleryPages() - 1; }
+    else { sfxPlay(SFX_DENY); return; }
+  }
+  galleryDirty = true;
+  sfxPlay(SFX_TAP);
+}
+
 // Cycling the filter can leave the page past the end of a shorter result, and a
 // page number beyond the count draws nothing at all. One place fixes it, called
 // by everything that changes either the filter or the region.
@@ -8031,17 +8077,19 @@ void renderGallery() {
   gfx->setTextSize(3);
   gfx->setCursor(CX - strlen(head) * 9, 36);
   gfx->print(head);
-  // The filter, under the tally and tappable -- it has to be VISIBLE, or a filter
-  // left on reads as a Pokedex that lost half its entries. Says what it is
-  // showing and how many, since "ALL 151" and "SHINY 3" answer different
-  // questions and the count is the interesting half.
-  {
-    char fl[32];
-    snprintf(fl, sizeof(fl), "< %s >", galleryFilterName());
-    gfx->setTextColor(galleryFilter == GFILT_COMPLETE ? UI_INK_SOFT : UI_BAR_WARN);
+  // The view, as four buttons under the tally: ALL / RAISED / CAUGHT / SHINY.
+  // The chosen one is filled, so a view left on is never mistaken for a
+  // Pokedex that lost half its entries.
+  for (uint8_t i = 0; i < GAL_VIEWS; i++) {
+    int bx, bw; galleryViewRect(i, &bx, &bw);
+    const bool on = galleryFilter == GAL_VIEW[i];
+    gfx->fillRoundRect(bx, GAL_VBTN_Y, bw, GAL_VBTN_H, 6, on ? UI_INK : UI_WHITE);
+    gfx->drawRoundRect(bx, GAL_VBTN_Y, bw, GAL_VBTN_H, 6, UI_INK);
+    const char *l = T(GAL_VIEW_LABEL[i]);
+    gfx->setTextColor(on ? UI_WHITE : UI_INK);
     gfx->setTextSize(1);
-    gfx->setCursor(CX - (int)strlen(fl) * 3, 66);
-    gfx->print(fl);
+    gfx->setCursor(bx + bw / 2 - (int)strlen(l) * 3, GAL_VBTN_Y + GAL_VBTN_H / 2 - 4);
+    gfx->print(l);
   }
 
   if (galleryCount() == 0) {
@@ -8097,17 +8145,17 @@ void galleryTap(int16_t x, int16_t y) {
     galleryDirty = true;
     return;
   }
-  // The filter strip, BEFORE the exit band. It sits at y 66 inside what used to
-  // be "tap the header to leave", so the two are split by height: the title band
-  // still exits, the strip under it cycles.
-  if (y >= 58 && y < 80) {
-    galleryFilter = (uint8_t)((galleryFilter + 1) % GFILT_COUNT);
+  // The view buttons, BEFORE the exit band: the title above them still exits.
+  const int8_t v = galleryViewAt(x, y);
+  if (v >= 0) {
+    galleryFilter = GAL_VIEW[v];
     galleryClampPage();
     galleryDirty = true;
     sfxPlay(SFX_TAP);
     return;
   }
-  if (y < 58) {  // tocar la cabecera = salir
+  if (y >= GAL_VBTN_Y && y < GAL_Y) return;   // between buttons: nothing
+  if (y < GAL_VBTN_Y) {  // tocar la cabecera = salir
     galleryOpen = false;
     galleryPmd.unload();
     return;

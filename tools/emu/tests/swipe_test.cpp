@@ -104,46 +104,53 @@ int main(){
   clearAll();
   for (ItemKey k=1;k<ITEM_COUNT;k++) bag.add(k, 1);
   bagOpen=true;                                   check("bag",      &bagOpen,      &bagPage);
-  // The Pokedex pages within ONE region and changes region on a vertical swipe.
-  // Every species must be reachable: it was capped at 10 flat pages when the dex
-  // was 151 long, which silently hid everything past 160 once it grew to 386.
+  // The Pokedex is one continuous scroll: a vertical swipe UP is the next page,
+  // running on from one region into the next, each region on fresh pages. The
+  // rim jumps a whole region. Every species must be reachable: it was capped at
+  // 10 flat pages once, which silently hid everything past 160.
   clearAll(); galleryOpen=true; galleryPick=false; galleryDetail=0; galleryPage=0; galleryRegion=0;
   onRim(1);
-  if (!galleryOpen) { printf("FAIL  gallery    closed while paging\n"); bad++; }
-  else if (galleryPage != 1) { printf("FAIL  gallery    did not advance (page=%u)\n", galleryPage); bad++; }
-  else printf("PASS  %-10s pages on the rim\n", "gallery");
+  if (!galleryOpen) { printf("FAIL  gallery    closed on the rim\n"); bad++; }
+  else if (galleryRegion != 1 || galleryPage != 0) { printf("FAIL  gallery    the rim did not jump to Johto's first page\n"); bad++; }
+  else printf("PASS  %-10s the rim jumps to the next region's first page\n", "gallery");
+  galleryPage = 3; onRim(-1);
+  if (galleryRegion != 0 || galleryPage != 0) { printf("FAIL  gallery    the rim back does not land on Kanto's first page\n"); bad++; }
+  else printf("PASS  %-10s and back, to the region's first page\n", "gallery");
   {
-    // walk every region to its last page and tick off what it can show
     static bool seen[DEX_COUNT + 1] = { false };
-    int regions = REGION_COUNT - 1;
-    for (int r = 0; r < regions; r++) {
-      galleryRegion = (uint8_t)r;
-      galleryPage = 0;
-      int lo = REGIONS[r].lo, hi = REGIONS[r].hi;
-      int pages = (hi - lo + 1 + 15) / 16;
-      for (int p = 0; p < pages; p++) {
-        for (int i = 0; i < 16; i++) {
-          int d = lo + p * 16 + i;
-          if (d <= hi && d <= DEX_COUNT) seen[d] = true;
-        }
-        onRim(1);
+    galleryRegion = 0; galleryPage = 0;
+    bool fresh = true, open = true;
+    int steps = 0, lastRegion = 0;
+    for (;;) {
+      const RegionInfo &rg = REGIONS[galleryRegion];
+      for (int i = 0; i < 16; i++) {
+        int d = rg.lo + galleryPage * 16 + i;
+        if (d <= rg.hi && d <= DEX_COUNT) seen[d] = true;
       }
-      if (galleryPage != pages - 1) {
-        printf("FAIL  gallery    %s stops at page %d of %d\n",
-               REGIONS[r].name, galleryPage + 1, pages);
-        bad++;
-      }
+      uint8_t r0 = galleryRegion, p0 = galleryPage;
+      onSwipeV(-1);                                    // up: next page
+      open = open && galleryOpen;
+      if (galleryRegion == r0 && galleryPage == p0) break;   // bumped at the end
+      if (galleryRegion != r0 && galleryPage != 0) fresh = false;
+      lastRegion = galleryRegion;
+      if (++steps > 200) break;
     }
     int missing = 0;
     for (int d = 1; d <= DEX_COUNT; d++) if (!seen[d]) missing++;
-    if (missing) { printf("FAIL  gallery    %d species are unreachable\n", missing); bad++; }
-    else printf("PASS  %-10s every one of the %d species is reachable\n", "gallery", DEX_COUNT);
-    // and a vertical swipe UP really does move between regions
-    galleryRegion = 0; galleryDetail = 0;
-    onSwipeV(-1);
-    if (galleryRegion != 1 || !galleryOpen) {
-      printf("FAIL  gallery    a vertical swipe does not change region\n"); bad++;
-    } else printf("PASS  %-10s changes region on a vertical swipe\n", "gallery");
+    if (missing || !open) { printf("FAIL  gallery    %d species unreachable by scrolling\n", missing); bad++; }
+    else printf("PASS  %-10s scrolling reaches all %d species, %d pages, through %d regions\n",
+                "gallery", DEX_COUNT, steps + 1, lastRegion + 1);
+    if (!fresh) { printf("FAIL  gallery    a region did not start on a fresh page\n"); bad++; }
+    else printf("PASS  %-10s every region starts on a fresh page\n", "gallery");
+    // and back down across a region border lands on the previous region's LAST page
+    galleryRegion = 1; galleryPage = 0;
+    onSwipeV(1);
+    if (galleryRegion != 0 || galleryPage != 9) { printf("FAIL  gallery    down from Johto p1 is not Kanto's last page\n"); bad++; }
+    else printf("PASS  %-10s down from Johto's first page is Kanto's last\n", "gallery");
+    galleryRegion = 0; galleryPage = 0;
+    onSwipeV(1);
+    if (!galleryOpen || galleryRegion != 0 || galleryPage != 0) { printf("FAIL  gallery    Kanto p1 did not bump\n"); bad++; }
+    else printf("PASS  %-10s Kanto's first page bumps, it does not close\n", "gallery");
   }
   // The gym ladder changes REGION on a vertical swipe, the same gesture the
   // Pokedex uses. Without this the Johto and Hoenn ladders exist but cannot be
@@ -236,10 +243,6 @@ int main(){
     if (!gymPick || !gymOpen) { printf("FAIL  gyms       swiping down does not return to the chooser\n"); bad++; }
     else printf("PASS  %-10s swiping down returns to the chooser\n", "gyms");
 
-    clearAll(); galleryOpen = true; galleryPick = false; galleryRegion = 1; galleryPage = 0;
-    onSwipeV(1);
-    if (!galleryPick || !galleryOpen) { printf("FAIL  gallery    swiping down does not return to the chooser\n"); bad++; }
-    else printf("PASS  %-10s swiping down returns to the chooser\n", "gallery");
   }
 
   // THE REGION CHOOSER IS PAGED NOW, and every paged screen in this sketch has

@@ -16,7 +16,9 @@
 #include "pet.h"
 #include "party.h"
 #include "dex.h"
+#include "i18n.h"
 #include <cstdio>
+#include <cmath>
 #include <cstring>
 #include <set>
 
@@ -155,6 +157,45 @@ int main(){
   ck(galleryMember(131) && !galleryMember(6) && !galleryMember(151), "CAUGHT only the box LAPRAS");
   galleryFilter = GFILT_CAUGHT_SHINY;
   ck(!galleryMember(131), "and CAUGHT SHINY not even that");
+
+  // THE FOUR BUTTONS by the title: ALL / HATCHED / CAUGHT / SHINY, each a tap.
+  // Sized to their labels, so check every language fits inside the round panel.
+  {
+    extern void setLang(Lang l); void galleryViewRect(uint8_t i, int *x, int *w);
+    bool fits = true;
+    for (int l = 0; l < LANG_COUNT; l++) {
+      setLang((Lang)l);
+      int x0, w0, x3, w3; galleryViewRect(0, &x0, &w0); galleryViewRect(3, &x3, &w3);
+      // the chord of the 231 px panel at the button row's top edge (y 61)
+      const int half = (int)sqrtf(231.f * 231.f - (233.f - 61.f) * (233.f - 61.f));
+      if (x0 < 233 - half || x3 + w3 > 233 + half) { fits = false; printf("      lang %d: %d..%d\n", l, x0, x3 + w3); }
+    }
+    setLang(LANG_EN);
+    ck(fits, "the four view buttons fit the round panel in every language");
+  }
+  {
+    extern bool galleryOpen, galleryPick, galleryDirty; extern int16_t galleryDetail;
+    void onTap(int16_t x, int16_t y);
+    int8_t galleryViewAt(int16_t x, int16_t y);
+    galleryOpen = true; galleryPick = false; galleryDetail = 0; galleryDirty = true;
+    galleryFilter = GFILT_COMPLETE;
+    render();
+    const uint8_t want[4] = { GFILT_COMPLETE, GFILT_HATCHED, GFILT_CAUGHT, GFILT_COMPLETE_SHINY };
+    const char *nm[4] = { "ALL", "HATCHED", "CAUGHT", "SHINY" };
+    bool okAll = true;
+    for (int b = 3; b >= 0; b--) {
+      int cx = -1;
+      for (int x = 0; x < 466 && cx < 0; x++) if (galleryViewAt(x, 71) == b) cx = x + 30;
+      onTap(cx, 71);
+      render();
+      char m[80]; snprintf(m, sizeof(m), "the %s button picks its view", nm[b]);
+      ck(cx > 0 && galleryFilter == want[b] && galleryOpen, m);
+      okAll = okAll && galleryFilter == want[b];
+    }
+    ck(galleryViewAt(233, 40) < 0, "the title above them is not a button (it still exits)");
+    galleryOpen = false;
+    galleryFilter = GFILT_COMPLETE;
+  }
 
   // Every region, so a filter cannot be valid in Kanto and broken in Paldea.
   {
