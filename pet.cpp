@@ -75,18 +75,18 @@ struct PetCoreSnapshot {
   uint8_t evoPen, sleepAuto, retirePending, eggTaps;
   uint8_t careMistakes, sleeping, lastEnd, frozen, bond;
   char nick[12];
-  // v1 had one byte of tail padding here, before its trailing crc. Named rather
-  // than left implicit so the struct has no bytes the compiler chose and the
-  // append point is unambiguous: a new SCALAR goes here, taking this byte, and
-  // the record's version and PET_FIXED both move.
-  uint8_t pad0;
+  // v1 had one byte of tail padding here, before its trailing crc. It now holds
+  // originKind (ORIGIN_EGG / ORIGIN_WILD; 0 = unknown). Every
+  // record written so far zero-initialised it (`PetCoreSnapshot snapshot = {}`),
+  // so an existing save reads 0 = "not hatched" and PET_FIXED does not move.
+  uint8_t originKind;
 };
 // EXACT, not "< 256". PET_FIXED is on-disk format -- it is what the crc covers
 // and what a v1 blob's `size` implies -- so a field added above changes what
 // every device already holds. Failing this assert is the reminder to read the
 // append-only rule at the top of this section, then move the number
 // deliberately and bump PET_CORE_VERSION.
-static_assert(offsetof(PetCoreSnapshot, pad0) == PET_FIXED - 1,
+static_assert(offsetof(PetCoreSnapshot, originKind) == PET_FIXED - 1,
               "pet checkpoint fixed layout changed");
 static_assert(sizeof(PetCoreSnapshot) >= PET_FIXED, "PET_FIXED overruns the struct");
 
@@ -120,7 +120,11 @@ static constexpr size_t PET_TAIL_RSVD = PET_FIXED + 1;      // u8  reserved, 2-b
 static constexpr size_t PET_TAIL_MONLEN = PET_FIXED + 2;    // u16 stored sizeof(PartyMon)
 static constexpr size_t PET_TAIL_MON = PET_FIXED + 4;       // the record itself
 static constexpr size_t PET_BODY = PET_TAIL_MON + sizeof(PartyMon);
-static_assert(PET_BODY + CKPT_CRC <= PET_CORE_CAP, "raise PET_CORE_CAP");
+// v3 appends the live creature's real age (u32) AFTER the handover record. A
+// reader finds it at PET_TAIL_MON + the record's STORED length, so a record of
+// any stride locates it, and one without it (any older build) simply ends there.
+static constexpr size_t PET_BODY_V3 = PET_BODY + 5;
+static_assert(PET_BODY_V3 + CKPT_CRC <= PET_CORE_CAP, "raise PET_CORE_CAP");
 
 // Takes a validated blob and copies whatever body prefix the stored record and
 // this build have in common. Anything this build has that the record did not
@@ -180,13 +184,13 @@ static constexpr uint16_t PLAYER_VERSION = 2;   // v2 appended memoHi; see below
 // directions keep working. No magic bump, no version check.
 static constexpr size_t PLAYER_FIXED_V1 = 42;
 static constexpr size_t PLAYER_FIXED = 44;   // v2: + memoHi at offset 42
-static constexpr size_t PLAYER_CAP = 512;
+static constexpr size_t PLAYER_CAP = 1024;   // 512 before the four origin dexes
 static constexpr size_t PLAYER_DEX_BYTES = (DEX_COUNT + 7) / 8;
 // DERIVED from the tables, never restated: CLAUDE.md § "sizeof(PartyMon) is
 // load-bearing in four places" is what a literal here costs. Failing this is
 // the signal to raise PLAYER_CAP, not to trim the record.
 static constexpr size_t PLAYER_MAX =
-    PLAYER_FIXED + 2 * PLAYER_DEX_BYTES + 4 * (GYM_REGIONS - 1) +
+    PLAYER_FIXED + 6 * PLAYER_DEX_BYTES + 4 * (GYM_REGIONS - 1) +
     2 * REGION_COUNT + 12 /* trainerName */ + CKPT_CRC;
 static_assert(PLAYER_MAX <= PLAYER_CAP, "raise PLAYER_CAP for the player record");
 
@@ -226,6 +230,13 @@ bool Pet::savePlayerSnapshot() {
   cur.put(badgesHardX, sizeof(badgesHardX));
   cur.put(eggByRegion, sizeof(eggByRegion));
   cur.put(trainerName, sizeof(trainerName));
+  // Appended after every array an older build knows, so that build reads the
+  // record unchanged and ignores these (a longer body is "a later build's
+  // appended field"). Both are dexBytes long, the same dimension as dexReg.
+  cur.put(dexHatched, sizeof(dexHatched));
+  cur.put(dexShinyCaught, sizeof(dexShinyCaught));
+  cur.put(dexCaught, sizeof(dexCaught));
+  cur.put(dexHatchedShiny, sizeof(dexHatchedShiny));
   if (cur.bad) {   // PLAYER_MAX static_asserts this cannot happen; say so if it does
     Serial.println("save: player record does not fit PLAYER_CAP");
     return false;
@@ -303,6 +314,12 @@ bool Pet::loadPlayerSnapshot() {
   cur.take(eggByRegion, sizeof(eggByRegion), regionN * 2);
   cur.take(trainerName, sizeof(trainerName), nameN);
   trainerName[sizeof(trainerName) - 1] = 0;
+  // Only present in records written by a build that knows them; an older
+  // record simply ends here and both stay zero.
+  if (!cur.bad && cur.at + dexBytes <= body) cur.take(dexHatched, sizeof(dexHatched), dexBytes);
+  if (!cur.bad && cur.at + dexBytes <= body) cur.take(dexShinyCaught, sizeof(dexShinyCaught), dexBytes);
+  if (!cur.bad && cur.at + dexBytes <= body) cur.take(dexCaught, sizeof(dexCaught), dexBytes);
+  if (!cur.bad && cur.at + dexBytes <= body) cur.take(dexHatchedShiny, sizeof(dexHatchedShiny), dexBytes);
 
   // REGION_ALL is the LAST entry of the table and is stored RAW, so a save from
   // a build with fewer regions has a number that now means somebody else --
@@ -338,6 +355,11 @@ void Pet::begin() {
   memset(badgesHardX, 0, sizeof(badgesHardX));
   memset(dexReg, 0, sizeof(dexReg));
   memset(dexShinyReg, 0, sizeof(dexShinyReg));
+  memset(dexHatched, 0, sizeof(dexHatched));
+  memset(dexShinyCaught, 0, sizeof(dexShinyCaught));
+  memset(dexCaught, 0, sizeof(dexCaught));
+  memset(dexHatchedShiny, 0, sizeof(dexHatchedShiny));
+  originKind = ORIGIN_UNKNOWN;
   for (int i = 0; i < REGION_COUNT; i++) eggByRegion[i] = 0;
   if (!prefs.getBool("init", false)) {
     prefs.putBool("init", true);
@@ -373,11 +395,90 @@ void Pet::newEgg() {
   hygiene = 100;
   poops = 0;
   ageMinutes = 0;
+  realAgeMin = 0;
   careMistakes = 0;
   mistakeCooldown = 0;
   sleeping = false;
   frozen = false;
   save();
+}
+
+// ---- level speed and farewell level settings (see pet.h) ----
+uint8_t gLevelMins = MINUTES_PER_LEVEL;
+uint8_t gFarewellLevel = FAREWELL_LVL_DEFAULT;
+
+static uint8_t clampU8(int v, int lo, int hi) {
+  return (uint8_t)(v < lo ? lo : v > hi ? hi : v);
+}
+
+void levelSpeedLoad() {
+  Preferences p;
+  if (!p.begin("tamapoke", true)) return;
+  uint8_t v = p.getUChar("lvspd", MINUTES_PER_LEVEL);
+  p.end();
+  gLevelMins = (v >= LEVEL_SPEED_MIN && v <= LEVEL_SPEED_MAX) ? v : MINUTES_PER_LEVEL;
+}
+
+void levelSpeedSet(int m) {
+  gLevelMins = clampU8(m, LEVEL_SPEED_MIN, LEVEL_SPEED_MAX);
+  Preferences p;
+  if (!p.begin("tamapoke", false)) return;
+  p.putUChar("lvspd", gLevelMins);
+  p.end();
+}
+
+void farewellLevelLoad() {
+  Preferences p;
+  if (!p.begin("tamapoke", true)) return;
+  uint8_t v = p.getUChar("fwlv", FAREWELL_LVL_DEFAULT);
+  p.end();
+  gFarewellLevel = (v >= FAREWELL_LVL_MIN && v <= FAREWELL_LVL_MAX) ? v : FAREWELL_LVL_DEFAULT;
+}
+
+void farewellLevelSet(int lv) {
+  gFarewellLevel = clampU8(lv, FAREWELL_LVL_MIN, FAREWELL_LVL_MAX);
+  Preferences p;
+  if (!p.begin("tamapoke", false)) return;
+  p.putUChar("fwlv", gFarewellLevel);
+  p.end();
+}
+
+bool gEggPreferNew = true;
+
+void eggPreferNewLoad() {
+  Preferences p;
+  if (!p.begin("tamapoke", true)) return;
+  gEggPreferNew = p.getUChar("eggnew", 1) != 0;
+  p.end();
+}
+
+void eggPreferNewSet(bool on) {
+  gEggPreferNew = on;
+  Preferences p;
+  if (!p.begin("tamapoke", false)) return;
+  p.putUChar("eggnew", on ? 1 : 0);
+  p.end();
+}
+
+// Each real minute is worth MINUTES_PER_LEVEL "parts"; every gLevelMins parts
+// make one game minute. Over gLevelMins real minutes that is exactly
+// MINUTES_PER_LEVEL game minutes -- one level -- whatever the value, so there
+// is no rounding to drift. A speed change keeps the parts already earned: they
+// are simply spent at the new rate.
+void Pet::growMinute() {
+  const uint8_t m = gLevelMins ? gLevelMins : MINUTES_PER_LEVEL;
+  uint16_t f = (uint16_t)growFrac + MINUTES_PER_LEVEL;
+  while (f >= m) { f -= m; ageMinutes++; }
+  growFrac = (uint8_t)f;
+}
+
+uint32_t Pet::realMinutesToNextLevel() const {
+  const uint32_t m = gLevelMins ? gLevelMins : MINUTES_PER_LEVEL;
+  const uint32_t gameLeft = MINUTES_PER_LEVEL - ageMinutes % MINUTES_PER_LEVEL;
+  // parts still needed, then whole real minutes (each brings MINUTES_PER_LEVEL)
+  const uint32_t frac = growFrac < m ? growFrac : 0;
+  const uint32_t parts = gameLeft * m - frac;
+  return (parts + MINUTES_PER_LEVEL - 1) / MINUTES_PER_LEVEL;
 }
 
 // progresion offline: el tiempo paso aunque estuviera apagado, pero con
@@ -441,18 +542,21 @@ void Pet::syncClock(uint32_t nowEpoch) {
   }
 
   for (uint32_t i = 0; i < mins; i++) {
-    ageMinutes++;
+    liveMinutes++;
     if (isEgg()) {
+      ageMinutes++;                  // the egg keeps real minutes at any speed
       if (ageMinutes >= 3) hatch();  // eclosiona en tu ausencia
       continue;
     }
+    growMinute();
+    realAgeMin++;
     if (sleeping) {  // descanso: baja lento y con suelo, igual que en vivo
       energy = clamp100(energy + 6);
-      if (ageMinutes % 2 == 0) {
+      if (liveMinutes % 2 == 0) {
         fullness = dropTo(fullness, 1, 30);
         joy = dropTo(joy, 1, 35);
       }
-      if (ageMinutes % 3 == 0) hygiene = dropTo(hygiene, 1, 45);
+      if (liveMinutes % 3 == 0) hygiene = dropTo(hygiene, 1, 45);
       continue;
     }
     fullness = dropTo(fullness, 2, 15);
@@ -491,12 +595,19 @@ void Pet::tick() {
                             // tiempo corriera aqui, el huevo eclosionaria solo a
                             // los 3 min con la especie sorteada y se perderia la
                             // eleccion del jugador
-  if (!frozen) ageMinutes++;   // a revived companion does not age
+  liveMinutes++;
+  const uint8_t lvlBefore = level();
+  // a revived companion does not age; the egg keeps real minutes at any speed
+  if (!frozen) {
+    if (isEgg()) ageMinutes++;   // the egg keeps real minutes at any speed
+    else growMinute();
+  }
 
   if (isEgg()) {
     if (ageMinutes >= 3) hatch();  // si no lo tocas, eclosiona solo a los 3 min
     return;
   }
+  if (!frozen) realAgeMin++;
 
   applyAutoSleep();   // put down at 21:00 still goes to bed at 22:00
 
@@ -507,19 +618,19 @@ void Pet::tick() {
   // El peso aun se quema y el descanso cuenta para la DEF (ver defTick).
   if (sleeping) {
     energy = clamp100(energy + 6);
-    if (weight > 0 && ageMinutes % 3 == 0) weight--;
-    if (ageMinutes % 2 == 0) {                 // ~4x mas lento que despierto
+    if (weight > 0 && liveMinutes % 3 == 0) weight--;
+    if (liveMinutes % 2 == 0) {                // ~4x mas lento que despierto
       fullness = dropTo(fullness, 1, 30);
       joy = dropTo(joy, 1, 35);
     }
-    if (ageMinutes % 3 == 0) hygiene = dropTo(hygiene, 1, 45);
+    if (liveMinutes % 3 == 0) hygiene = dropTo(hygiene, 1, 45);
     defTick(true);  // descansar tambien es bienestar: cuenta para la DEF
     checkMedals();  // aun puede cruzar un nivel por edad mientras duerme
     if (++ticksSinceSave >= 5) pendingSave = true;
     return;
   }
 
-  if (ageMinutes % MINUTES_PER_LEVEL == 0) sfxPlay(SFX_LEVEL);  // subio de nivel (despierto)
+  if (level() != lvlBefore) sfxPlay(SFX_LEVEL);  // subio de nivel (despierto)
 
   fullness = clamp100(fullness - 2);
   energy = clamp100(energy - 1);
@@ -528,7 +639,7 @@ void Pet::tick() {
   hygiene = clamp100(hygiene - 1 - 4 * poops);
   // el sobrepeso da pereza: la energia cae el doble
   if (weight > 50) energy = clamp100(energy - 1);
-  if (weight > 0 && ageMinutes % 3 == 0) weight--;
+  if (weight > 0 && liveMinutes % 3 == 0) weight--;
 
   defTick(false);  // la calma forja la defensa
 
@@ -586,6 +697,10 @@ void Pet::reviveFrom(const PartyMon &m) {
   for (int i = 0; i < MOVE_SLOTS; i++) moves[i] = m.moves[i];
   // its banked level expressed as an age, so level() needs no special case
   ageMinutes = (uint32_t)(m.level ? m.level - 1 : 0) * MINUTES_PER_LEVEL;
+  // A record from before real age was kept: its game age is the best estimate,
+  // and exact for every creature raised at the normal speed.
+  realAgeMin = m.hasRealAge() ? m.realAgeMin : ageMinutes;
+  growFrac = 0;
   lastLearnLevel = level();     // do not replay every gate it already passed
   learnQCount = 0;
   medals = m.medals;
@@ -600,6 +715,7 @@ void Pet::reviveFrom(const PartyMon &m) {
   hygiene = 100;
   poops = 0;
   frozen = true;
+  originKind = m.originKind();
   strncpy(nick, m.nick, sizeof(nick) - 1);
   nick[sizeof(nick) - 1] = 0;
   registerSpecies(speciesId);
@@ -627,7 +743,7 @@ PartyMon Pet::toPartyMon() const {
   for (int i = 0; i < MOVE_SLOTS; i++) m.moves[i] = moves[i];
   strncpy(m.nick, nick, sizeof(m.nick) - 1);
   m.nick[sizeof(m.nick) - 1] = 0;
-  m.stateVersion = 1;
+  m.stateVersion = PARTYMON_STATE_VERSION;
   m.fullness = fullness;
   m.joy = joy;
   m.energy = energy;
@@ -640,6 +756,8 @@ PartyMon Pet::toPartyMon() const {
   m.evoDeclinedLv = evoDeclinedLv;
   m.lastLearnLevel = lastLearnLevel;
   m.ageMinutes = ageMinutes;
+  m.realAgeMin = realAgeMin;
+  m.setOrigin(originKind);
   return m;
 }
 
@@ -693,6 +811,11 @@ void Pet::switchTo(const PartyMon &m) {
     evoDeclinedLv = 0;
     lastLearnLevel = level();   // do not replay every gate it already passed
   }
+  // Set after ageMinutes on both paths above: the estimate for an older record
+  // is the game age it was given there.
+  realAgeMin = m.hasRealAge() ? m.realAgeMin : ageMinutes;
+  growFrac = 0;
+  originKind = m.originKind();   // a capture stays a capture, whoever raises it
   strncpy(nick, m.nick, sizeof(nick) - 1);
   nick[sizeof(nick) - 1] = 0;
   registerSpecies(speciesId);
@@ -749,11 +872,13 @@ bool Pet::lineHasUnregistered(int16_t base) const {
   int16_t cur = base;
   for (int guard = 0; cur >= 1 && cur <= DEX_COUNT && guard < 6; guard++) {
     if (!isRegistered(cur)) return true;
-    if (cur == DEX_EEVEE) {
-      int16_t opts[EEVEE_EVO_COUNT];
-      uint8_t n = eeveeOptions(opts);
+    int16_t opts[EVO_BRANCH_MAX];
+    uint8_t n = evoOptions(cur, opts);
+    if (n > 1) {
+      // A branch: the line is unfinished while ANY arm still has a gap. Each arm
+      // is walked on its own (Wurmple's arms run on to Beautifly and Dustox).
       for (uint8_t i = 0; i < n; i++)
-        if (!isRegistered(opts[i])) return true;
+        if (lineHasUnregistered(opts[i])) return true;
       return false;
     }
     cur = DEX_TBL[cur].evolvesTo;
@@ -762,12 +887,22 @@ bool Pet::lineHasUnregistered(int16_t base) const {
 }
 
 uint8_t Pet::eeveeOptions(int16_t *out) const {
+  return evoOptions(DEX_EEVEE, out);
+}
+
+uint8_t Pet::evoOptions(int16_t species, int16_t *out) const {
+  if (species < 1 || species > DEX_COUNT) return 0;
+  const int16_t *cand = nullptr;
+  uint8_t cn = 0;
+  for (uint8_t i = 0; i < EVO_BRANCH_COUNT; i++)
+    if (EVO_BRANCHES[i].from == species) { cand = EVO_BRANCHES[i].to; cn = EVO_BRANCHES[i].count; break; }
+  int16_t single = (int16_t)DEX_TBL[species].evolvesTo;
+  if (!cand) { if (!single) return 0; cand = &single; cn = 1; }
   uint8_t n = 0;
-  for (uint8_t i = 0; i < EEVEE_EVO_COUNT; i++) {
-    int16_t b = EEVEE_EVOS[i];
+  for (uint8_t i = 0; i < cn && n < EVO_BRANCH_MAX; i++) {
+    int16_t b = cand[i];
     if (b < 1 || b > DEX_COUNT) continue;
-    if (!speciesHasArt(b)) continue;                     // no art anywhere
-    if (!regionAvailable(regionOfDex(b))) continue;      // pack not on the card
+    if (!speciesShowable(b)) continue;   // no art anywhere, or pack not on the card
     out[n++] = b;
   }
   return n;
@@ -865,8 +1000,11 @@ int16_t Pet::pickEggSpecies() {
   }
 
   // candidatos del tier con linea incompleta; si no hay, baja de tier;
-  // si la pokedex del tier esta completa, vale cualquiera del tier
-  for (int pass = 0; pass < 2; pass++) {
+  // si la pokedex del tier esta completa, vale cualquiera del tier.
+  // With the setting off only the second pass runs: any species of the rolled
+  // tier, finished or not. It still steps down a tier if the region has NONE of
+  // that tier at all, which is a hole in the data, not a completed Pokedex.
+  for (int pass = gEggPreferNew ? 0 : 1; pass < 2; pass++) {
     for (int t = tier; t >= R_COMUN; t--) {
       int16_t cand[CAND_MAX];
       int n = 0;
@@ -939,6 +1077,13 @@ void Pet::registerSpecies(int16_t dex) {
   if (dex < 1 || dex > DEX_COUNT) return;
   dexReg[(dex - 1) >> 3] |= (1 << ((dex - 1) & 7));
   if (shiny) dexShinyReg[(dex - 1) >> 3] |= (1 << ((dex - 1) & 7));
+  if (originKind == ORIGIN_EGG) {
+    setBit(dexHatched, dex);
+    if (shiny) setBit(dexHatchedShiny, dex);
+  } else if (originKind == ORIGIN_WILD) {
+    setBit(dexCaught, dex);
+    if (shiny) setBit(dexShinyCaught, dex);
+  }
 }
 
 // la racha y el vinculo mejoran el sorteo del huevo (0..~14)
@@ -1289,7 +1434,7 @@ uint16_t Pet::registeredCount() const {
 bool Pet::canFarewellNow() const {
   if (frozen) return false;     // a companion cannot be lost; that is the point
   return !isEgg() && !sleeping && ceremony == CER_NONE &&
-         DEX_TBL[speciesId].evolvesTo == 0 && ageMinutes >= FAREWELL_AGE_MIN;
+         DEX_TBL[speciesId].evolvesTo == 0 && level() >= gFarewellLevel;
 }
 
 // abandono total durante 1h: lista para escaparse. La dispara el usuario con el
@@ -1364,6 +1509,8 @@ void Pet::release() {
 }
 
 void Pet::hatch() {
+  realAgeMin = 0;      // its real age starts now, not with the egg
+  growFrac = 0;
   speciesId = eggTarget;
   shiny = eggShiny;
   // IV del individuo (cada crianza es unica). Se tiran ANTES de resetear el
@@ -1377,6 +1524,7 @@ void Pet::hatch() {
   medals = 0;
   newMedal = 0;
   nick[0] = 0;
+  originKind = ORIGIN_EGG;     // out of the player's own egg
   registerSpecies(speciesId);  // criado = registrado en la pokedex
   // Start empty: checkLearnGates() fills the level-1 moves. Seeding from TMs
   // instead would hand a newborn FIRE BLAST, which no level 1 creature knows.
@@ -1418,11 +1566,8 @@ bool Pet::canEvolveNow() const {
 // actually be shown? For EEVEE that is the filtered branch; for everything else
 // it is the single target in the table.
 bool Pet::evoTargetShowable() const {
-  if (speciesId == DEX_EEVEE) {
-    int16_t opts[EEVEE_EVO_COUNT];
-    return eeveeOptions(opts) > 0;
-  }
-  return speciesShowable(DEX_TBL[speciesId].evolvesTo);
+  int16_t opts[EVO_BRANCH_MAX];
+  return evoOptions(speciesId, opts) > 0;
 }
 
 void Pet::evolve() {
@@ -1430,22 +1575,33 @@ void Pet::evolve() {
   const DexEntry &d = DEX_TBL[speciesId];
   prevSpeciesId = speciesId;
   int16_t next = d.evolvesTo;
-  if (speciesId == DEX_EEVEE) {
-    // Eevee's branch: all eight, preferring one still missing from the Pokedex,
-    // which is what makes raising Eevees a collection goal rather than a
-    // coin flip. Only ones this player can actually be shown -- see
-    // eeveeOptions(). If none qualify the table's own 134 stands, so a card with
-    // no packs at all still evolves rather than freezing.
-    int16_t opts[EEVEE_EVO_COUNT];
-    uint8_t n = eeveeOptions(opts);
-    if (n) {
-      int16_t fresh[EEVEE_EVO_COUNT];
-      uint8_t m = 0;
-      for (uint8_t i = 0; i < n; i++)
-        if (!isRegistered(opts[i])) fresh[m++] = opts[i];
-      next = m ? fresh[random(m)] : opts[random(n)];
-    }
+  // A branch evolved WITHOUT a choice (the serial console, or an old caller):
+  // prefer a form still missing from the Pokedex, as Eevee always did. The UI
+  // never comes here for a branch -- it asks the player and calls evolveTo().
+  int16_t opts[EVO_BRANCH_MAX];
+  uint8_t n = evoOptions(speciesId, opts);
+  if (n > 1) {
+    int16_t fresh[EVO_BRANCH_MAX];
+    uint8_t m = 0;
+    for (uint8_t i = 0; i < n; i++)
+      if (!isRegistered(opts[i])) fresh[m++] = opts[i];
+    next = m ? fresh[random(m)] : opts[random(n)];
+  } else if (n == 1) {
+    next = opts[0];
   }
+  applyEvolution(next);
+}
+
+bool Pet::evolveTo(int16_t target) {
+  if (!canEvolveNow()) return false;
+  int16_t opts[EVO_BRANCH_MAX];
+  uint8_t n = evoOptions(speciesId, opts);
+  for (uint8_t i = 0; i < n; i++)
+    if (opts[i] == target) { prevSpeciesId = speciesId; applyEvolution(target); return true; }
+  return false;
+}
+
+void Pet::applyEvolution(int16_t next) {
   speciesId = next;
   registerSpecies(speciesId);
   checkLearnGates();   // the new form may gate a move at this very level
@@ -1741,6 +1897,7 @@ bool Pet::saveCoreSnapshot() {
   snapshot.retirePending = retirePending; snapshot.eggTaps = eggTaps;
   snapshot.careMistakes = careMistakes; snapshot.sleeping = sleeping;
   snapshot.lastEnd = lastEnd; snapshot.frozen = frozen; snapshot.bond = bond;
+  snapshot.originKind = originKind;
   strncpy(snapshot.nick, nick, sizeof(snapshot.nick) - 1);
 
   uint8_t buf[PET_CORE_CAP] = {};
@@ -1751,8 +1908,10 @@ bool Pet::saveCoreSnapshot() {
   buf[PET_TAIL_RSVD] = 0;
   ckptWr16(buf + PET_TAIL_MONLEN, (uint16_t)sizeof(PartyMon));
   memcpy(buf + PET_TAIL_MON, &endedMon, sizeof(PartyMon));
+  memcpy(buf + PET_BODY, &realAgeMin, 4);   // v3 tail: the real age
+  buf[PET_BODY + 4] = growFrac;              // and the part-minute of growth
 
-  uint16_t total = ckptSeal(buf, PET_BODY, PET_CORE_MAGIC, PET_CORE_VERSION, nextGen);
+  uint16_t total = ckptSeal(buf, PET_BODY_V3, PET_CORE_MAGIC, PET_CORE_VERSION, nextGen);
   const char *key = ckptSlot(nextGen, "petA", "petB");
   const size_t writtenBytes = prefs.putBytes(key, buf, total);
   if (writtenBytes != total) {
@@ -1784,8 +1943,16 @@ bool Pet::loadCoreSnapshot() {
   const size_t body = n - CKPT_CRC;
   endedKind = CER_NONE;
   endedMon = PartyMon();
+  bool haveLive = false;
+  growFrac = 0;
+  uint32_t live = 0;
   if (body >= PET_TAIL_MON) {
     size_t monLen = ckptRd16(buf + PET_TAIL_MONLEN);
+    if (monLen && PET_TAIL_MON + monLen + 4 <= body) {
+      memcpy(&live, buf + PET_TAIL_MON + monLen, 4);
+      haveLive = true;
+    }
+    growFrac = (monLen && PET_TAIL_MON + monLen + 5 <= body) ? buf[PET_TAIL_MON + monLen + 4] : 0;
     if (monLen && PET_TAIL_MON + monLen <= body) {
       // Prefix rule again: a record from before PartyMon grew lands in the front
       // and the care block keeps its initialisers, which stateVersion 0 already
@@ -1804,6 +1971,9 @@ bool Pet::loadCoreSnapshot() {
 
   saveGeneration = snapshot.generation;
   ageMinutes = snapshot.ageMinutes;
+  // No real age stored (a save from before it existed): its game age, which is
+  // exactly right for everything raised at the normal speed.
+  realAgeMin = haveLive ? live : ageMinutes;
   lastSeenEpoch = snapshot.lastSeenEpoch;
   speciesId = snapshot.speciesId;
   eggTarget = snapshot.eggTarget;
@@ -1822,6 +1992,7 @@ bool Pet::loadCoreSnapshot() {
   retirePending = snapshot.retirePending != 0; eggTaps = snapshot.eggTaps;
   careMistakes = snapshot.careMistakes; sleeping = snapshot.sleeping != 0;
   lastEnd = snapshot.lastEnd; frozen = snapshot.frozen != 0; bond = snapshot.bond;
+  originKind = snapshot.originKind <= ORIGIN_WILD ? snapshot.originKind : ORIGIN_UNKNOWN;
   memcpy(nick, snapshot.nick, sizeof(nick));
   nick[sizeof(nick) - 1] = 0;
   return true;
@@ -1889,6 +2060,7 @@ void Pet::load() {
   loadBlob(prefs, "dexsh", dexShinyReg, sizeof(dexShinyReg));
   lastSeenEpoch = prefs.getUInt("seen", 0);
   ageMinutes = prefs.getUInt("age", 0);
+  realAgeMin = ageMinutes;    // the legacy keys predate the speed setting
   if (prefs.isKey("dexn")) {
     speciesId = prefs.getShort("dexn", -1);
     eggTarget = prefs.getShort("eggT2", 4);

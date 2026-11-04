@@ -1081,6 +1081,35 @@ CLASSIC = [1, 4, 7, 25, 133]
 # while five more Eeveelutions sat in the dex hatching out of eggs instead.
 EEVEE_BRANCHES = [134, 135, 136, 196, 197, 470, 471, 700]
 
+# EVERY species that can become more than one thing, Eevee included. The first
+# target of each list is the one DexEntry.evolvesTo already holds; the rest are
+# the forms the single-target table could not express, which is why GALLADE,
+# FROSLASS, POLITOED and friends used to hatch out of eggs as if they were base
+# forms. The player CHOOSES among them when the creature evolves (the real games
+# use items, gender or conditions this game does not model). Every target here
+# is evolution-only: gen_dex.py adds them all to the `evolved` set.
+EVO_BRANCHES = {
+    44:  [45, 182],          # GLOOM -> VILEPLUME / BELLOSSOM
+    52:  [53, 863],          # MEOWTH -> PERSIAN / PERRSERKER
+    61:  [62, 186],          # POLIWHIRL -> POLIWRATH / POLITOED
+    79:  [80, 199],          # SLOWPOKE -> SLOWBRO / SLOWKING
+    123: [212, 900],         # SCYTHER -> SCIZOR / KLEAVOR
+    133: EEVEE_BRANCHES,     # EEVEE -> the eight Eeveelutions
+    194: [195, 980],         # WOOPER -> QUAGSIRE / CLODSIRE
+    215: [461, 903],         # SNEASEL -> WEAVILE / SNEASLER
+    236: [106, 107, 237],    # TYROGUE -> HITMONLEE / HITMONCHAN / HITMONTOP
+    265: [266, 268],         # WURMPLE -> SILCOON / CASCOON
+    281: [282, 475],         # KIRLIA -> GARDEVOIR / GALLADE
+    290: [291, 292],         # NINCADA -> NINJASK / SHEDINJA
+    361: [362, 478],         # SNORUNT -> GLALIE / FROSLASS
+    366: [367, 368],         # CLAMPERL -> HUNTAIL / GOREBYSS
+    412: [413, 414],         # BURMY -> WORMADAM / MOTHIM
+    562: [563, 867],         # YAMASK -> COFAGRIGUS / RUNERIGUS
+    790: [791, 792],         # COSMOEM -> SOLGALEO / LUNALA
+    840: [841, 842, 1011],   # APPLIN -> FLAPPLE / APPLETUN / DIPPLIN
+    935: [936, 937],         # CHARCADET -> ARMAROUGE / CERULEDGE
+}
+
 REGIONS = [
     ('KANTO', 1,   151, [1, 4, 7, 25, 133]),
     ('JOHTO', 152, 251, [152, 155, 158]),

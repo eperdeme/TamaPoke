@@ -220,10 +220,25 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
     for (int d = 1; d <= 200; d++) pet.dbgHatchAs(d, false);
   }
   else if (!strcmp(screen, "clock"))   clockOpen = true;
+  else if (!strcmp(screen, "game")) {      // page 3: speed and farewell level
+    extern uint8_t clockPage;
+    clockOpen = true; clockPage = 2; levelSpeedSet(20); farewellLevelSet(60);
+  }
+  else if (!strcmp(screen, "settings")) {   // page 2, at the fastest level speed
+    extern uint8_t clockPage;
+    clockOpen = true; clockPage = 1; levelSpeedSet(1);
+  }
   else if (!strcmp(screen, "menu"))    menuOpen = true;
   else if (!strcmp(screen, "train"))   trainOpen = true;
   else if (!strcmp(screen, "moves"))   { cardOpen = true; cardPage = 2; }
   else if (!strcmp(screen, "movepick")) { movePickOpen = true; }
+  else if (!strcmp(screen, "evopick")) {   // KIRLIA, ready: GARDEVOIR or GALLADE
+    extern bool evoPickOpen;
+    pet.dbgHatchAs(280, false); pet.speciesId = 281;
+    pet.ageMinutes = 40UL * MINUTES_PER_LEVEL;
+    pet.fullness = pet.joy = pet.energy = pet.hygiene = 100;
+    evoPickOpen = true;
+  }
   else if (!strcmp(screen, "battle2")) { startBattle(9, 50); }
   else if (!strcmp(screen, "wild")) { startWildBattle(currentExploreRegion(), false); }
   else if (!strcmp(screen, "btlmenu")) { startTrainerBattle(3, false); }

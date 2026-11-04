@@ -9,18 +9,59 @@
 // (p. ej. 5000UL = las estadisticas caen 12x mas rapido).
 #define PET_TICK_MS 60000UL
 // Minutos de juego por nivel. Con 60, CHARMANDER evoluciona a las ~16 h
-// de juego con cuidado perfecto. Baja a 1 para ver evoluciones al momento.
-#define MINUTES_PER_LEVEL 60
+// de juego con cuidado perfecto.
+// The three Pokedex views (see Pet::inDex).
+#define DEXV_COMPLETE 0
+#define DEXV_HATCHED  1
+#define DEXV_CAUGHT   2
+// Age is ALWAYS counted in game minutes at this rate, whatever the speed setting
+// below: the setting only decides how many game minutes one real minute is worth.
+// So switching speed never moves the current level, and saves mean the same thing.
+#define MINUTES_PER_LEVEL 60   // first, so tools/gen_web_dex.py reads the real rate
 #define MAX_LEVEL 100              // reached at 4d 3h; see level()
 #define EAT_ANIM_MS 2500UL
 #define HEART_MS 1500UL
 #define EVOLVE_ANIM_MS 5200UL              // animacion de evolucion (mas larga = mas epica)
 #define CEREMONY_MS 10000UL                // duracion de la despedida en pantalla
-#define FAREWELL_AGE_MIN (3UL * 24 * 60)   // se despide a los 3 dias de juego (en forma final)
+// The DEFAULT farewell, as an age: level 73. The live rule is gFarewellLevel
+// (see below); this stays for code and tests that mean "the original game's".
+#define FAREWELL_AGE_MIN ((uint32_t)(FAREWELL_LVL_DEFAULT - 1) * MINUTES_PER_LEVEL)
 // Retiring a creature BEFORE it has earned its farewell costs the NEXT one a
 // day's worth of evolution. Derived from MINUTES_PER_LEVEL rather than written
 // as 24, so it stays "a day" if the level rate is ever retuned.
-#define EVO_PENALTY_LEVELS ((uint8_t)((24UL * 60) / MINUTES_PER_LEVEL))
+// Stated in LEVELS (24 = one day at the normal rate), so a faster level speed
+// keeps the same rule.
+#define EVO_PENALTY_LEVELS ((uint8_t)24)
+// Level speed, a player setting: real minutes per level, 1..60. 60 is the
+// original game. ageMinutes stays GAME minutes at MINUTES_PER_LEVEL a level --
+// level(), evolution and the farewell all read it unchanged -- and each real
+// minute adds 60 / gLevelMins of them, exactly: Pet::growMinute() carries the
+// remainder in growFrac, so a level takes exactly gLevelMins real minutes at
+// any value, with no drift. Only growth speeds up -- needs, sleep, neglect and
+// the egg still run in real minutes. Persisted under "lvspd"; junk reads as 60.
+#define LEVEL_SPEED_MIN 1
+#define LEVEL_SPEED_MAX 60
+extern uint8_t gLevelMins;
+void levelSpeedLoad();
+void levelSpeedSet(int realMinsPerLevel);       // clamped to 1..60
+
+// The farewell level, a player setting: 50..100, default 73 (the original game:
+// 72 levels after hatching, three days at the normal speed). Offered only once
+// the creature is ALSO in its final form, as before. Persisted under "fwlv".
+#define FAREWELL_LVL_MIN 50
+#define FAREWELL_LVL_MAX 100
+#define FAREWELL_LVL_DEFAULT 73
+extern uint8_t gFarewellLevel;
+void farewellLevelLoad();
+void farewellLevelSet(int level);               // clamped to 50..100
+
+// Eggs favour lines the player has not finished (the default, as the game has
+// always done). Off: the rarity is rolled the same way, then ANY species of it
+// may hatch, repeats included -- no skipping what is already registered and no
+// dropping to a lower tier because this one is complete.
+extern bool gEggPreferNew;
+void eggPreferNewLoad();
+void eggPreferNewSet(bool on);
 #define RUNAWAY_TICKS 60                   // se escapa tras 1 h con TODO a cero
 // Night, by the RTC: midnight to 06:00. Auto-sleep needs BOTH: the screen off
 // AND this window.
@@ -163,6 +204,16 @@ public:
   bool berryKnown = false;  // ya descubrio su baya favorita
   bool shiny = false;       // variante de color rara (se sortea en el huevo)
   uint32_t ageMinutes = 0;
+  // Real minutes alive and active, whatever the level speed (see PartyMon). The
+  // card shows this; nothing in the game's rules reads it.
+  uint32_t realAgeMin = 0;
+  // The part of a game minute already earned at the current speed, in 1/60ths
+  // of a real minute's worth (see growMinute()). Always below gLevelMins.
+  uint8_t growFrac = 0;
+  // One real minute of growth at the current speed.
+  void growMinute();
+  // Real minutes until the next level at the current speed, exact.
+  uint32_t realMinutesToNextLevel() const;
   int16_t speciesId = -1;      // numero de Pokedex (1..DEX_COUNT), -1 = huevo
   int16_t prevSpeciesId = -1;  // para la animacion de evolucion
   uint8_t careMistakes = 0;   // descuidos: cada uno retrasa la evolucion 1 nivel
@@ -182,6 +233,18 @@ public:
   // and bits 1-151 keep exactly their old meaning.
   uint8_t dexReg[(DEX_COUNT + 7) / 8] = { 0 };       // criados
   uint8_t dexShinyReg[(DEX_COUNT + 7) / 8] = { 0 };  // criados en version shiny
+  // The three Pokedexes. COMPLETE is dexReg | dexCaught (everything raised or
+  // caught); HATCHED and CAUGHT are by origin and follow the line: a hatched
+  // creature's evolutions are HATCHED, a capture's are CAUGHT. Each has a shiny
+  // twin. All four are appended to the player record (see savePlayerSnapshot).
+  uint8_t dexHatched[(DEX_COUNT + 7) / 8] = { 0 };
+  uint8_t dexShinyCaught[(DEX_COUNT + 7) / 8] = { 0 };
+  uint8_t dexCaught[(DEX_COUNT + 7) / 8] = { 0 };
+  uint8_t dexHatchedShiny[(DEX_COUNT + 7) / 8] = { 0 };
+  // Origin of the live creature: ORIGIN_EGG / ORIGIN_WILD / ORIGIN_UNKNOWN (a
+  // creature from before origins were recorded). Travels into PartyMon.
+  uint8_t originKind = ORIGIN_UNKNOWN;
+  bool hatchedLine() const { return originKind == ORIGIN_EGG; }
   // racha de cuidado diario (del jugador: persiste entre crianzas)
   uint16_t streak = 0, bestStreak = 0;
   uint32_t lastCareDay = 0;
@@ -450,6 +513,16 @@ public:
   }
   bool canEvolveNow() const;  // condiciones de evolucion cumplidas (lista)
   void evolve();              // dispara la transformacion (la llama un toque del usuario)
+  // Evolve into one SPECIFIC form -- the player's pick from evoOptions(). A
+  // target that is not among the current options is refused and nothing
+  // changes, so a stale choice screen can never hand out an unreachable form.
+  bool evolveTo(int16_t target);
+  // Every form `species` can become that this player can be shown right now:
+  // the branch list for the species in EVO_BRANCHES (Eevee included), else the
+  // table's single evolvesTo. Filtered by art and by the sprite pack, exactly as
+  // eeveeOptions() always was. `out` must hold EVO_BRANCH_MAX.
+  uint8_t evoOptions(int16_t species, int16_t *out) const;
+  uint8_t evoOptionCount() const { int16_t o[EVO_BRANCH_MAX]; return evoOptions(speciesId, o); }
   bool canFarewellNow() const;  // forma final + 7 dias: lista para despedirse (boton)
   // Total neglect RIGHT NOW. THE single answer: tick() counts against it and
   // canRunawayNow() re-checks it, because neglectTicks is frozen (neither
@@ -509,6 +582,36 @@ public:
   bool isRegistered(int16_t dex) const {
     return dex >= 1 && dex <= DEX_COUNT && (dexReg[(dex - 1) >> 3] & (1 << ((dex - 1) & 7)));
   }
+  static bool bitOf(const uint8_t *m, int16_t dex) {
+    return dex >= 1 && dex <= DEX_COUNT && (m[(dex - 1) >> 3] & (1 << ((dex - 1) & 7)));
+  }
+  static void setBit(uint8_t *m, int16_t dex) {
+    if (dex >= 1 && dex <= DEX_COUNT) m[(dex - 1) >> 3] |= (1 << ((dex - 1) & 7));
+  }
+  bool isHatchedRegistered(int16_t dex) const { return bitOf(dexHatched, dex); }
+  bool isCaughtRegistered(int16_t dex) const { return bitOf(dexCaught, dex); }
+  // which: DEXV_COMPLETE / DEXV_HATCHED / DEXV_CAUGHT; shiny: only shinies.
+  bool inDex(uint8_t which, bool shiny, int16_t dex) const {
+    switch (which) {
+      case DEXV_HATCHED: return bitOf(shiny ? dexHatchedShiny : dexHatched, dex);
+      case DEXV_CAUGHT:  return bitOf(shiny ? dexShinyCaught : dexCaught, dex);
+      default:
+        return shiny ? (bitOf(dexShinyReg, dex) || bitOf(dexShinyCaught, dex) || bitOf(dexHatchedShiny, dex))
+                     : (bitOf(dexReg, dex) || bitOf(dexCaught, dex) || bitOf(dexHatched, dex));
+    }
+  }
+  uint16_t dexCountIn(uint8_t which, bool shiny, uint16_t lo, uint16_t hi) const {
+    uint16_t n = 0;
+    for (uint16_t d = lo; d <= hi && d <= DEX_COUNT; d++) if (inDex(which, shiny, d)) n++;
+    return n;
+  }
+  // A wild capture: CAUGHT (and its shiny twin) at once, raised or not. The
+  // caller saves.
+  void noteCaught(int16_t dex, bool shiny) {
+    setBit(dexCaught, dex);
+    if (shiny) setBit(dexShinyCaught, dex);
+  }
+
   bool isShinyRegistered(int16_t dex) const {
     return dex >= 1 && dex <= DEX_COUNT && (dexShinyReg[(dex - 1) >> 3] & (1 << ((dex - 1) & 7)));
   }
@@ -603,6 +706,7 @@ public:
   void saveNow();
 
 private:
+  void applyEvolution(int16_t next);   // the shared tail of evolve()/evolveTo()
   Preferences prefs;
   // Scratch pets used for opponents share the player's NVS namespace. Only a
   // Pet explicitly opened with begin() owns that persistent state.
@@ -620,6 +724,9 @@ private:
   uint32_t playerGeneration = 0;
   // Legacy keys are migration-only; save() writes the checkpoints.
   uint32_t lastTick = 0;
+  // Real minutes ticked since boot. Drives the every-2/3-minute needs, which used
+  // to read ageMinutes and would misfire once age moves in steps of 2, 4, 12, 60.
+  uint32_t liveMinutes = 0;
   uint32_t eatUntil = 0;
   uint32_t heartUntil = 0;
   uint32_t evolveUntil = 0;

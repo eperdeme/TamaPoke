@@ -135,6 +135,33 @@ int main(){
     g.end();
   }
 
+  // ---- the GAME page settings travel with the backup too
+  {
+    std::set<std::string> inTable;
+    for (uint16_t i = 0; i < SAVE_FIELD_COUNT; i++) inTable.insert(SAVE_FIELDS[i].key);
+    ck(inTable.count("lvspd") && inTable.count("fwlv") && inTable.count("eggnew"),
+       "minutes per level, farewell level and egg preference are in the backup table");
+    Pet p5; p5.begin(); p5.dbgHatchAs(7, false);
+    levelSpeedSet(20); farewellLevelSet(60); eggPreferNewSet(false);
+    static uint8_t buf[SAVE_TRANSFER_MAX];
+    size_t n = saveExport(buf, sizeof(buf));
+    levelSpeedSet(45); farewellLevelSet(90); eggPreferNewSet(true);
+    ck(n > 0 && saveImport(buf, n), "a save with custom GAME settings exports and imports");
+    levelSpeedLoad(); farewellLevelLoad(); eggPreferNewLoad();
+    ck(gLevelMins == 20 && gFarewellLevel == 60 && !gEggPreferNew,
+       "restoring puts all three back as they were");
+
+    // a backup taken before they were listed: none of the three keys
+    { Preferences g; g.begin("tamapoke", false);
+      g.remove("lvspd"); g.remove("fwlv"); g.remove("eggnew"); g.end(); }
+    n = saveExport(buf, sizeof(buf));
+    levelSpeedSet(45); farewellLevelSet(90); eggPreferNewSet(false);
+    ck(n > 0 && saveImport(buf, n), "an older backup without them still imports");
+    levelSpeedLoad(); farewellLevelLoad(); eggPreferNewLoad();
+    ck(gLevelMins == MINUTES_PER_LEVEL && gFarewellLevel == FAREWELL_LVL_DEFAULT && gEggPreferNew,
+       "and leaves the defaults (60 / 73 / yes), not the values it replaced");
+  }
+
   printf("%s\n", bad?"FAILURES":"all good");
   return bad?1:0;
 }

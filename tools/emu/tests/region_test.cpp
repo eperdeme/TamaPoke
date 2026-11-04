@@ -15,6 +15,7 @@
 #include "pet.h"
 #include "party.h"
 #include "noart.h"   // speciesHasArt / NO_ART_COUNT
+#include "dex.h"     // DEX_TBL rarity
 #include <cstdio>
 #include <set>
 #ifndef TAMA_NATIVE_TEST
@@ -69,6 +70,36 @@ int main(){
       snprintf(msg,sizeof(msg),"%s eggs stay within %u..%u", ri.name, ri.lo, ri.hi);
       ck(out==0, msg);
     }
+  }
+
+  // --- the "prefer new" setting. Everything in Kanto registered except the
+  // RATTATA line (some Kanto lines still reach past Kanto -- Golbat to Crobat,
+  // Eevee to Espeon -- so those stay unfinished too). With it on, every egg is
+  // from an unfinished line; with it off, finished lines hatch as well, and a
+  // rolled rare stays rare.
+  {
+    Pet p; p.begin();
+    for (int d=1; d<=151; d++) if (d!=19 && d!=20 && !p.isRegistered(d)) p.dbgHatchAs(d,false);
+    if (p.isEgg()) p.dbgHatchAs(1,false);
+    p.setRegion(0);
+    eggPreferNewSet(true);
+    bool onlyNew=true;
+    for (int i=0;i<300;i++)
+      if (!p.lineHasUnregistered(p.pickEggSpecies())) onlyNew=false;
+    ck(onlyNew, "prefer new ON: only unfinished lines hatch");
+    eggPreferNewSet(false);
+    bool done=false, rare=false, inKanto=true;
+    for (int i=0;i<600;i++){
+      int16_t d=p.pickEggSpecies();
+      if (!p.lineHasUnregistered(d)) done=true;
+      if (DEX_TBL[d].rarity!=R_COMUN) rare=true;
+      if (d<1||d>151) inKanto=false;
+    }
+    ck(done && inKanto, "prefer new OFF: finished lines hatch too");
+    ck(rare, "and rares still hatch though every Kanto rare is registered");
+    eggPreferNewSet(true);
+    eggPreferNewLoad();
+    ck(gEggPreferNew, "the setting is stored and loads back");
   }
 
   // --- ALL really does span everything

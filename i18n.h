@@ -174,6 +174,14 @@ enum StrId : uint8_t {
   S_BOX_PUT,        // party detail sheet: move this creature into the box
   // shown while a sprite pack streams in over USB
   S_XFER, S_XFER_FMT, S_XFER_HINT,
+  S_EVO_PICK,       // title of the screen that asks which form to evolve into
+  S_FILT_HATCHED,   // Pokedex filter: hatched from your eggs (and their evolutions)
+  S_LEVEL_SPEED_FMT, // PARTIDA page: label of the minutes-per-level row (no %u any more)
+  S_STARTER_RANDOM, // starter screen: a random starter from any region
+  S_FAREWELL_LVL,   // PARTIDA page: label of the farewell level row
+  S_LIFE_FMT,       // PARTIDA page: "one life: %s" (a duration)
+  S_GAME_TITLE,     // PARTIDA page: its title
+  S_EGG_NEW,        // PARTIDA page: label of the "eggs prefer new lines" toggle
   STR_COUNT
 };
 

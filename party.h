@@ -1,4 +1,5 @@
 #pragma once
+#include <stddef.h>
 #include <Arduino.h>
 #include <Preferences.h>
 
@@ -23,6 +24,13 @@
 // well, so swapping it in as the focused creature resumes exactly where it left
 // off instead of handing back a blanked-out copy. Freezing is now a property of
 // where the record lives, not of the record itself.
+// Where a creature came from. Stored as a byte + its complement in PartyMon's
+// old padding; anything else (an older build's padding) reads as UNKNOWN.
+#define ORIGIN_UNKNOWN 0
+#define ORIGIN_EGG     1     // hatched from one of the player's eggs (or evolved from one)
+#define ORIGIN_WILD    2     // caught in the wild (or evolved from a capture)
+#define ORIGIN_SIG_EGG  0x48 // 'H'
+#define ORIGIN_SIG_WILD 0x43 // 'C'
 struct PartyMon {
   int16_t dex = 0;      // Pokedex number, 0 = empty slot
   uint16_t level = 1;   // cached from ageMinutes so lists need not recompute it
@@ -50,13 +58,49 @@ struct PartyMon {
   uint8_t poops = 0, weight = 0, bond = 0;
   uint8_t berryKnown = 0, careMistakes = 0;
   uint8_t evoDeclinedLv = 0, lastLearnLevel = 0;
+  // ---- origin, in what USED TO BE alignment padding --------------------------
+  // Two bytes the compiler already reserved before ageMinutes, so the record's
+  // stride (and every box and party blob on a device) is unchanged. Because a
+  // record written by an older build may hold anything here, "hatched" is a
+  // two-byte SIGNATURE rather than a flag: a stray non-zero byte reads as
+  // "not hatched", which is the safe answer (it only keeps a creature out of
+  // the HATCHED Pokedex, it never takes anything away).
+  uint8_t origin = 0, originChk = 0;
   // The real age. `level` stays as its cached mirror so every list, the battle
   // squad builder and the box screen keep reading one byte instead of dividing.
   uint32_t ageMinutes = 0;
+  // ---- real age, appended for the level speed setting (stateVersion 2) ------
+  // ageMinutes is GAME time: the level speed setting makes it run faster, and
+  // level, evolution and the farewell all hang off it. This is the REAL time
+  // the creature has been alive and active -- what the card shows as its age.
+  // Like ageMinutes it stops while stored. 0 on a record older than this field
+  // means "unknown", which is why it is only trusted at stateVersion >= 2.
+  uint32_t realAgeMin = 0;
 
   bool empty() const { return dex < 1; }
   bool hasCareState() const { return stateVersion >= 1; }
+  bool hasRealAge() const { return stateVersion >= 2; }
+  uint8_t originKind() const {
+    if (originChk != (uint8_t)~origin) return ORIGIN_UNKNOWN;
+    if (origin == ORIGIN_SIG_EGG) return ORIGIN_EGG;
+    if (origin == ORIGIN_SIG_WILD) return ORIGIN_WILD;
+    return ORIGIN_UNKNOWN;
+  }
+  void setOrigin(uint8_t k) {
+    origin = k == ORIGIN_EGG ? ORIGIN_SIG_EGG : k == ORIGIN_WILD ? ORIGIN_SIG_WILD : 0;
+    originChk = origin ? (uint8_t)~origin : 0;
+  }
+  bool hatched() const { return originKind() == ORIGIN_EGG; }
 };
+// The origin bytes took padding, not new space; realAgeMin is the one append.
+// Every store of these records carries its stride and reads a shorter one by
+// the prefix rule (the project notes on sizeof(PartyMon) being load-bearing), so growing
+// is allowed -- moving a field is not.
+static_assert(offsetof(PartyMon, ageMinutes) == 44 && offsetof(PartyMon, realAgeMin) == 48 &&
+              sizeof(PartyMon) == 52,
+              "PartyMon layout changed -- fields may only be appended");
+// What a record written by this build says about itself.
+#define PARTYMON_STATE_VERSION 2
 
 class Party {
 public:
