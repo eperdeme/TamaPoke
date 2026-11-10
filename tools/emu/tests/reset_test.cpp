@@ -13,6 +13,7 @@
 #include <cstring>
 #include <set>
 #include <string>
+#include <vector>
 
 uint32_t g_seed=3; FakeSerial Serial; FakeESP ESP; FakeWire Wire;
 volatile int g_touchX=0,g_touchY=0; volatile bool g_touchDown=false; bool wasPressed=false;
@@ -85,11 +86,12 @@ int main(){
   // place to put a new flag is SAVE_FIELDS.
   {
     Pet p3; p3.begin(); p3.dbgHatchAs(25, false); p3.renameTrainer("PIKA");
-    static uint8_t buf[SAVE_TRANSFER_MAX];
-    size_t n = saveExport(buf, sizeof(buf));
+    party.begin();
+    std::vector<uint8_t> buf(SAVE_TRANSFER_MAX);
+    size_t n = saveExport(buf.data(), buf.size());
     ck(n > 0, "a save exports");
     resetArm();                                   // armed at the time of export
-    ck(saveImport(buf, n), "and imports onto a device with an intent pending");
+    ck(saveImport(buf.data(), n), "and imports onto a device with an intent pending");
     // The import cleared the game namespace and wrote the backup back. The intent
     // is untouched either way; what matters is that the BACKUP never carried one.
     std::set<std::string> inTable;
@@ -112,11 +114,11 @@ int main(){
 
     Pet p4; p4.begin(); p4.dbgHatchAs(7, false); p4.renameTrainer("SQUIRT");
     { Preferences g; g.begin("tamapoke", false); g.putUChar("brt", 3); g.end(); }
-    static uint8_t buf[SAVE_TRANSFER_MAX];
-    size_t n = saveExport(buf, sizeof(buf));
+    std::vector<uint8_t> buf(SAVE_TRANSFER_MAX);
+    size_t n = saveExport(buf.data(), buf.size());
     ck(n > 0, "a save with a brightness setting exports");
     { Preferences g; g.begin("tamapoke", false); g.putUChar("brt", 9); g.end(); }
-    ck(saveImport(buf, n), "and imports");
+    ck(saveImport(buf.data(), n), "and imports");
     Preferences g; g.begin("tamapoke", true);
     ck(g.getUChar("brt", 0) == 3, "restoring puts the level back as it was");
     g.end();
@@ -133,6 +135,29 @@ int main(){
     ck(!g.isKey("brt"), "a save from before the setting existed has no key");
     ck(g.getUChar("brt", 7) == 7, "and reads the default rather than zero");
     g.end();
+  }
+
+  for (int budget = 0; budget <= 5; ++budget) {
+    Pet p; p.begin(); p.dbgHatchAs(150, false);
+    party.begin();
+    Preferences journal;
+    journal.begin("restore", false, COLLECTION_PARTITION);
+    journal.putBool("pending", true);
+    nvsFailWritesAfter(budget);
+    const bool reset = p.factoryReset();
+    nvsResumeWrites();
+    if (!budget) {
+      Pet kept; kept.begin();
+      ck(!reset && kept.speciesId == 150 && !resetArmed(),
+         "a refused reset intent leaves the existing creature intact");
+      resetArm();
+    } else {
+      ck(reset || resetArmed(), "an interrupted multi-store wipe retains its intent");
+    }
+    if (resetArmed()) ck(resetRecover(), "the next boot finishes the entire wipe");
+    ck(nvs().empty() && nvsNamed("tpcollect:collection").empty() &&
+       nvsNamed("tpcollect:restore").empty() && !resetArmed(),
+       "reset clears both save stores and pending restore before acknowledgement");
   }
 
   printf("%s\n", bad?"FAILURES":"all good");

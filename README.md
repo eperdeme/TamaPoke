@@ -3,7 +3,7 @@
 [![Flash in browser](https://img.shields.io/badge/flash-in%20browser-FF6B00?logo=googlechrome&logoColor=white)](https://eperdeme.github.io/TamaPoke/web/)
 [![MakerWorld](https://img.shields.io/badge/MakerWorld-3D%20case-00AE42?logo=bambulab&logoColor=white)](https://makerworld.com/es/models/2937822-tamapoke-a-pokemon-pokeball-tamagotchi)
 ![Board](https://img.shields.io/badge/board-ESP32--S3%20round%20AMOLED-E7352C?logo=espressif&logoColor=white)
-![Firmware](https://img.shields.io/badge/firmware-v4.1.1-8A2BE2)
+![Firmware](https://img.shields.io/badge/firmware-v4.2.0-8A2BE2)
 ![Code](https://img.shields.io/badge/code-MIT-blue)
 ![Languages](https://img.shields.io/badge/languages-6-FFCB05)
 [![Stars](https://img.shields.io/github/stars/DylanPDao/TamaPoke?style=flat&logo=github&color=yellow)](https://github.com/DylanPDao/TamaPoke/stargazers)
@@ -255,8 +255,11 @@ brings ELECTIVIRE, MAGMORTAR and RHYPERIOR waiting on exactly the same thing.
   **joins your party** (6 slots), keeping its species, nickname, shiny status, IVs,
   training, moves, the level it reached **and its whole care state**. It is frozen
   *while stored*: it does not age or train until you raise it again.
-- The **Box holds 36 Pokemon** across six pages. An existing 18-slot Box keeps
-  every creature in place and gains 18 empty slots after updating.
+- The **Box holds 1,200 Pokemon**, plus six party members and the active creature:
+  **1,207 total**. Existing collections migrate in place; old records are retained
+  until the new storage has two verified checkpoint copies.
+  Rim-drag to turn a page; hold the Box's sort hub for one second to open large
+  controls that jump ten pages at a time.
 - **Choosing who you raise.** Tap a party slot and press **MAKE ACTIVE**. It is a
   true *exchange* — the creature on the main screen takes the slot the newcomer
   vacates — so it needs no free slot and nothing is ever lost. Both keep their
@@ -277,6 +280,66 @@ brings ELECTIVIRE, MAGMORTAR and RHYPERIOR waiting on exactly the same thing.
   rather than jumping straight into the party, and **TO PARTY** does that.
 - With a full party you're taken straight to the party screen to pick who the
   newcomer replaces — or to let it go. Nothing is ever overwritten silently.
+
+### Updating safely to expanded storage
+
+**Download a verified `.tpsave` backup before updating, and keep it off the
+device. Leave "Erase device" unchecked.** No update can guarantee recovery from
+every power failure or damaged flash. Do not disconnect while flashing,
+migrating or restoring.
+
+The collection now has its own 512 KiB internal-flash partition, taken from the
+unused filesystem area. The existing 20 KiB save partition and both application
+slots stay at their original offsets. Collection writes no longer compete with
+the active creature and player records for that small save partition.
+The Box records use about 56 KiB of PSRAM; large save and backup buffers also use
+checked PSRAM allocations, not the small internal-RAM pool or the task stack.
+
+Another 128 KiB is reserved for a future active-pet/player save store. It is not
+initialized or used yet: existing companion and player saves stay in their
+original partition. Reserving this space does not itself remove the original
+partition's initialization risks.
+
+Migration keeps the original collection unchanged and verifies two new copies
+before activating them. An interrupted migration can resume at the next boot.
+After activation, damaged collection data blocks writes rather than silently
+loading an out-of-date original box. Failed swaps or releases are reported and
+do not discard the creature in memory.
+
+New collection checkpoints and backups use 32-bit lengths so future record
+growth does not hit a 64 KiB format limit. Existing checkpoints and older
+backups remain readable. A newer snapshot needing unsupported species,
+dimensions or size blocks saving rather than being replaced by an older copy.
+Unknown future fields may be read through their known prefix and backed up, but
+remain read-only so an older build cannot silently remove them.
+New backups include the expanded collection; older backups remain importable.
+Restore is staged and verified before replacing the save, and interrupted
+restores resume before normal play. **Do not downgrade to older firmware: it
+cannot read expanded storage or the new backup format.**
+
+The red triangle is still a real warning, not something hidden by this update.
+It covers failed collection writes as well as active-save failures and low flash
+headroom. If it appears, stop moving creatures, download a backup if possible,
+and keep the serial `HEALTH` output for diagnosis.
+
+For source builds, keep the supplied `partitions.csv` beside the sketch and
+upload its partition table with the firmware. An application-only OTA update
+cannot create the new storage. Custom firmware that has used the former
+filesystem space needs a separate migration assessment. An interrupted
+partition-table flash may require BOOT/RESET recovery and reflashing without
+erasing the save.
+
+CI checks the freshly compiled partition table, including reserved save areas,
+and deliberately verifies that moved offsets and incorrect storage types fail.
+The firmware build also checks that checkpoint copies, a staged restore and NVS
+spare space fit together; unused flash alone is not the storage budget.
+
+The emulator capture regression uses test encounters and Master Balls, but the
+real bag, catch, result and storage handlers. It catches 1,000 Pokemon and
+compares every stored record after cold-process restarts at 6, 256, 512 and
+1,000 captures, while preserving the original active creature and player.
+Run `bash tools/emu/tests/run.sh capture` to repeat it. This complements, rather
+than replaces, physical-board power-cut testing.
 
 ### Wild encounters, catching and the bag
 

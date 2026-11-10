@@ -19,7 +19,8 @@ static PartyMon mk(int dex,int lvl){ PartyMon m; m.dex=dex; m.level=lvl;
   m.ivAtk=m.ivDef=m.ivSpe=m.ivHp=20; return m; }
 
 int main(){
-  ck(BOX_SLOTS == BOX_V323_SLOTS * 2, "the v3.24 box doubles from 18 to 36 slots");
+  ck(BOX_SLOTS >= DEX_COUNT && BOX_SLOTS % 6 == 0,
+     "the expanded box fits a full dex in complete pages");
   // a save from BEFORE the box existed: party key only, no box key
   { Preferences seed; seed.begin("tamapoke", false);
     PartyMon old[PARTY_SLOTS];
@@ -34,6 +35,7 @@ int main(){
 
   {
     nvs().clear();
+    collectionReset();
     const size_t stride = offsetof(PartyMon, stateVersion);
     uint8_t oldParty[PARTY_SLOTS * stride] = {};
     PartyMon oldBox[BOX_V323_SLOTS];
@@ -67,6 +69,7 @@ int main(){
   // of today's layout.
   {
     nvs().clear();
+    collectionReset();
     PartyMon old[BOX_V323_SLOTS];
     for (int i=0;i<BOX_V323_SLOTS;i++) old[i]=mk(40+i, 20+i);
     Preferences seed; seed.begin("tamapoke", false);
@@ -146,6 +149,7 @@ int main(){
   // write got.
   {
     nvs().clear();
+    collectionReset();
     Party r;
     r.begin();
     for (int i = 0; i < PARTY_SLOTS; i++) r.slots[i] = PartyMon();
@@ -200,6 +204,7 @@ int main(){
     // next test's input", caught by this migration breaking rather than by the
     // block that caused it.
     nvs().clear();
+    collectionReset();
     const size_t oldStride = sizeof(PartyMon) - 12;   // any earlier, shorter layout
     uint8_t old[oldStride * BOX_V323_SLOTS];
     memset(old, 0, sizeof(old));

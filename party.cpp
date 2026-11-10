@@ -2,22 +2,57 @@
 #include <stdlib.h>
 #include <string.h>
 #include "dex.h"
+#include "save.h"
 #include "ckpt.h"   // the alternating CRC-checked record format, shared with pet.cpp
 
 Party party;
 
-// Same NVS namespace as the pet on purpose: WIPE (Pet::factoryReset) calls
-// clear() on it, and a factory reset that left the party behind would be a lie.
 void Party::begin() {
-  bool boxNeedsRewrite = false;
+  ready = healthy = false;
+  pairGeneration = focusGeneration = 0;
+  loadedCollectionWide = false;
+  ++changes;
+  if (!box.allocate()) return;
+  for (auto &s : box) s = PartyMon();
   // Start from empty: getBytes() leaves the destination untouched when the key
   // is missing, so without this a reload after a wipe would keep showing the
   // old party out of RAM.
   for (auto &s : slots) s = PartyMon();
-  // Checked so a failure is at least visible. The panel's warning comes from
-  // Pet::saveHealthy(), which shares this namespace and so fails with it.
-  if (!prefs.begin("tamapoke", false))
+  prefs.end();
+  collection.end();
+  if (!prefs.begin("tamapoke", false)) {
     Serial.println("save: NVS would not open for the party");
+    return;
+  }
+  if (!collectionOpen(collection)) return;
+  if (collection.isKey("active")) {
+    if (!collection.getBool("active", false) || !loadCollection()) {
+      Serial.println("save: active collection unreadable; recovery required, NOT using stale legacy data");
+      return;
+    }
+    ready = healthy = true;
+    if (!loadedCollectionWide) migrateCollection();
+    return;
+  }
+  if (prefs.isKey("colv")) {
+    if (prefs.getUChar("colv", 0) != 2 || !loadCollection() ||
+        collection.putBool("active", true) != 1 || !collection.getBool("active", false)) {
+      Serial.println("save: collection activation requires recovery; NOT using legacy data");
+      return;
+    }
+    ready = healthy = true;
+    if (!loadedCollectionWide) migrateCollection();
+    return;
+  }
+  const bool pairLoaded = loadLegacyPair();
+  if (!pairLoaded && (prefs.isKey("pbA") || prefs.isKey("pbB"))) {
+    Serial.println("save: BOTH legacy party checkpoints failed; recovery required");
+    return;
+  }
+  if (pairLoaded) {
+    migrateCollection();
+    return;
+  }
   // The blob is raw structs, so growing PartyMon (moves[] was appended in v1.9)
   // changes its stride. Reading an older, shorter blob straight into the new
   // array would land slot 1 onward at the wrong offset and quietly invent a
@@ -27,7 +62,7 @@ void Party::begin() {
   // and leave moves[] zeroed for the learnset to fill in.
   size_t stored = prefs.getBytesLength("party");
   if (stored == sizeof(slots)) {
-    prefs.getBytes("party", slots, sizeof(slots));
+    if (prefs.getBytes("party", slots, sizeof(slots)) != stored) return;
   } else if (stored > sizeof(slots) && stored % sizeof(PartyMon) == 0) {
     // A blob from a build with MORE SLOTS at our own stride. Only this case is
     // unambiguous: stored/sizeof(PartyMon) records, each laid out as we lay them
@@ -39,17 +74,22 @@ void Party::begin() {
     // getBytes copies NOTHING when the stored blob exceeds the buffer, so this
     // has to go through a temporary of the stored size.
     uint8_t *tmp = (uint8_t *)malloc(stored);
-    if (tmp) {
-      if (prefs.getBytes("party", tmp, stored) == stored)
-        memcpy(slots, tmp, sizeof(slots));
-      free(tmp);
-    }
+    if (!tmp) { Serial.println("save: legacy party allocation failed"); return; }
+    const bool read = prefs.getBytes("party", tmp, stored) == stored;
+    if (read) memcpy(slots, tmp, sizeof(slots));
+    free(tmp);
+    if (!read) { Serial.println("save: legacy party read failed"); return; }
   } else if (stored && stored % PARTY_SLOTS == 0 && stored < sizeof(slots)) {
     size_t oldStride = stored / PARTY_SLOTS;
     uint8_t old[sizeof(slots)];
-    prefs.getBytes("party", old, stored);
+    if (prefs.getBytes("party", old, stored) != stored) {
+      Serial.println("save: legacy party read failed"); return;
+    }
     for (int i = 0; i < PARTY_SLOTS; i++)
       memcpy(&slots[i], old + i * oldStride, oldStride);
+  } else if (stored) {
+    Serial.println("save: unsupported legacy party; NOT overwriting");
+    return;
   }
   // a blob written by an older/newer build could hold nonsense; drop anything
   // that is not a real Pokedex number rather than indexing DEX_TBL with it
@@ -60,46 +100,41 @@ void Party::begin() {
   // The box is a separate key and simply absent on an older save, which leaves
   // it zeroed -- exactly what an empty box is.
   for (auto &s : box) s = PartyMon();
+  const size_t boxBytes = sizeof(PartyMon) * BOX_SLOTS;
   size_t boxStored = prefs.getBytesLength("box");
-  if (boxStored == sizeof(box)) {
-    prefs.getBytes("box", box, sizeof(box));
+  if (boxStored == boxBytes) {
+    if (prefs.getBytes("box", box.data(), boxBytes) != boxStored) return;
   } else if (boxStored && boxStored % BOX_V323_SLOTS == 0 &&
              boxStored / BOX_V323_SLOTS <= sizeof(PartyMon)) {
     // Every legacy box through v3.23 had 18 records. Test that dimension BEFORE
     // dividing by today's 36 slots: 18 current-size records are also divisible
     // by 36 bytes, which otherwise invents 36 half-records on upgrade.
     const size_t oldStride = boxStored / BOX_V323_SLOTS;
-    uint8_t *tmp = (uint8_t *)malloc(boxStored);
-    if (tmp) {
-      if (prefs.getBytes("box", tmp, boxStored) == boxStored) {
-        for (int i = 0; i < BOX_V323_SLOTS; i++)
-          memcpy(&box[i], tmp + i * oldStride, oldStride);
-        boxNeedsRewrite = true;
-      }
-      free(tmp);
-    }
+    uint8_t *tmp = static_cast<uint8_t *>(saveAlloc(boxStored));
+    if (!tmp) { Serial.println("save: legacy box allocation failed"); return; }
+    const bool read = prefs.getBytes("box", tmp, boxStored) == boxStored;
+    if (read)
+      for (int i = 0; i < BOX_V323_SLOTS; i++)
+        memcpy(&box[i], tmp + i * oldStride, oldStride);
+    free(tmp);
+    if (!read) { Serial.println("save: legacy box read failed"); return; }
   } else if (boxStored && boxStored % sizeof(PartyMon) == 0) {
     // A current-stride blob from a build with a different slot count. Preserve
     // the shared prefix in either direction; a downgrade must not erase slots
     // it cannot display, so only the smaller-to-larger case is rewritten below.
-    uint8_t *tmp = (uint8_t *)malloc(boxStored);
-    if (tmp) {
-      if (prefs.getBytes("box", tmp, boxStored) == boxStored) {
-        const size_t copy = boxStored < sizeof(box) ? boxStored : sizeof(box);
-        memcpy(box, tmp, copy);
-        boxNeedsRewrite = boxStored < sizeof(box);
-      }
-      free(tmp);
+    if (boxStored > boxBytes) {
+      Serial.println("save: legacy box exceeds capacity; NOT truncating"); return;
     }
+    if (prefs.getBytes("box", box.data(), boxBytes) != boxStored) {
+      Serial.println("save: legacy box read failed"); return;
+    }
+  } else if (boxStored) {
+    Serial.println("save: unsupported legacy box; NOT overwriting"); return;
   }
-  // The checkpoint is the truth about the pair; everything above is the
-  // migration path for a save written before it existed, and what a backup
-  // restores. It goes LAST so it overwrites those reads, and the sanity clamps
-  // below are re-applied because it bypassed the ones each branch already did.
-  const bool pairLoaded = loadPair();
-  if (!pairLoaded && (prefs.isKey("pbA") || prefs.isKey("pbB")))
-    Serial.println("save: BOTH party checkpoints failed; using legacy keys");
+  migrateCollection();
+}
 
+void Party::migrateCollection() {
   for (auto &s : slots) {
     if (s.dex < 1 || s.dex > DEX_COUNT) s.dex = 0;
     s.nick[sizeof(s.nick) - 1] = 0;
@@ -108,16 +143,18 @@ void Party::begin() {
     if (s.dex < 1 || s.dex > DEX_COUNT) s.dex = 0;
     s.nick[sizeof(s.nick) - 1] = 0;
   }
-  // Rewrite only after the checkpoint has had the last word. Doing this in the
-  // legacy branch above could overwrite one half of a newer checkpoint before
-  // it was read. A future larger checkpoint is deliberately left untouched.
-  //
-  // !pairLoaded on its own (no box migration in play at all) still has to
-  // persist: the legacy "party"/"box" keys are never rewritten any more, so
-  // without this a save with no pair checkpoint yet -- a fresh install, or an
-  // exact-stride legacy party with no box key at all -- would leave EXPORT, or
-  // a crash, seeing an incomplete record until whatever incidentally saves next.
-  if (!pairLoaded || (boxNeedsRewrite && loadedPairBoxSlots < BOX_SLOTS)) persist();
+  ready = true;
+  // The old keys remain untouched until BOTH destination copies verify.
+  if (!savePair() || !savePair() ||
+      prefs.putUChar("colv", 2) != 1 || prefs.getUChar("colv", 0) != 2 ||
+      collection.putBool("active", true) != 1 ||
+      !collection.getBool("active", false)) {
+    ready = healthy = false;
+    Serial.println("save: collection migration incomplete; source preserved");
+    return;
+  }
+  healthy = true;
+  Serial.println("save: collection migrated and verified; old save preserved");
 }
 
 // ---------------------------------------------------------------------------
@@ -135,22 +172,19 @@ void Party::begin() {
 // identical creatures are indistinguishable from one duplicated by a torn write.
 // One atomic record removes the question.
 //
-// The legacy "party" and "box" keys are still READ for migration, but they are
-// no longer written at all -- persist() writes the pbA/pbB checkpoint only,
-// exactly as with the pet. A downgrade to a build older than this change can no
-// longer read them; see CLAUDE.md's note above Party::persist()'s removal.
-//
-// Dimensions travel in the header for the same reason the player record carries
-// them: PARTY_SLOTS, BOX_SLOTS and sizeof(PartyMon) have all grown, and a struct
-// would move every field after whichever one changed.
+// The original partition is migration-only. New checkpoints live in tpcollect,
+// use a different magic and carry 16-bit dimensions. Old firmware cannot read
+// them and must not be used to roll back an expanded collection.
 static constexpr uint32_t PAIR_MAGIC = 0x3142504BUL;   // "KPB1"
 static constexpr uint16_t PAIR_VERSION = 1;
 static constexpr size_t PAIR_FIXED = 18;   // header + the three dimensions
-// What THIS build writes. The +64 is slack for a field appended to the record's
-// own header, not for extra slots -- growing those is what the heap path in
-// loadPair() is for.
+// Large buffers live in PSRAM, never on the loop task's 8 KB stack.
 static constexpr size_t PAIR_CAP =
-    PAIR_FIXED + sizeof(PartyMon) * (PARTY_SLOTS + BOX_SLOTS) + CKPT_CRC + 64;
+    collectionSize(sizeof(PartyMon), PARTY_SLOTS, BOX_SLOTS);
+static_assert(PAIR_CAP <= COLLECTION_MAX_BYTES, "collection exceeds supported record size");
+// Two live copies, one in-flight rewrite, staged restore and NVS spare pages.
+static_assert(3 * PAIR_CAP + SAVE_TRANSFER_MAX + 32 * 1024 <= COLLECTION_PARTITION_BYTES,
+              "collection and restore exceed safe flash headroom");
 // The format's OWN ceiling: the two dimensions at buf[14] and buf[15] are single
 // bytes, so no record can legitimately describe more than this. A stored length
 // beyond it is corruption, and refusing it is what stops a bogus length turning
@@ -159,65 +193,100 @@ static constexpr size_t PAIR_SANE_MAX =
     PAIR_FIXED + sizeof(PartyMon) * (255 + 255) + CKPT_CRC + 64;
 
 bool Party::savePair() {
+  if (!ready) {
+    healthy = false;
+    Serial.println("save: collection is read-only; NOT saving");
+    return false;
+  }
   const uint32_t nextGen = pairGeneration + 1;
-  uint8_t buf[PAIR_CAP] = {};
-  ckptWr16(buf + 12, (uint16_t)sizeof(PartyMon));
-  buf[14] = PARTY_SLOTS;
-  buf[15] = BOX_SLOTS;
-  buf[16] = 0;                    // reserved
-  buf[17] = 0;
-  CkptCursor cur{ buf, PAIR_FIXED, sizeof(buf) - CKPT_CRC };
+  uint8_t *buf = static_cast<uint8_t *>(saveAlloc(PAIR_CAP));
+  if (!buf) {
+    healthy = false;
+    Serial.println("save: collection buffer allocation failed");
+    return false;
+  }
+  memset(buf, 0, PAIR_CAP);
+  CkptCursor cur{ buf, COLLECTION_FIXED, PAIR_CAP - CKPT_CRC };
   cur.put(slots, sizeof(slots));
-  cur.put(box, sizeof(box));
-  if (cur.bad) return false;      // PAIR_CAP is derived, so this cannot happen
+  cur.put(box.data(), sizeof(PartyMon) * BOX_SLOTS);
 
-  uint16_t total = ckptSeal(buf, cur.at, PAIR_MAGIC, PAIR_VERSION, nextGen);
-  const char *key = ckptSlot(nextGen, "pbA", "pbB");
-  if (prefs.putBytes(key, buf, total) != total) return false;
-    memset(buf, 0, sizeof(buf));
-    if (ckptRead(prefs, key, PAIR_MAGIC, buf, sizeof(buf)) != total ||
-      ckptRd32(buf + 8) != nextGen) return false;
+  const uint32_t total = cur.bad ? 0 :
+      collectionSeal(buf, cur.at, sizeof(PartyMon), PARTY_SLOTS, BOX_SLOTS, nextGen);
+  const char *key = ckptSlot(nextGen, "cbA", "cbB");
+  bool ok = total && collection.putBytes(key, buf, total) == total;
+  if (ok) {
+    memset(buf, 0, PAIR_CAP);
+    CollectionLayout verified;
+    ok = collectionRead(collection, key, buf, PAIR_CAP, verified,
+                        PARTY_SLOTS, BOX_SLOTS, DEX_COUNT) == total &&
+         verified.generation == nextGen && verified.wide;
+  }
+  free(buf);
+  healthy = ok;
+  if (!ok) {
+    Serial.printf("save: collection %s commit/read-back failed\n", key);
+    return false;
+  }
   pairGeneration = nextGen;
+  loadedCollectionWide = true;
+  ++changes;
   return true;
 }
 
 bool Party::loadPair() {
+  const bool loaded = loadCollection();
+  ready = healthy = loaded;
+  return loaded;
+}
+
+bool Party::loadCollection() {
+  uint8_t *buf = static_cast<uint8_t *>(saveAlloc(COLLECTION_MAX_BYTES));
+  if (!buf) { Serial.println("save: collection read allocation failed"); return false; }
+  CollectionLayout layout;
+  const uint32_t n = collectionReadNewest(collection, buf, COLLECTION_MAX_BYTES, layout,
+                                          PARTY_SLOTS, BOX_SLOTS, DEX_COUNT);
+  bool ok = n != 0;
+  if (ok) {
+    CkptCursor cur{buf, layout.offset, size_t(n) - CKPT_CRC};
+    for (auto &m : slots) m = PartyMon();
+    for (size_t i = 0; i < layout.partyCount; ++i)
+      cur.take(&slots[i], sizeof(PartyMon), layout.stride);
+    for (auto &m : box) m = PartyMon();
+    for (size_t i = 0; i < layout.boxCount; ++i)
+      cur.take(&box[i], sizeof(PartyMon), layout.stride);
+    for (auto &m : slots) m.nick[sizeof(m.nick) - 1] = 0;
+    for (auto &m : box) m.nick[sizeof(m.nick) - 1] = 0;
+    pairGeneration = layout.generation;
+    loadedPairBoxSlots = layout.boxCount;
+    loadedCollectionWide = layout.wide;
+    ++changes;
+    if (layout.stride < offsetof(PartyMon, moves) || layout.stride > sizeof(PartyMon) ||
+        layout.offset > COLLECTION_FIXED ||
+        layout.offset + layout.stride * (layout.partyCount + layout.boxCount) + CKPT_CRC != n) {
+      Serial.println("save: newer collection fields are preserved read-only; NOT rewriting");
+      ok = false;
+    }
+  } else Serial.println("save: collection record invalid or unsupported");
+  if (!ok) ready = healthy = false;
+  free(buf);
+  return ok;
+}
+
+bool Party::loadLegacyPair() {
   loadedPairBoxSlots = 0;
-  // A RECORD FROM A LATER BUILD IS LONGER THAN OURS, AND MUST STILL BE READ.
-  //
-  // Preferences::getBytes copies NOTHING when the stored blob exceeds the
-  // caller's buffer -- it is not a truncating read -- so a buffer sized to this
-  // build's own dimensions makes every downgrade fall back to the legacy
-  // "party"/"box" keys. That fallback IS the torn-write path this record exists
-  // to replace, which makes a tight buffer far worse than it looks; ckpt.h says
-  // so above ckptRead() and it was still tight here. upgrade_test now pins it
-  // with a hand-built record from a build with more slots.
-  //
-  // The stack cannot pay for open-ended tolerance: savePair() already holds two
-  // PAIR_CAP buffers, and the format's own ceiling is ~24 KB. So the common case
-  // stays on the stack and only an actually-larger record reaches for the heap --
-  // the same shape Party::begin() already uses for an oversized legacy blob, and
-  // this runs once at boot.
   size_t stored = prefs.getBytesLength("pbA");
   const size_t storedB = prefs.getBytesLength("pbB");
   if (storedB > stored) stored = storedB;
-  uint8_t stack[PAIR_CAP];
-  uint8_t *heap = nullptr;
-  uint8_t *buf = stack;
-  size_t cap = sizeof(stack);
-  if (stored > cap) {
-    if (stored > PAIR_SANE_MAX) {
-      Serial.printf("save: party checkpoint claims %u bytes; refusing\n",
-                    (unsigned)stored);
-      return false;
-    }
-    heap = (uint8_t *)malloc(stored);
-    if (!heap) return false;        // rather no read than a partial one
-    buf = heap;
-    cap = stored;
+  if (!stored) return false;
+  if (stored > PAIR_SANE_MAX) {
+    Serial.printf("save: party checkpoint claims %u bytes; refusing\n",
+                  (unsigned)stored);
+    return false;
   }
-  const bool ok = loadPairFrom(buf, cap);
-  free(heap);
+  uint8_t *buf = static_cast<uint8_t *>(saveAlloc(stored));
+  if (!buf) { Serial.println("save: legacy checkpoint allocation failed"); return false; }
+  const bool ok = loadPairFrom(buf, stored);
+  free(buf);
   return ok;
 }
 
@@ -260,25 +329,11 @@ bool Party::loadPairFrom(uint8_t *buf, size_t cap) {
   return !cur.bad;
 }
 
-// Both of these write the WHOLE pair. Every existing caller therefore became
-// atomic without changing, and a swap is now one commit instead of two -- fewer
-// writes than before, not more.
-//
-// save() and boxSave() are the two public names because the callers say which
-// half they changed, but the record does not care -- and calling them one
-// after the other, which swapPartyBox() did, wrote the ~1.2 KB pair TWICE for
-// a single swap. That was the largest blob in the store taking double the
-// wear (nvsinfo.cpp exists to warn about exactly this).
-//
-// The legacy "party"/"box" blobs that used to be rewritten here on every call
-// are gone entirely -- see the comment above Party::persist() in party.h. Only
-// the checkpoint is written now.
-void Party::persist() {
-  if (!savePair()) Serial.println("save: party checkpoint failed");
-}
+// Both names commit the whole pair exactly once.
+bool Party::persist() { return savePair(); }
 
-void Party::save() { persist(); }
-void Party::boxSave() { persist(); }
+bool Party::save() { return persist(); }
+bool Party::boxSave() { return persist(); }
 
 // ---------------------------------------------------------------------------
 // THE FOCUS SWAP'S WRITE-AHEAD JOURNAL.
@@ -319,7 +374,7 @@ static constexpr size_t FOCUS_CAP = FOCUS_FIXED + sizeof(PartyMon) * 2 + CKPT_CR
 
 bool Party::focusBegin(uint8_t slot, const PartyMon &outgoing, bool outgoingIsEgg,
                        const PartyMon &incoming, uint32_t petGenBefore) {
-  if (slot >= PARTY_SLOTS) return false;
+  if (slot >= PARTY_SLOTS || !ready) return false;
   const uint32_t nextGen = focusGeneration + 1;
   uint8_t buf[FOCUS_CAP] = {};
   ckptWr32(buf + CKPT_HDR, petGenBefore);
@@ -333,12 +388,20 @@ bool Party::focusBegin(uint8_t slot, const PartyMon &outgoing, bool outgoingIsEg
 
   uint16_t total = ckptSeal(buf, cur.at, FOCUS_MAGIC, FOCUS_VERSION, nextGen);
   const char *key = ckptSlot(nextGen, "fxA", "fxB");
-  if (prefs.putBytes(key, buf, total) != total) return false;
+  if (prefs.putBytes(key, buf, total) != total) {
+    healthy = false;
+    Serial.println("save: focus journal write failed");
+    return false;
+  }
   // Read back before believing it. An unwritten journal is worse than none: the
   // caller would go on to make the two unprotected writes thinking it was safe.
   uint8_t back[FOCUS_CAP];
   if (ckptRead(prefs, key, FOCUS_MAGIC, back, sizeof(back)) != total ||
-      ckptRd32(back + 8) != nextGen) return false;
+      ckptRd32(back + 8) != nextGen) {
+    healthy = false;
+    Serial.println("save: focus journal verification failed");
+    return false;
+  }
   focusGeneration = nextGen;
   return true;
 }
@@ -347,13 +410,20 @@ bool Party::focusPending(uint8_t *slot, PartyMon *outgoing, bool *outgoingWasEgg
                          PartyMon *incoming, uint32_t *petGenBefore) {
   uint8_t buf[FOCUS_CAP];
   uint16_t n = ckptReadNewest(prefs, "fxA", "fxB", FOCUS_MAGIC, buf, sizeof(buf));
-  if (!n) return false;
+  if (!n) {
+    if (prefs.isKey("fxA") || prefs.isKey("fxB")) {
+      ready = healthy = false;
+      Serial.println("save: focus journals unreadable; recovery required");
+    }
+    return false;
+  }
   const size_t monBytes = ckptRd16(buf + CKPT_HDR + 6);
   const size_t body = n - CKPT_CRC;
   // Validated BEFORE anything is copied out, so a record disagreeing with its
   // own length is refused whole rather than half-applied.
   if (!monBytes || FOCUS_FIXED + monBytes * 2 > body) {
     Serial.println("save: focus journal dimensions do not match its length");
+    ready = healthy = false;
     return false;
   }
   focusGeneration = ckptRd32(buf + 8);
@@ -370,7 +440,7 @@ bool Party::focusPending(uint8_t *slot, PartyMon *outgoing, bool *outgoingWasEgg
   return true;
 }
 
-void Party::focusEnd() {
+bool Party::focusEnd() {
   // BOTH slots, or ckptReadNewest() would keep finding the older one and replay
   // the same swap on every boot forever.
   //
@@ -380,44 +450,58 @@ void Party::focusEnd() {
   // record occupies, so the two would be indistinguishable by age. focusPending()
   // re-reads the counter out of whatever record it finds, so leaving it alone
   // costs nothing and keeps the parity invariant in ckptSlot() true.
-  prefs.remove("fxA");
-  prefs.remove("fxB");
+  for (const char *key : {"fxA", "fxB"}) {
+    if (prefs.isKey(key) && !prefs.remove(key)) {
+      ready = healthy = false;
+      Serial.println("save: focus journal could not be retired; recovery required");
+      return false;
+    }
+  }
+  return true;
 }
 
-uint8_t Party::boxCount() const {
-  uint8_t n = 0;
+uint16_t Party::boxCount() const {
+  uint16_t n = 0;
   for (auto &s : box)
     if (!s.empty()) n++;
   return n;
 }
 
 int Party::boxFirstFree() const {
+  if (!box.data()) return -1;
   for (int i = 0; i < BOX_SLOTS; i++)
     if (box[i].empty()) return i;
   return -1;
 }
 
 bool Party::boxAdd(const PartyMon &m) {
+  if (!ready) { healthy = false; Serial.println("save: box is read-only"); return false; }
   int i = boxFirstFree();
   if (i < 0) return false;
   box[i] = m;
-  boxSave();
-  return true;
-}
-
-void Party::boxReleaseAt(uint8_t i) {
-  if (i >= BOX_SLOTS) return;
+  if (boxSave()) return true;
   box[i] = PartyMon();
-  boxSave();
+  return false;
 }
 
-void Party::swapPartyBox(uint8_t partyIdx, uint8_t boxIdx) {
-  if (partyIdx >= PARTY_SLOTS || boxIdx >= BOX_SLOTS) return;
+bool Party::boxReleaseAt(uint16_t i) {
+  if (i >= BOX_SLOTS || !ready) return false;
+  const PartyMon before = box[i];
+  box[i] = PartyMon();
+  if (boxSave()) return true;
+  box[i] = before;
+  return false;
+}
+
+bool Party::swapPartyBox(uint8_t partyIdx, uint16_t boxIdx) {
+  if (partyIdx >= PARTY_SLOTS || boxIdx >= BOX_SLOTS || !ready) return false;
   PartyMon t = slots[partyIdx];
   slots[partyIdx] = box[boxIdx];
   box[boxIdx] = t;
-  persist();   // ONCE. This used to be save() then boxSave(), which is two full
-               // pair writes for one swap -- see the note above persist().
+  if (persist()) return true;
+  box[boxIdx] = slots[partyIdx];
+  slots[partyIdx] = t;
+  return false;
 }
 
 uint8_t Party::count() const {
@@ -434,23 +518,26 @@ int Party::firstFree() const {
 }
 
 bool Party::add(const PartyMon &m) {
+  if (!ready) { healthy = false; Serial.println("save: party is read-only"); return false; }
   int i = firstFree();
   if (i < 0) return false;
   slots[i] = m;
-  save();
-  return true;
-}
-
-void Party::replaceAt(uint8_t i, const PartyMon &m) {
-  if (i >= PARTY_SLOTS) return;
-  slots[i] = m;
-  save();
-}
-
-void Party::releaseAt(uint8_t i) {
-  if (i >= PARTY_SLOTS) return;
+  if (save()) return true;
   slots[i] = PartyMon();
-  save();
+  return false;
+}
+
+bool Party::replaceAt(uint8_t i, const PartyMon &m) {
+  if (i >= PARTY_SLOTS || !ready) return false;
+  const PartyMon before = slots[i];
+  slots[i] = m;
+  if (save()) return true;
+  slots[i] = before;
+  return false;
+}
+
+bool Party::releaseAt(uint8_t i) {
+  return replaceAt(i, PartyMon());
 }
 
 // Mirrors calcStat() in pet.cpp: base + level + IV contribution + training.

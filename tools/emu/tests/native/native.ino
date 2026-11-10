@@ -9,6 +9,7 @@
 
 Pet pet;
 Preferences control;
+uint8_t *displayAndSprites;
 
 void sfxPlay(uint8_t) {}
 
@@ -27,7 +28,7 @@ void checkMemory() {
   for (size_t index = 0; index < size; index++) memory[index] = uint8_t(index * 17 + 3);
   for (size_t index = 0; index < size; index++)
     require(memory[index] == uint8_t(index * 17 + 3), "PSRAM contents changed");
-  heap_caps_free(memory);
+  displayAndSprites = memory;
   Serial0.println("MILESTONE native-psram-allocation-verified");
 }
 
@@ -113,8 +114,14 @@ void setup() {
   }
   require(pet.badgeMask(1, true) == (1 << 2) && bag.count(IT_MASTERBALL) == 2,
           "native rewards lost across reboot");
-    static uint8_t backup[SAVE_TRANSFER_MAX];
-  require(saveExport(backup, sizeof(backup)) > 0, "native checkpoint backup unavailable");
+  auto *backup = static_cast<uint8_t *>(saveAlloc(SAVE_TRANSFER_MAX));
+  require(backup && saveExport(backup, SAVE_TRANSFER_MAX) > 0,
+          "native checkpoint backup unavailable");
+  free(backup);
+  heap_caps_free(displayAndSprites);
+  const size_t stackMargin = uxTaskGetStackHighWaterMark(nullptr);
+  Serial0.printf("MILESTONE native-production-stack-margin=%u\n", unsigned(stackMargin));
+  require(stackMargin >= 1024, "save path leaves less than 1 KB on the production loop stack");
   Serial0.println("MILESTONE native-reboot-reloaded-checkpoints-and-rewards");
   if (phase == 1) {
     require(control.putUChar("phase", 2) > 0, "cold boot marker failed");

@@ -21,6 +21,10 @@
 //   off 8   the fields
 //   end-2   u16  CRC-16/CCITT-FALSE over everything before it
 //
+// A field is [namespace in v2/v3], key length, key, kind, value length, value.
+// The length is u16 in v1/v2 and u32 in v3. Namespace 0 is the original game;
+// 1 is the dedicated collection. v1 implicitly uses namespace 0.
+//
 // The same verifyBackup() runs on BOTH directions on purpose: the block we hand
 // a player is checked by the identical function that checks the block they hand
 // back. A backup is only worth having if it was verified at the moment it was
@@ -28,7 +32,8 @@
 // to protect may be long gone.
 
 export const SAVE_MAGIC = 'TKPS';
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 3;
+export const SAVE_TRANSFER_MAX = 262144;
 export const SAVE_HEADER_BYTES = 8;
 export const SAVE_CRC_BYTES = 2;
 
@@ -47,6 +52,7 @@ export function crc16(bytes) {
 
 export function hexToBytes(hex) {
   if (hex.length % 2) throw new Error('hex has an odd number of digits');
+  if (!/^[0-9a-f]*$/i.test(hex)) throw new Error('hex contains a non-hex digit');
   const out = new Uint8Array(hex.length / 2);
   for (let i = 0; i < out.length; i++) {
     const byte = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
@@ -67,6 +73,7 @@ export function parseBackup(text) {
   let declared = null;
   let board = null;
   let sawCommit = false;
+  let bytes = 0;
   for (const line of lines) {
     if (line.startsWith('#')) {
       const match = HEADER_RE.exec(line);
@@ -86,6 +93,8 @@ export function parseBackup(text) {
     }
     const hex = line.slice(7);
     if (hex.length % 2) throw new Error('a data line has an odd number of hex digits');
+    bytes += hex.length / 2;
+    if (bytes > SAVE_TRANSFER_MAX) throw new Error('backup exceeds the transfer limit');
     commands.push(line);
   }
   if (!sawCommit) throw new Error('backup is missing its final IMPORT commit line');
@@ -113,7 +122,8 @@ export function verifyBackup(text) {
   }
   const magic = String.fromCharCode(...blob.slice(0, 4));
   if (magic !== SAVE_MAGIC) throw new Error('this is not a TamaPoke save');
-  if (blob[4] !== SAVE_VERSION) {
+  if (blob.length > SAVE_TRANSFER_MAX) throw new Error('backup exceeds the transfer limit');
+  if (blob[4] < 1 || blob[4] > SAVE_VERSION) {
     throw new Error(`save format version ${blob[4]}, this page understands ${SAVE_VERSION}`);
   }
   const body = blob.subarray(0, blob.length - SAVE_CRC_BYTES);
@@ -122,7 +132,99 @@ export function verifyBackup(text) {
   if (got !== want) {
     throw new Error(`checksum mismatch: the data says ${hex4(want)}, the bytes give ${hex4(got)}`);
   }
-  return { ...parsed, fields: blob[5] | (blob[6] << 8) };
+  const entries = readEntries(blob);
+  return { ...parsed, fields: entries.length, version: blob[4] };
+}
+
+const GAME_FIELDS = new Map([
+  ['init', 3], ['petA', 7], ['petB', 7], ['plyA', 7], ['plyB', 7],
+  ['pbA', 7], ['pbB', 7], ['fxA', 7], ['fxB', 7], ['bag', 7],
+  ['lang', 1], ['snd', 3], ['vol', 1], ['brt', 1], ['colv', 1],
+]);
+// Old keys are retained by firmware upgrades and are backed up when present.
+for (const key of ['full', 'joy', 'ene', 'hyg', 'poop', 'wgt', 'crack', 'mist', 'lend',
+  'bond', 'ivat', 'ivdf', 'ivsp', 'ivhp', 'gatk', 'gdef', 'gspe', 'tatk', 'tdef', 'tspe',
+  'mvlv', 'evop', 'slpa', 'avtr', 'reg', 'regn']) GAME_FIELDS.set(key, 1);
+for (const key of ['spec', 'eggT']) GAME_FIELDS.set(key, 2);
+for (const key of ['sleep', 'froz', 'bk', 'shy', 'eshy', 'stpk', 'rtpn']) GAME_FIELDS.set(key, 3);
+for (const key of ['badg', 'badh', 'strk', 'bstrk', 'medal', 'tmedal', 'mstone',
+  'ghi', 'shi', 'qhi', 'mhi']) GAME_FIELDS.set(key, 4);
+for (const key of ['dexn', 'eggT2']) GAME_FIELDS.set(key, 5);
+for (const key of ['age', 'seen', 'cday']) GAME_FIELDS.set(key, 6);
+for (const key of ['mvs', 'eggR', 'badgX', 'badhX', 'dexreg', 'dexsh', 'party', 'box']) GAME_FIELDS.set(key, 7);
+for (const key of ['nick', 'tnam']) GAME_FIELDS.set(key, 8);
+const u16 = (bytes, at) => bytes[at] | (bytes[at + 1] << 8);
+const u32 = (bytes, at) => u16(bytes, at) + u16(bytes, at + 2) * 0x10000;
+const COLLECTION_MAX_BYTES = 96 * 1024;
+
+function collectionValid(bytes) {
+  const n = bytes.length;
+  if (n < 20 || n > COLLECTION_MAX_BYTES) return false;
+  const magic = String.fromCharCode(...bytes.subarray(0, 4));
+  let dims;
+  if (magic === 'KBC3') {
+    if (n < 24 || u32(bytes, 8) !== n) return false;
+    dims = u16(bytes, 6);
+    if (dims < 16 || dims > n - 8) return false;
+  } else if (magic === 'KBC2') {
+    if (u16(bytes, 6) !== n) return false;
+    dims = 12;
+  } else return false;
+  if (crc16(bytes.subarray(0, n - 2)) !== u16(bytes, n - 2)) return false;
+  const stride = u16(bytes, dims);
+  const party = u16(bytes, dims + 2), box = u16(bytes, dims + 4);
+  const offset = dims + 6, records = party + box;
+  if (stride < 2 || !party || party > 6 || !box || box > 1200
+      || stride > Math.floor((n - offset - 2) / records)) return false;
+  for (let i = 0; i < records; i++) {
+    // The board checks species support; the browser must not freeze its dex ceiling.
+    if (u16(bytes, offset + i * stride) > 0x7fff) return false;
+  }
+  return true;
+}
+
+// v1 has no namespace byte. v2/v3 distinguish the original game from the
+// collection partition. Unknown namespaces/keys cannot be skipped in v2/v3.
+function readEntries(blob) {
+  if (blob.length < SAVE_HEADER_BYTES + SAVE_CRC_BYTES || blob[7]
+      || blob[4] < 1 || blob[4] > SAVE_VERSION) throw new Error('unsupported save header');
+  let at = SAVE_HEADER_BYTES;
+  const end = blob.length - SAVE_CRC_BYTES;
+  const lengthBytes = blob[4] >= 3 ? 4 : 2;
+  const entries = [];
+  const seen = new Set();
+  while (at < end) {
+    const space = blob[4] >= 2 ? blob[at++] : 0;
+    if (space !== 0 && space !== 1) throw new Error('unknown save namespace');
+    const klen = blob[at++];
+    if (!klen || klen > 15 || klen + 1 + lengthBytes > end - at) throw new Error('invalid field key length');
+    const keyBytes = blob.subarray(at, at + klen);
+    if (keyBytes.some((b) => b < 33 || b > 126)) throw new Error('invalid field key');
+    const key = String.fromCharCode(...keyBytes);
+    at += klen;
+    const kind = blob[at++];
+    const length = lengthBytes === 4 ? u32(blob, at) : u16(blob, at);
+    at += lengthBytes;
+    const width = [0, 1, 1, 1, 2, 2, 4][kind] || 0;
+    if (kind < 1 || kind > 8 || length > COLLECTION_MAX_BYTES || length > end - at
+        || (width && length !== width) || (kind === 7 && !length)
+        || (kind === 8 && (length >= 63 || blob.subarray(at, at + length).includes(0)))
+        || (kind === 3 && blob[at] > 1)) throw new Error('invalid field value length or kind');
+    const id = `${space}/${key}`;
+    if (seen.has(id)) throw new Error('duplicate save field');
+    seen.add(id);
+    if (blob[4] >= 2 && (space === 0 ? GAME_FIELDS.get(key) !== kind
+      : !((key === 'active' && kind === 3) || (['cbA', 'cbB'].includes(key) && kind === 7)))) {
+      throw new Error('unknown save field or namespace');
+    }
+    entries.push({ space, key, kind, value: blob.subarray(at, at + length) });
+    at += length;
+  }
+  if (at !== end || entries.length !== u16(blob, 5)) throw new Error('save field count or length mismatch');
+  const active = entries.some((e) => e.space === 1 && e.key === 'active' && e.value[0]);
+  if (blob[4] >= 2 && (!active || !entries.some((e) => e.space === 1 && ['cbA', 'cbB'].includes(e.key)
+    && collectionValid(e.value)))) throw new Error('active collection has no valid checkpoint');
+  return entries;
 }
 
 function hex4(v) {
@@ -131,7 +233,7 @@ function hex4(v) {
 
 // Reads the few fields worth showing a player, so a stored backup can be
 // labelled with something recognisable instead of only a timestamp. Walks the
-// key-driven format save.cpp writes: klen, key, kind, u16 length, value.
+// key-driven format save.cpp writes, including the version's length width.
 //
 // Deliberately TOLERANT: it is only used for a label, so anything it cannot make
 // sense of comes back undefined rather than throwing and losing the backup a
@@ -139,18 +241,9 @@ function hex4(v) {
 export function describeBackup(blob) {
   const out = {};
   try {
-    let at = SAVE_HEADER_BYTES;
-    const end = blob.length - SAVE_CRC_BYTES;
-    while (at + 4 <= end) {
-      const klen = blob[at];
-      if (!klen || at + 1 + klen + 3 > end) break;
-      const key = String.fromCharCode(...blob.subarray(at + 1, at + 1 + klen));
-      at += 1 + klen + 1;                       // key, then the kind byte
-      const len = blob[at] | (blob[at + 1] << 8);
-      at += 2;
-      if (at + len > end) break;
-      const value = blob.subarray(at, at + len);
-      at += len;
+    for (const { space, key, value } of readEntries(blob)) {
+      if (space !== 0) continue;
+      const len = value.length;
       if (key === 'tnam' && len) out.trainer = trimText(value);
       else if (key === 'dexn' && len >= 2) out.dex = (value[0] | (value[1] << 8)) << 16 >> 16;
       else if (key === 'age' && len >= 4) {
@@ -241,7 +334,7 @@ export async function sendBackup(commands, io) {
   // A late reply to the probe above must not be read as the commit's answer.
   io.resetQueue?.();
   await io.writeLine('IMPORT');
-  const result = await io.waitForAny(['IMPORT OK', 'IMPORT REJECTED', 'IMPORT EMPTY'], 15000);
+  const result = await io.waitForAny(['IMPORT OK', 'IMPORT REJECTED', 'IMPORT EMPTY'], 60000);
   if (result !== 'IMPORT OK') throw new Error(result || 'the board did not answer');
   return { acknowledged: acknowledges };
 }

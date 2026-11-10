@@ -22,6 +22,10 @@ String FakeSerial::readStringUntil(char){return String("");}
 void setup(); void render(); void onSwipe(int dir); void onSwipeV(int dir);
 void onTap(int16_t x, int16_t y);
 void onRim(int dir);
+bool boxHubHold(int16_t, int16_t);
+void boxJumpRect(int, int *, int *, int *, int *);
+void boxTap(int16_t, int16_t);
+extern bool boxJumpOpen;
 int uiTileIndex(); void uiTileGo(int i);
 uint8_t uiCurrentScreen(); uint8_t uiRimPages(); uint8_t uiRimPage();
 extern Pet pet;
@@ -34,7 +38,8 @@ extern uint8_t galleryPage; extern bool galleryDirty; extern uint8_t galleryDeta
 extern uint8_t galleryRegion;
 extern uint8_t gymRegion;
 extern bool gymPick, galleryPick;
-extern uint8_t movePickSlot, movePickParty, boxSel, boxSwapFrom;
+extern uint8_t movePickSlot, movePickParty, boxSwapFrom;
+extern uint16_t boxSel;
 extern uint16_t squadMask;
 extern uint8_t pickTrainer; extern bool pickHard;
 extern bool bagOpen; extern uint8_t bagPage;
@@ -58,7 +63,7 @@ static void clearAll(){
   trainOpen=movePickOpen=battleOpen=gymOpen=playerOpen=boxOpen=pickOpen=false;
   exploreOpen=false;
   bagOpen=false;
-  partyDetail=0; boxSel=boxSwapFrom=0;
+  partyDetail=0; boxSel=boxSwapFrom=0; boxJumpOpen=false;
 }
 // Page it forward; the page must advance and the screen must stay open. Paging
 // moved from the horizontal swipe to the RIM, which is what freed the
@@ -87,13 +92,32 @@ int main(){
   while (pet.hasLearnOffer()) pet.declineLearn();
   for (int i=0;i<PARTY_SLOTS;i++){ PartyMon m; m.dex=9+i; m.level=40;
     m.ivAtk=m.ivDef=m.ivSpe=m.ivHp=20; party.replaceAt(i,m); }
-  for (int i=0;i<BOX_SLOTS;i++){ PartyMon m; m.dex=1+i; m.level=20;
+  for (int i=0;i<BOX_SLOTS;i++){ PartyMon m; m.dex=1+i%DEX_COUNT; m.level=20;
     m.ivAtk=m.ivDef=m.ivSpe=m.ivHp=20; party.box[i]=m; }
 
   clearAll(); cardOpen=true;                      check("card",     &cardOpen,     &cardPage);
   clearAll(); gymOpen=true; gymPick=false;        check("gyms",     &gymOpen,      &gymPage);
   clearAll(); playerOpen=true;                    check("player",   &playerOpen,   &playerPage);
   clearAll(); partyOpen=true; boxOpen=true;       check("box",      &boxOpen,      &boxPage);
+  {
+    const uint8_t last = uiRimPages() - 1;
+    boxPage = 0;
+    if (!boxHubHold(233, 224)) { printf("FAIL box jump did not open\n"); bad++; }
+    int x, y, w, h;
+    boxJumpRect(1, &x, &y, &w, &h);
+    boxTap(x+w/2, y+h/2);
+    if (boxPage != 10 || !boxJumpOpen) { printf("FAIL box jump +10\n"); bad++; }
+    for (int i=0;i<30;i++) boxTap(x+w/2, y+h/2);
+    if (boxPage != last) { printf("FAIL box jump far-end clamp\n"); bad++; }
+    boxJumpRect(-1, &x, &y, &w, &h);
+    for (int i=0;i<30;i++) boxTap(x+w/2, y+h/2);
+    if (boxPage != 0) { printf("FAIL box jump near-end clamp\n"); bad++; }
+    onSwipeV(1);
+    if (!boxOpen || boxJumpOpen) { printf("FAIL box jump BACK\n"); bad++; }
+    onSwipeV(1);
+    if (boxOpen) { printf("FAIL box BACK\n"); bad++; }
+    printf("PASS box grouped navigation and BACK exercised\n");
+  }
   clearAll(); movePickOpen=true; movePickParty=0; movePickSlot=0;
                                                   check("movepick", &movePickOpen, &movePickPage);
   clearAll(); pickTrainer=7; pickHard=false; pickDefault(squadCap(7,false)); pickOpen=true;

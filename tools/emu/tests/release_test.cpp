@@ -15,6 +15,7 @@
 #include "Preferences.h"
 #include "pet.h"
 #include "party.h"
+#include "inventory.h"
 #include <cstdio>
 #include <cstring>
 #include <chrono>
@@ -26,6 +27,17 @@ int FakeSerial::available(){return 0;}
 String FakeSerial::readStringUntil(char){return String("");}
 void setup(); void loop(); void render();
 void partyTap(int16_t,int16_t); void boxTap(int16_t,int16_t);
+void onTap(int16_t,int16_t);
+void drawSaveWarning();
+bool startWildBattle(uint8_t, bool);
+void battleTap(int16_t,int16_t);
+int btlCellIndexAt(int16_t,int16_t);
+extern bool battleOpen, btlOver, wildCaught;
+extern uint8_t btlMenu, btlBagPage, btlMsgCount;
+uint8_t learnableList(uint8_t *, uint8_t);
+extern Arduino_Canvas *gfx;
+extern bool gNvsLow;
+extern uint8_t movePickParty, movePickSlot, movePickPage;
 uint8_t uiCurrentScreen();
 extern const char *const SCREEN_NAME[];
 extern uint32_t confirmUntil;
@@ -33,7 +45,10 @@ extern uint8_t dimStage;
 extern bool holdFired;
 extern Pet pet;
 extern bool partyOpen, boxOpen, movePickOpen, releaseConfirm;
-extern uint8_t partyDetail, boxDetail, boxSwapFrom, boxSel;
+extern uint8_t partyDetail, boxSwapFrom;
+extern uint16_t boxDetail, boxSel;
+extern uint8_t boxPage, boxSort;
+extern bool partyPick, handoverStored, boxJumpOpen;
 
 static int bad=0;
 static void ck(bool ok,const char*w){printf("%s  %s\n",ok?"PASS":"FAIL",w); if(!ok)bad++;}
@@ -81,8 +96,11 @@ static PartyMon mon(int16_t dex, uint16_t lvl, const char *nick){
 }
 static void clearAll(){
   for(int i=0;i<PARTY_SLOTS;i++) party.releaseAt(i);
-  for(int i=0;i<BOX_SLOTS;i++) party.boxReleaseAt(i);
+  for(auto &m : party.box) m = PartyMon();
+  party.boxSave();
   partyOpen=boxOpen=movePickOpen=releaseConfirm=false;
+  partyPick=handoverStored=boxJumpOpen=false;
+  boxPage=boxSort=0;
   partyDetail=boxDetail=boxSwapFrom=boxSel=0;
 }
 
@@ -177,6 +195,133 @@ int main(){
   }
 
   // ---- MAKE ACTIVE, tapped where a thumb actually lands
+  {
+    clearAll();
+    const uint16_t last = BOX_SLOTS - 1;
+    party.box[last] = mon(143,40,"LAST");
+    party.boxSave();
+    partyOpen=boxOpen=true;
+    boxPage=BOX_SLOTS/6-1;
+    boxTap(SLOT_X(5), SLOT_Y(5));
+    ck(boxDetail == BOX_SLOTS, "the last page opens the last real box slot");
+    nvsFailWritesAfter(0);
+    boxTap(primaryX, primaryY);
+    ck(boxDetail == BOX_SLOTS && party.count() == 0 && party.box[last].dex == 143,
+       "failed withdrawal retains its sheet and does not announce a move");
+    nvsResumeWrites();
+    boxTap(secondaryX, secondaryY);
+    nvsFailWritesAfter(0);
+    boxTap(CONF_X, CONF_YES_Y);
+    ck(releaseConfirm && boxDetail == BOX_SLOTS && party.box[last].dex == 143,
+       "failed release keeps the creature and its confirmation");
+    nvsResumeWrites();
+    boxTap(CONF_X, CONF_NO_Y);
+    boxTap(primaryX, primaryY);
+    ck(!boxDetail && party.slots[0].dex == 143 && party.box[last].empty(),
+       "retry withdraws the same high-index creature");
+
+    clearAll();
+    for (int i=0;i<PARTY_SLOTS;i++) party.slots[i]=mon(10+i,30,"PARTY");
+    party.box[last]=mon(143,40,"LAST");
+    party.save();
+    partyOpen=boxOpen=true; boxPage=BOX_SLOTS/6-1;
+    boxTap(SLOT_X(5), SLOT_Y(5));
+    boxTap(primaryX, primaryY);
+    ck(boxSel == BOX_SLOTS, "the replacement picker retains a high box index");
+    nvsFailWritesAfter(0);
+    partyTap(SLOT_X(2), SLOT_Y(2));
+    ck(boxSel == BOX_SLOTS && party.slots[2].dex == 12 && party.box[last].dex == 143,
+       "failed replacement leaves both creatures and the pending selection");
+    nvsResumeWrites();
+    partyTap(SLOT_X(2), SLOT_Y(2));
+    ck(!boxSel && party.slots[2].dex == 143 && party.box[last].dex == 12,
+       "retry exchanges the selected high-index creature");
+  }
+
+  // ---- a failed handover is neither a full collection nor permission to drop it
+  {
+    clearAll();
+    pet.setEnded(mon(25,30,"WAIT"), CER_RELEASE);
+    nvsFailWritesAfter(0);
+    loop();
+    ck(pet.endedKind != CER_NONE && !partyPick && party.count() == 0,
+       "failed automatic add preserves the handover without an overwrite prompt");
+    nvsResumeWrites();
+    loop();
+    ck(pet.endedKind == CER_NONE && party.count() == 1 && party.slots[0].dex == 25,
+       "retry persists the handover before consuming it");
+    clearAll();
+    pet.setEnded(mon(133,30,"ACK"), CER_RELEASE);
+    nvsFailWritesAfter(1);
+    loop();
+    ck(handoverStored && pet.endedKind != CER_NONE && party.count() == 1,
+       "a failed pet acknowledgement retains the pending handover");
+    nvsResumeWrites();
+    loop();
+    ck(!handoverStored && pet.endedKind == CER_NONE && party.count() == 1,
+       "acknowledgement retry does not bank the same creature twice");
+  }
+
+  {
+    clearAll();
+    party.slots[0]=mon(6,100,"MOVES");
+    party.save();
+    partyOpen=true; movePickOpen=true;
+    movePickParty=1; movePickSlot=0; movePickPage=0;
+    uint8_t choices[64];
+    ck(learnableList(choices,sizeof(choices)) > 1, "the party move picker has real choices");
+    party.slots[0].moves[0]=choices[1];
+    party.save();
+    uint8_t before[MOVE_SLOTS];
+    memcpy(before,party.slots[0].moves,sizeof(before));
+    nvsFailWritesAfter(0);
+    onTap(233,90);
+    ck(movePickOpen && !memcmp(before,party.slots[0].moves,sizeof(before)),
+       "failed party move edit restores the old moves and leaves the picker open");
+    gfx->fillScreen(RGB565_BLACK);
+    gNvsLow=false;
+    drawSaveWarning();
+    bool warning=false;
+    for (auto pixel : gfx->fb) if (pixel != RGB565_BLACK) warning=true;
+    ck(pet.saveHealthy() && !party.saveHealthy() && warning,
+       "a collection failure alone draws the real save warning");
+    nvsResumeWrites();
+    onTap(233,90);
+    ck(!movePickOpen && party.slots[0].moves[0] == choices[0],
+       "retry commits the party move edit before closing the picker");
+    movePickParty=0;
+  }
+
+  {
+    clearAll();
+    partyOpen=false;
+    bag.clear();
+    bag.add(IT_MASTERBALL,2);
+    gRegionArt=0xFFFF;
+    if (pet.isEgg()) pet.dbgHatchAs(6,false);
+    ck(startWildBattle(0,false), "a real wild encounter is available for the storage-failure check");
+    btlMsgCount=0; btlMenu=3; btlBagPage=0;
+    int left=466,right=0,top=466,bottom=0;
+    for (int y=0;y<466;y++) for (int x=0;x<466;x++)
+      if (btlCellIndexAt(x,y)==0) {
+        if(x<left)left=x; if(x>right)right=x;
+        if(y<top)top=y; if(y>bottom)bottom=y;
+      }
+    // The ball decrement commits first; collection persistence then fails.
+    nvsFailWritesAfter(1);
+    battleTap((left+right)/2,(top+bottom)/2);
+    ck(battleOpen && !btlOver && !wildCaught && party.count()==0 &&
+       pet.endedKind==CER_NONE,
+       "failed capture persistence retains the encounter without claiming a catch or replacement prompt");
+    nvsResumeWrites();
+    btlMsgCount=0; btlMenu=3;
+    battleTap((left+right)/2,(top+bottom)/2);
+    ck(btlOver && wildCaught && party.count()==1,
+       "retry catches and banks the same encounter after storage recovers");
+    battleOpen=false;
+  }
+
+  // ---- MAKE ACTIVE, tapped where a thumb actually lands
   //
   // With an egg waiting it must work, AND it must work from the panel's centre
   // line, which is where the old action was drawn full-width and where a thumb
@@ -209,6 +354,17 @@ int main(){
   // feature and still pass -- and an earlier version of this check did exactly
   // that, silently, until the old gate was put back and it stayed green.
   {
+    clearAll();
+    partyOpen=boxOpen=true;
+    tap(440,440);  // wake without hitting a control
+    boxOpen=true;
+    uint8_t oldSort=boxSort;
+    tap(233,224);
+    ck(boxSort != oldSort && !boxJumpOpen, "a hub tap still changes the box order");
+    hold(233,224,1200);
+    ck(boxJumpOpen && boxSort != oldSort, "a one-second hub hold opens grouped pages without sorting again");
+    boxJumpOpen=false;
+
     clearAll();
     party.slots[0]=mon(25,30,"PIKA");
     party.save();

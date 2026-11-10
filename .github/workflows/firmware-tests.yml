@@ -41,13 +41,13 @@ jobs:
           printf '%s  esp-emu.tar.gz\n' '340316dda477602fafe5e994c7e535f667d1ca654f890f99c2b7ea391eb1644b' | sha256sum --check --strict
           mkdir esp-emu
           tar -xzf esp-emu.tar.gz -C esp-emu --strip-components=1
-      - name: Native-first firmware, workflow, migration and original-defect gates
+      - name: Native-first firmware, partition, workflow, migration and original-defect gates
         env:
           TAMA_TEST_BACKEND: "auto"
           TAMA_ESP_EMULATOR: ${{ runner.temp }}/esp-emu/esp-emu
           TAMA_TEST_JOBS: "2"
           TAMA_TEST_LOG_DIR: ${{ runner.temp }}/tamapoke-test-logs
-        run: node tools/emu/tests/bounded.mjs 2400 --require 'PASS migrated native suites:' --require 'PASS native post-panic fresh-process persistence;' -- bash tools/emu/tests/run.sh
+        run: node tools/emu/tests/bounded.mjs 2400 --require 'PASS compiled partition contract:' --require 'PASS 1000 real UI captures -> four exec cold reloads' --require 'PASS migrated native suites:' --require 'PASS native post-panic fresh-process persistence;' -- bash tools/emu/tests/run.sh
       - name: Retain test evidence
         if: always()
         uses: actions/upload-artifact@v4

@@ -46,6 +46,12 @@ bash tools/build_web.sh        # recompiles -> firmware/, dex.json, the JS cache
 
 ## Test locally
 
+`node tools/check_savefile.mjs` verifies both save versions. For a cross-language
+expanded fixture, run the host `console_test` with
+`TAMA_SAVE_FIXTURE=expanded.tpsave`, then run the JS test with
+`TAMA_EXPANDED_SAVE_FIXTURE=expanded.tpsave`. The file is the real firmware console
+output; the JS test checks both collection copies and populated slot 1199.
+
 Web Serial and ESP Web Tools need a **secure context**: `https://` or
 `http://localhost`. Serve the **repository root**, not `web/`: the page reads
 `../docs/` for its screenshots and release notes.
@@ -86,6 +92,24 @@ python3 -m http.server 8000
    different board, streams the `IMPORT` commands with flow control, and lets the
    firmware validate the whole checksum before NVS is changed. The page reconnects
    by itself when the board has restarted.
+   Current backups include both copies of the entire 1200-slot collection and
+   use save format v3; older firmware refuses these files rather than importing
+   only part of them. Install current firmware before restoring a v3 backup.
+   Original v1 and v2 backups are still accepted and migrated. Restores are staged and
+   read back in the dedicated collection partition before replacing any game
+   data. If power fails during replacement, boot resumes the complete restore
+   before loading the game. Keep the `.tpsave` download until recovery finishes;
+   a full collection backup or restore may take a minute.
+   The transfer limit is 262144 bytes. v3 retains the eight-byte `TKPS` header,
+   field count and trailing CRC-16, but uses explicit field namespaces and
+   little-endian 32-bit value lengths, so an individual collection checkpoint
+   can grow past 65535 bytes. v1/v2 retain their 16-bit value lengths. Both
+   historical `KBC2` and current `KBC3` collection checkpoints are verified,
+   including their own lengths, CRCs, dimensions and signed species-number
+   representation. The browser does not hardcode the current dex ceiling;
+   firmware checks species against its own compiled table before accepting a restore.
+   A retry removes any uncommitted staging blob before writing its replacement;
+   a committed restore must finish recovery first.
 5. Firmware v3.25 and older loads the Pokedex thumbnails only at boot, so restart
    it after changing packs; later firmware reloads them by itself.
 

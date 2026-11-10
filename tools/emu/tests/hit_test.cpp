@@ -61,6 +61,7 @@ int uiHeaderNameBottom();
 void partySlotPos(int i, int *cx, int *cy);
 int partySlotAt(int16_t x, int16_t y);
 bool partyHubAt(int16_t x, int16_t y);
+void boxJumpRect(int, int *, int *, int *, int *);
 #include "badges.h"
 #include "trainers.h"
 bool badgeArtExists(uint8_t region, uint8_t i);
@@ -554,6 +555,17 @@ int main(){
       if (uiSafeHalfWidth(y) < uiTrainPanelHalfW()) off++;
     }
     ck(off == 0, "and the panel's own corners are on the glass");
+  }
+  {
+    for (int dir = -1; dir <= 1; dir += 2) {
+      int x, y, w, h;
+      boxJumpRect(dir, &x, &y, &w, &h);
+      ck(w >= uiTapFinger() && h >= uiTapFinger(),
+         "grouped box navigation controls reach the finger floor");
+      ck(x >= 233-uiSafeHalfWidth(y) && x+w <= 233+uiSafeHalfWidth(y) &&
+         x >= 233-uiSafeHalfWidth(y+h) && x+w <= 233+uiSafeHalfWidth(y+h),
+         "grouped box navigation corners remain on the glass");
+    }
   }
 done:
 

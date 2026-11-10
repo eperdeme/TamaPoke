@@ -40,6 +40,7 @@ async function main() {
     if (file.endsWith('.h') || ['pet.cpp', 'party.cpp', 'inventory.cpp', 'i18n.cpp', 'save.cpp',
       ...(suites.length ? ['gbsynth.cpp', 'battle.cpp', 'link.cpp', 'wild.cpp'] : [])].includes(file))
       await cp(join(root, file), join(sketch, file));
+  await cp(join(root, 'partitions.csv'), join(sketch, 'partitions.csv'));
   await cp(join(here, suites.length ? 'native/suite.ino' : 'native/native.ino'), join(sketch, 'native.ino'));
   if (suites.length) {
     await cp(join(here, 'test_nvs.h'), join(sketch, 'test_nvs.h'));
@@ -63,8 +64,33 @@ async function main() {
     ...(suites.length ? ['--build-property', 'compiler.cpp.extra_flags=-DTAMA_NATIVE_TEST -UNDEBUG'] : []), sketch],
     { timeoutMs: 600000 });
   await compile();
+  await checked('partition-contract', ['python3', join(root, 'tools/check_installer.py'), '--partitions',
+    join(build, 'native.ino.partitions.bin')], { timeoutMs: 10000,
+    required: ['PASS compiled partition contract:', 'PASS compiled partition negative controls:'] });
   const flash = join(directory, 'flash.bin');
-  await cp(join(build, 'native.ino.merged.bin'), flash);
+  const table = await readFile(join(build, 'native.ino.partitions.bin'));
+  const reserved = [];
+  for (let at = 0; at + 32 <= table.length && table.readUInt16LE(at) === 0x50AA; at += 32) {
+    if (table.subarray(at + 12, at + 28).toString('ascii').split('\0')[0] === 'tpstate')
+      reserved.push({ offset: table.readUInt32LE(at + 4), size: table.readUInt32LE(at + 8) });
+  }
+  assert.equal(reserved.length, 1, 'reserved app-state partition must be present once');
+  const state = reserved[0];
+  // Non-erased data makes an accidental initialization or erase observable.
+  const canary = Buffer.alloc(state.size);
+  for (let index = 0; index < canary.length; ++index) canary[index] = (index * 17 + 0x5A) & 255;
+  async function seedFlash() {
+    const image = await readFile(join(build, 'native.ino.merged.bin'));
+    assert(state.offset + state.size <= image.length, 'reserved region exceeds the flash image');
+    canary.copy(image, state.offset);
+    await writeFile(flash, image);
+  }
+  async function checkReserved() {
+    const image = await readFile(flash);
+    assert(canary.equals(image.subarray(state.offset, state.offset + state.size)),
+      'firmware modified the unused app-state reservation');
+  }
+  await seedFlash();
   const command = [emulator, '--chip', 'esp32s3', '--firmware', flash,
     '--elf', join(build, 'native.ino.elf'), '--psram-size', '8M', '--save-state', '--timeout', suites.length ? '300s' : '90s',
     '--net', 'user,restrict=yes', '--log-color', 'never'];
@@ -72,7 +98,7 @@ async function main() {
     const select = (index) => ['--inject-on', 'MILESTONE native-suite-ready', '--inject', `${index}\\n`];
     async function runSuites(suffix = '') {
       for (const [index, suite] of suites.entries()) {
-        await cp(join(build, 'native.ino.merged.bin'), flash);
+        await seedFlash();
         const complete = `PASS native-suite-complete ${suite} result=0`;
         const output = await checked(`${suite}${suffix}`, [...command, ...select(index), '--exit-on', complete], {
           timeoutMs: 310000, required: ['MILESTONE native-suite-ready', `MILESTONE native-suite-started ${suite}`, complete],
@@ -82,8 +108,10 @@ async function main() {
         const finished = [...output.matchAll(/^PASS native-suite-complete (\w+) result=0\r?$/gm)].map((match) => match[1]);
         assert.deepEqual(started, [suite], 'native suite missed its start or ran an unselected suite');
         assert.deepEqual(finished, [suite], 'native suite missed or repeated its completion');
+        await checkReserved();
         console.log(`PASS native suite: ${suite}`);
       }
+      console.log(`PASS native reserved app-state unchanged: ${suites.length} suites`);
       console.log(`PASS native-suite-matrix complete: ${suites.length}`);
     }
     await runSuites();
@@ -94,13 +122,14 @@ async function main() {
       try {
         await writeFile(file, original.replace('0xEDB88320u', '0xEDB88321u'));
         await compile('compile-negative');
-        await cp(join(build, 'native.ino.merged.bin'), flash);
+        await seedFlash();
         await checked('negative', [...command, ...select(0), '--exit-on', 'FAIL native-suite-complete crc32_test result=1'], {
           timeoutMs: 100000,
           required: ['MILESTONE native-suite-started crc32_test', 'FAIL  CRC-32 matches the published check value',
             'FAIL native-suite-complete crc32_test result=1'],
           rejected: ['PASS native-suite-matrix', 'Firmware abort', 'Task watchdog got triggered', 'Timeout reached'],
         });
+        await checkReserved();
       } finally { await writeFile(file, original); }
       await compile('compile-restored');
       await runSuites('-restored');
@@ -118,6 +147,7 @@ async function main() {
     rejected: ['FAIL native:', 'Guru Meditation', 'Timeout reached', 'Task watchdog got triggered'],
   });
   const after = await readFile(flash);
+  await checkReserved();
   assert(before.length === after.length && !before.subarray(0x9000, 0xe000).equals(after.subarray(0x9000, 0xe000)),
     'native flash must contain actual NVS writes');
   assert(before.subarray(0x10000, 0x310000).equals(after.subarray(0x10000, 0x310000)),
@@ -132,12 +162,15 @@ async function main() {
   await writeFile(join(directory, 'cold-watchdog.log'), watchdog.output);
   assert(watchdog.code === 1 && watchdog.failure === 'exit=1 signal=none',
     `expected real task watchdog panic, not an unrelated failure: ${watchdog.failure}`);
+  await checkReserved();
   console.log('PASS native cold-process persistence and intentional real task watchdog panic');
   await checked('post-panic', [...command, '--exit-on', 'PASS native storage-and-watchdog complete'], {
     timeoutMs: 100000,
     required: ['MILESTONE native-post-panic-process-persistence', 'PASS native storage-and-watchdog complete'],
     rejected: ['FAIL native:', 'Timeout reached', 'Task watchdog got triggered', 'Firmware abort'],
   });
+  await checkReserved();
+  console.log('PASS native reserved app-state unchanged across migration, reboots and panic');
   console.log('PASS native post-panic fresh-process persistence; automatic watchdog reboot is not emulated');
 }
 

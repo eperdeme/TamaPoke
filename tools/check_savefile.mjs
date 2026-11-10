@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
   crc16, hexToBytes, parseBackup, verifyBackup, describeBackup, sendBackup,
-  saveSummary, backupFileName, SAVE_CRC_BYTES,
+  saveSummary, backupFileName, SAVE_CRC_BYTES, SAVE_TRANSFER_MAX,
 } from '../web/savefile.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -59,6 +59,7 @@ ck(crc16(new Uint8Array(0)) === 0xffff, 'and an empty input is the init value');
 ck(hexToBytes('544B5053').join(',') === '84,75,80,83', 'hex decodes to the right bytes');
 ckThrows(() => hexToBytes('ABC'), 'odd', 'odd-length hex is refused');
 ckThrows(() => hexToBytes('ZZ'), 'non-hex', 'non-hex digits are refused');
+ckThrows(() => hexToBytes('0Z'), 'non-hex', 'partially valid hex pairs are refused too');
 
 // ---- the golden fixture, produced by the firmware itself
 const parsed = verifyBackup(golden);
@@ -72,6 +73,216 @@ ck(parsed.fields > 40, `the field count reads back sensibly (${parsed.fields})`)
 const described = describeBackup(parsed.blob);
 console.log(`      label from the blob: dex=${described.dex} age=${described.ageMinutes}`);
 ck(described.dex === 6, 'the label reads the species the fixture was built with (CHARIZARD)');
+ck(parsed.version === 1, 'the original firmware-produced v1 backup remains supported');
+if (process.env.TAMA_EXPANDED_SAVE_FIXTURE) {
+  const expanded = verifyBackup(readFileSync(process.env.TAMA_EXPANDED_SAVE_FIXTURE, 'utf8'));
+  ck(expanded.version === 3 && expanded.blob.length > 135000,
+     'the real console-emitted future-stride v3 backup verifies in the browser');
+  let at = 8, found = 0, newest = null, newestDims = 0;
+  const transfer = new DataView(expanded.blob.buffer, expanded.blob.byteOffset, expanded.blob.length);
+  while (at < expanded.blob.length - 2) {
+    const space = expanded.blob[at++], k = expanded.blob[at++];
+    const key = Buffer.from(expanded.blob.subarray(at, at + k)).toString(); at += k + 1;
+    const length = transfer.getUint32(at, true); at += 4;
+    if (space === 1 && ['cbA', 'cbB'].includes(key)) {
+      const value = new DataView(expanded.blob.buffer, expanded.blob.byteOffset + at, length);
+      const dims = value.getUint16(6, true);
+      ck(value.getUint16(dims + 4, true) === 1200 && value.getUint16(dims, true) === 56 &&
+         length > 65535, `real ${key} individually exceeds 65535 bytes with all 1200 future-stride records`);
+      if (!newest || value.getUint32(12, true) > newest.getUint32(12, true)) {
+        newest = value;
+        newestDims = dims;
+      }
+      found++;
+    }
+    at += length;
+  }
+  ck(found === 2, 'both real firmware collection slots are present, not silently omitted');
+  const last = newest && newestDims + 6
+    + newest.getUint16(newestDims, true) * (newest.getUint16(newestDims + 2, true) + 1199);
+  ck(newest && newest.getInt16(last, true) === 1025 && newest.getUint16(last + 2, true) === 88,
+     'the real authoritative collection contains the correct dex and level in slot 1199');
+}
+
+// Historical transfers and future-stride snapshots, independently of the small
+// v1 fixture. The real console fixture above is the cross-language evidence.
+function backupText(blob, reseal = true) {
+  if (reseal) {
+    const c = crc16(blob.subarray(0, blob.length - 2));
+    blob[blob.length - 2] = c & 255; blob[blob.length - 1] = c >> 8;
+  }
+  const hex = Buffer.from(blob).toString('hex');
+  return `# TamaPoke save, ${blob.length} bytes.\n`
+    + hex.match(/.{1,192}/g).map((chunk) => `IMPORT ${chunk}`).join('\n') + '\nIMPORT\n';
+}
+function backupBlob(entries, version = 3) {
+  const bytes = [84, 75, 80, 83, version, entries.length & 255, entries.length >> 8, 0];
+  for (const { space, key, kind, value } of entries) {
+    if (version < 3 && value.length > 65535) throw new Error('test fixture exceeds a legacy field length');
+    if (version >= 2) bytes.push(space);
+    bytes.push(key.length, ...Buffer.from(key), kind);
+    for (let b = 0; b < (version >= 3 ? 4 : 2); b++) bytes.push((value.length >>> (8 * b)) & 255);
+    for (const b of value) bytes.push(b);
+  }
+  return new Uint8Array([...bytes, 0, 0]);
+}
+const v2Backup = (entries) => backupBlob(entries, 2);
+function collectionRecord({ wide = false, stride = 48, headerSize = 16, tail = 0 } = {}) {
+  const dims = wide ? headerSize : 12;
+  const offset = dims + 6;
+  const value = new Uint8Array(offset + stride * (6 + 1200) + tail + 2);
+  const view = new DataView(value.buffer);
+  value.set(Buffer.from(wide ? 'KBC3' : 'KBC2'));
+  view.setUint16(4, 1, true);
+  if (wide) {
+    view.setUint16(6, headerSize, true);
+    view.setUint32(8, value.length, true);
+    view.setUint32(12, 1, true);
+  } else {
+    if (value.length > 65535) throw new Error('test fixture exceeds a KBC2 size');
+    view.setUint16(6, value.length, true);
+    view.setUint32(8, 1, true);
+  }
+  view.setUint16(dims, stride, true);
+  view.setUint16(dims + 2, 6, true);
+  view.setUint16(dims + 4, 1200, true);
+  if (stride > 48) {
+    for (let i = 0; i < 6 + 1200; i++) value.fill(0xa5, offset + stride * i + 48, offset + stride * (i + 1));
+  }
+  const last = offset + stride * (6 + 1199);
+  value[last] = 1025 & 255; value[last + 1] = 1025 >> 8;
+  value[last + 2] = 88;
+  const c = crc16(value.subarray(0, value.length - 2));
+  value[value.length - 2] = c & 255; value[value.length - 1] = c >> 8;
+  return value;
+}
+const fullEntries = [
+  { space: 0, key: 'init', kind: 3, value: new Uint8Array([1]) },
+  { space: 1, key: 'cbA', kind: 7, value: collectionRecord() },
+  { space: 1, key: 'cbB', kind: 7, value: collectionRecord() },
+  { space: 1, key: 'active', kind: 3, value: new Uint8Array([1]) },
+];
+{
+  const full = v2Backup(fullEntries);
+  const checked = verifyBackup(backupText(full));
+  ck(checked.version === 2 && checked.blob.length > 115000 && checked.fields === 4,
+     'v2 verifies both full 1200-slot records, beyond the old transfer and u16 total limits');
+  ck(Buffer.from(checked.blob).equals(Buffer.from(full)), 'every upper-slot byte survives verification');
+  const flipped = full.slice();
+  flipped[flipped.length - 80] ^= 0xff;
+  const validText = backupText(full);
+  const corruptText = validText.replace(/IMPORT [0-9a-f]/, 'IMPORT z');
+  ckThrows(() => verifyBackup(corruptText), 'unrecognised', 'corrupted hex in a large backup is rejected');
+  ckThrows(() => verifyBackup(backupText(flipped, false)),
+           'checksum', 'large backup checksum corruption is rejected');
+  const wrongNamespace = fullEntries.map((e) => ({ ...e }));
+  wrongNamespace[1].space = 2;
+  ckThrows(() => verifyBackup(backupText(v2Backup(wrongNamespace))), 'namespace',
+           'an unknown namespace cannot silently drop collection data');
+  ckThrows(() => verifyBackup(backupText(v2Backup(fullEntries.slice(0, 1)))), 'collection',
+           'a v2 save missing its authoritative collection is refused');
+  const duplicate = [...fullEntries, fullEntries[3]];
+  ckThrows(() => verifyBackup(backupText(v2Backup(duplicate))), 'duplicate',
+           'duplicate namespaced fields are refused');
+  const wrongCount = full.slice();
+  wrongCount[5]++;
+  ckThrows(() => verifyBackup(backupText(wrongCount)), 'count', 'a recomputed checksum cannot hide a missing field');
+  const brokenRecords = fullEntries.map((e) => ({ ...e, value: e.value.slice() }));
+  brokenRecords[1].value[brokenRecords[1].value.length - 80] ^= 0xff;
+  brokenRecords[2].value[brokenRecords[2].value.length - 80] ^= 0xff;
+  ckThrows(() => verifyBackup(backupText(v2Backup(brokenRecords))), 'checkpoint',
+           'a valid outer checksum cannot hide two corrupt collection checkpoints');
+}
+
+{
+  const futureEntries = fullEntries.map((e) => ({
+    ...e, value: ['cbA', 'cbB'].includes(e.key) ? collectionRecord({ wide: true, stride: 56 }) : e.value,
+  }));
+  const full = backupBlob(futureEntries);
+  const checked = verifyBackup(backupText(full));
+  ck(checked.version === 3 && checked.fields === 4 &&
+     futureEntries.filter((e) => e.kind === 7).every((e) => e.value.length > 65535),
+     'v3 verifies individual KBC3 collection snapshots above 65535 bytes');
+  ck(Buffer.from(checked.blob).equals(Buffer.from(full)),
+     'future-stride records and their unknown suffix bytes remain intact');
+  ck(verifyBackup(backupText(backupBlob(fullEntries))).version === 3,
+     'v3 also accepts historical KBC2 snapshots');
+  const narrowKbc3 = fullEntries.map((e) => ({
+    ...e, value: ['cbA', 'cbB'].includes(e.key) ? collectionRecord({ wide: true }) : e.value,
+  }));
+  ck(verifyBackup(backupText(v2Backup(narrowKbc3))).version === 2,
+     'a v2 transfer retains its u16 fields even when it contains a fitting KBC3 snapshot');
+
+  const extended = futureEntries.map((e) => ({
+    ...e, value: e.kind === 7 ? collectionRecord({ wide: true, stride: 56, headerSize: 24, tail: 9 }) : e.value,
+  }));
+  for (const e of extended.filter((e) => e.kind === 7)) {
+    e.value[4] = 77; // checkpoint versions are diagnostic, not layout discriminators
+    const c = crc16(e.value.subarray(0, e.value.length - 2));
+    new DataView(e.value.buffer).setUint16(e.value.length - 2, c, true);
+  }
+  ck(verifyBackup(backupText(backupBlob(extended))).fields === 4,
+     'larger KBC3 headers, appended data and diagnostic versions stay forward-readable');
+
+  const futureDex = futureEntries.map((e) => ({ ...e, value: e.value.slice() }));
+  for (const e of futureDex.filter((e) => e.kind === 7)) {
+    const view = new DataView(e.value.buffer);
+    view.setInt16(22, 0x7fff, true);
+    view.setUint16(e.value.length - 2, crc16(e.value.subarray(0, e.value.length - 2)), true);
+  }
+  ck(verifyBackup(backupText(backupBlob(futureDex))).fields === 4,
+     'browser format verification preserves future positive dex numbers instead of pinning today\'s count');
+
+  const lengthAt = 8 + 2 + futureEntries[0].key.length + 1;
+  const impossible = full.slice();
+  new DataView(impossible.buffer).setUint32(lengthAt, 0xffffffff, true);
+  ckThrows(() => verifyBackup(backupText(impossible)), 'length',
+     'an unsigned u32 length cannot wrap or run past the transfer body');
+  const shortHeader = new Uint8Array(lengthAt + 3 + 2);
+  shortHeader.set(full.subarray(0, lengthAt + 3));
+  ckThrows(() => verifyBackup(backupText(shortHeader)), 'length',
+     'a truncated four-byte field length is rejected before upload');
+  const tooLargeField = futureEntries.map((e) => ({
+    ...e, value: e.key === 'cbA' ? new Uint8Array(96 * 1024 + 1) : e.value,
+  }));
+  ckThrows(() => verifyBackup(backupText(backupBlob(tooLargeField))), 'length',
+     'a field above the shared 96 KiB collection ceiling is refused');
+  const tooLarge = new Uint8Array(SAVE_TRANSFER_MAX + 1);
+  tooLarge.set(full.subarray(0, 8));
+  ckThrows(() => verifyBackup(backupText(tooLarge)), 'transfer limit',
+     'the 262144-byte transfer ceiling is enforced before decoding the whole text');
+
+  const mutations = [
+    ['u32 checkpoint size', (v) => v.setUint32(8, v.byteLength & 0xffff, true)],
+    ['checkpoint header size', (v) => v.setUint16(6, 15, true)],
+    ['empty party dimension', (v) => v.setUint16(18, 0, true)],
+    ['oversized box dimension', (v) => v.setUint16(20, 1201, true)],
+    ['record stride beyond the body', (v) => v.setUint16(16, 65535, true)],
+    ['negative stored dex prefix', (v) => v.setInt16(22, -1, true)],
+  ];
+  for (const [what, mutate] of mutations) {
+    const invalid = futureEntries.map((e) => ({ ...e, value: e.value.slice() }));
+    for (const e of invalid.filter((e) => e.kind === 7)) {
+      mutate(new DataView(e.value.buffer));
+      const c = crc16(e.value.subarray(0, e.value.length - 2));
+      new DataView(e.value.buffer).setUint16(e.value.length - 2, c, true);
+    }
+    ckThrows(() => verifyBackup(backupText(backupBlob(invalid))), 'checkpoint',
+       `checksummed ${what} is rejected before replacement`);
+  }
+  const oneCorrupt = futureEntries.map((e) => ({ ...e, value: e.value.slice() }));
+  oneCorrupt[1].value[oneCorrupt[1].value.length - 80] ^= 0xff;
+  ck(verifyBackup(backupText(backupBlob(oneCorrupt))).fields === 4,
+     'one valid collection checkpoint still permits recovery from its damaged twin');
+
+  const unknown = { space: 0, key: 'future', kind: 1, value: new Uint8Array([42]) };
+  ck(verifyBackup(backupText(backupBlob([unknown], 1))).fields === 1,
+     'v1 retains its original permissive game-key semantics');
+  for (const version of [2, 3]) {
+    ckThrows(() => verifyBackup(backupText(backupBlob([...fullEntries, unknown], version))), 'unknown',
+       `v${version} retains strict namespaced game-key validation`);
+  }
+}
 
 // ---- truncation: the case that used to pass
 // A capture that stops early still ends with a plausible commit line. Dropping a
@@ -196,13 +407,14 @@ ckThrows(() => verifyBackup('hello\nIMPORT'), 'unrecognised',
 // failed for exactly the people who most need to recover a save. sendBackup()
 // takes its I/O as arguments so a board is not needed to prove it.
 function fakeBoard({ acks = true, failAfter = -1, error = null, commitReply = 'IMPORT OK' }) {
-  const io = { sent: [], paused: 0, logs: [] };
+  const io = { sent: [], paused: 0, logs: [], waits: [] };
   let chunk = 0;
   io.writeLine = async (line) => { io.sent.push(line); if (line !== 'IMPORT') chunk++; };
   io.pause = async () => { io.paused++; };
   io.log = (m) => io.logs.push(m);
   io.resetQueue = () => {};
-  io.waitForAny = async (tokens) => {
+  io.waitForAny = async (tokens, timeoutMs) => {
+    io.waits.push(timeoutMs);
     if (tokens.includes('IMPORT OK')) return commitReply;
     if (error && chunk === failAfter) return error;
     if (!acks) return null;                          // silence: old firmware
@@ -238,6 +450,19 @@ async function ckResolves(fn, what) {
   ck(io.paused === 0, 'and no blind delay is used at all');
   ck(io.sent.length === commands.length, `all ${chunks} chunks plus the commit were sent`);
   ck(io.sent.at(-1) === 'IMPORT', 'ending with the commit line');
+  ck(io.waits.at(-1) >= 60000, 'commit allows a minute for durable staging and verified replay');
+}
+
+{
+  const wideEntries = fullEntries.map((e) => ({
+    ...e, value: e.kind === 7 ? collectionRecord({ wide: true, stride: 56 }) : e.value,
+  }));
+  const full = verifyBackup(backupText(backupBlob(wideEntries)));
+  const io = fakeBoard({ acks: true });
+  const result = await ckResolves(() => sendBackup(full.commands, io),
+    'a full 1200-slot backup uploads without truncation');
+  ck(result?.acknowledged && io.sent.length === full.commands.length && io.sent.length > 1200,
+     'every v3 chunk of both individually wide collection copies reaches the board before commit');
 }
 
 {

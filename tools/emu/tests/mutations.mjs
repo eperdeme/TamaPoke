@@ -1,5 +1,4 @@
-import { cp, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
@@ -41,6 +40,46 @@ async function positive(directory, name) {
   }, `fixed ${name}`);
 }
 
+async function buildCapture(directory) {
+  const emu = join(directory, 'tools/emu');
+  await checked(['python3', join(emu, 'genproto.py'), join(directory, 'TamaPoke.ino')],
+    { cwd: emu, timeoutMs: 30000 }, 'generate capture sketch prototypes');
+  await writeFile(join(emu, 'sketch.cpp'), '#include "proto.h"\n' + await readFile(join(directory, 'TamaPoke.ino'), 'utf8'));
+  await checked(['g++', '-std=c++17', '-O1', '-w', `-I${emu}`, `-I${directory}`,
+    `-DSPRITE_DIR="${root}/tools/sdcard/mons"`, '-o', join(directory, 'capture'),
+    join(emu, 'tests/capture_test.cpp'), join(emu, 'sketch.cpp'),
+    ...core.map((name) => join(directory, `${name}.cpp`)),
+    ...['host_impl', 'font', 'clock'].map((name) => join(emu, `${name}.cpp`))],
+  { timeoutMs: 120000 }, 'compile real capture regression');
+}
+
+async function captureMutation(directory, source) {
+  const sketch = join(directory, 'TamaPoke.ino');
+  for (const broken of [false, true, false]) {
+    await writeFile(sketch, broken ? replaceOnce(source,
+      'static bool wildStoreCaught() {\n',
+      'static bool wildStoreCaught() {\n  return true; // Negative control: report capture without placement or save.\n') : source);
+    await buildCapture(directory);
+    const result = await runCommand([join(directory, 'capture')], {
+      cwd: directory, timeoutMs: 150000, echo: false,
+    });
+    if (broken) {
+      assert(!result.ok && !result.timedOut && result.code === 1 &&
+        result.output.includes('FAIL capture: capture did not increment durable population') &&
+        !result.output.includes('PASS actual captures persisted: 1000'),
+      `bypassed capture placement was not detected: ${result.failure}\n${result.output.slice(-6000)}`);
+      console.log('PASS mutation caught-creature placement/save bypass: durable population assertion');
+    } else {
+      assert(result.ok && [6, 256, 512, 1000].every((count) =>
+        result.output.includes(`MILESTONE cold-reload captures=${count} `)) &&
+        result.output.includes('PASS actual captures persisted: 1000'),
+      `fixed actual capture regression failed: ${result.failure}\n${result.output.slice(-6000)}`);
+      console.log('PASS fixed capture control: 1000 actual catches and four exact cold reloads');
+    }
+  }
+  console.log('PASS mandatory capture placement mutation complete');
+}
+
 const mutations = [
   {
     name: 'copied Preferences ownership', case: 'gym-win',
@@ -68,8 +107,10 @@ const mutations = [
 ];
 
 async function main() {
-  assert(process.argv.length === 2, 'usage: node tools/emu/tests/mutations.mjs');
-  const directory = await mkdtemp(join(tmpdir(), 'tamapoke-mutations-'));
+  const captureOnly = process.argv.length === 3 && process.argv[2] === '--capture';
+  assert(process.argv.length === 2 || captureOnly, 'usage: node tools/emu/tests/mutations.mjs [--capture]');
+  const directory = join(root, `.tamapoke-mutations-${process.pid}`);
+  await mkdir(directory);
   try {
     for (const file of await readdir(root))
       if (/\.(cpp|h)$/.test(file) || file === 'TamaPoke.ino') await cp(join(root, file), join(directory, file));
@@ -79,6 +120,10 @@ async function main() {
     });
     const originals = {};
     for (const file of ['pet.h', 'TamaPoke.ino', 'audio.cpp']) originals[file] = await readFile(join(directory, file), 'utf8');
+    if (captureOnly) {
+      await captureMutation(directory, originals['TamaPoke.ino']);
+      return;
+    }
     await build(directory);
     for (const mutation of mutations) {
       console.log(`CHECK fixed control: ${mutation.case}`);
@@ -106,7 +151,8 @@ async function main() {
     const anchor = '      memcpy(&slots[i], old + i * oldStride, oldStride);';
     const boxTest = join(directory, 'box-regression');
     for (const broken of [false, true, false]) {
-      await writeFile(partyFile, broken ? replaceOnce(partySource, anchor, `${anchor}\n    save();`) : partySource);
+      await writeFile(partyFile, broken ? replaceOnce(partySource, anchor,
+        `${anchor}\n    ready = true;\n    savePair();\n    collection.putBool("active", true);\n    return;`) : partySource);
       await checked(['g++', '-std=c++17', '-O1', '-w', `-I${directory}/tools/emu`, `-I${directory}`,
         '-o', boxTest, join(directory, 'tools/emu/tests/box_test.cpp'),
         ...['pet', 'party', 'i18n'].map((name) => join(directory, `${name}.cpp`))],
@@ -121,6 +167,7 @@ async function main() {
       } else assert(result.ok, `fixed combined legacy migration failed: ${result.failure}\n${result.output}`);
     }
     console.log('PASS restored combined legacy party/box migration');
+    await captureMutation(directory, originals['TamaPoke.ino']);
     console.log('PASS mandatory original-defect mutations complete: 2');
   } finally {
     await rm(directory, { recursive: true, force: true });

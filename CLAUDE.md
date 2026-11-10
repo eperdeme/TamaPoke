@@ -413,7 +413,8 @@ migration now.
 explaining the arithmetic, which is a number and a promise that drift
 independently -- a backup that is quietly PARTIAL is worse than no backup, and
 nothing about the failure was visible except `save_test`. It is
-`sizeof(PartyMon) * BOX_SLOTS` now. **Derive it; never restate it** -- the same
+derived from the collection header, `sizeof(PartyMon)` and both slot counts now.
+**Derive it; never restate it** -- the same
 rule as § "The same trap wearing a table instead of a width".
 
 `stateVersion` on the record defaults to **0, not 1**, and that is deliberate.
@@ -777,14 +778,16 @@ done from here.
 - ~~Save backup~~ **done**. `EXPORT` prints the whole save as a block of
   `IMPORT <hex>` lines, and pasting that block back is the restore -- there is
   no second format to get wrong and no 2000-character line for a terminal to
-  mangle. About 3 KB, 38 lines with the redundant pet and player checkpoints.
+  mangle. Expanded backups also include both full collection checkpoints; large
+  transfer buffers use checked PSRAM allocations.
   `save_test` prints the figure against `SAVE_TRANSFER_MAX` and fails once it
   passes three quarters of it: `saveExport()` returns 0 rather than truncating,
   so outgrowing the ceiling turns `EXPORT` into `EXPORT FAIL` -- and it would do
   so on the release that grew the dex, not the one that shipped the change.
   **Raise `SAVE_TRANSFER_MAX`; never trim the backup.**
 
-  `save.cpp` is KEY-DRIVEN: `SAVE_FIELDS` lists all 55 keys with their types and
+  `save.cpp` is KEY-DRIVEN: `SAVE_FIELDS` lists persisted keys with their types and
+  explicit partition/namespace routing, and
   both directions walk that one table through the ordinary `Preferences` API, so
   the identical code runs on the board and in the emulator. A struct of fields
   would have been a second description of the save that drifts the moment
@@ -796,8 +799,10 @@ done from here.
 
   An import VALIDATES THE WHOLE BLOB before touching NVS: magic, version,
   checksum, and every length. A half-applied restore over a good save would be
-  worse than having no backup. It also clears first, so a restore replaces a
-  save rather than merging with it. `console_test` drives the real hex out and
+  worse than having no backup. It durably stages and verifies the whole backup
+  before clearing either save store; boot replays an interrupted restore before
+  loading game objects. A restore replaces a save rather than merging with it.
+  `console_test` drives the real hex out and
   back through `handleSerial()`, including a mistyped digit, an odd-length line
   and a bare commit.
 
@@ -832,17 +837,37 @@ the volume curve. The amplitude scale in particular (`500 * vol`) is a guess at
 what sounds linear. This is part of what the soak test is for.
 
 **B. Storage and the box -- DONE.**
-- The box is 36 slots (6 pages of 6). Party and box share one dimensional,
-  CRC-checked checkpoint so a swap is atomic; the old separate keys remain for
-  backup and downgrade compatibility. `BOX_V323_SLOTS` pins the historical
+- The box is 1,200 slots, allocated in PSRAM. Party and box share alternating,
+  read-back-verified `cbA`/`cbB` checkpoints in the `tpcollect` partition.
+  `partitions.csv` takes 512 KiB from the unused filesystem tail without moving
+  original NVS, OTA or application offsets. Never erase this partition on an
+  initialization failure. `BOX_V323_SLOTS` pins the historical
   18-slot legacy layout so increasing the count cannot be mistaken for a stride
-  change. `box_test` checks pre-box, 18-slot and shorter-record migrations.
+  change. The original keys and `pbA`/`pbB` are read only for migration.
+  Migration verifies two new copies before activation; `colv` in original NVS
+  prevents stale legacy rollback if the dedicated namespace disappears.
+  `tpstate` reserves another 128 KiB immediately before the collection. It is
+  intentionally not initialized, restored or used by the game yet. Moving the
+  active pet/player off original NVS needs a separate verified migration.
 - `swapPartyBox()` is one call for deposit, withdraw and exchange, since any of
   the two slots may be empty. Reached by tapping a party slot then BOX.
-- Room to grow is now constrained by the whole save, not only one blob. A
-  128-slot box would require ~6.1 KB for one copy, ~12.9 KB for the alternating
-  pair checkpoints, and ~6.1 KB for the downgrade copy before any other save
-  data or NVS overhead. That cannot fit safely in the 20 KB NVS partition.
+- Keep box indices/counts at least 16-bit. New KBC3 checkpoints and v3 backup
+  fields use 32-bit byte lengths; KBC2 checkpoints and v1/v2 imports remain
+  readable. Original pet/player checkpoint codecs are unchanged. Derive sizes
+  from `sizeof(PartyMon)` and do not raise the slot count without measuring NVS
+  compaction and backup staging. Downgrades are not supported.
+  Select the newest intact frame before this build's species/capacity checks:
+  an unsupported newest frame must block writes, not silently choose stale data.
+  Prefix-readable future record/header/suffix fields are read-only, not writable:
+  rebuilding their snapshot from today's structs would silently drop those bytes.
+  Large serialization and serial buffers must use checked PSRAM allocations,
+  never static internal RAM or the loop task's 8 KiB stack.
+- `collection_test` checks full-capacity persistence/compaction natively and
+  refused writes/corruption on the host, including real checkpoints above
+  65,535 bytes and interrupted KBC2 upgrades. `capture_test` drives 1,000 actual
+  capture handovers and cold-process persistence, rather than filling arrays.
+  A hardware upgrade, power-cut and soak test is still required before customer
+  distribution.
 - A farewell now falls through party -> box, and only a full party AND a full
   box makes the player choose who to replace. That is what the box is for.
 
@@ -1592,17 +1617,20 @@ Costs to weigh before starting: the WiFi stack is ~40-50 KB RAM (there is
 headroom -- currently 10% used), meaningful current draw on a battery device,
 and pairing UX on a touch-only screen.
 
-### Box size (if the party grows past 6)
+### Box size and checkpoint limits
 
 `sizeof(PartyMon)` is **48 bytes** now (it was 30 when this was written; `moves[]`
-and then the care block were appended) and the NVS partition is 20 KB (`0x5000`).
-So the arithmetic has moved: the current box of 36 is 1728 bytes and the atomic
-party-plus-box record is about 2 KB. A box of 128 is 6144 bytes before its party,
-header or second checkpoint copy, so it needs a different storage design rather
-than another constant change. **Derive these from
+and then the care block were appended). The original save partition remains
+20 KiB; the collection has its own 512 KiB partition. At 1,200 slots the Box
+records use 57,600 bytes of PSRAM and each KBC3 party-plus-box checkpoint is 57,912
+bytes. Two copies and a staged whole-save restore must coexist with NVS
+compaction headroom. `collection_store.h` bounds tolerated snapshots at 96 KiB;
+`party.cpp` checks the actual current record, an in-flight rewrite, maximum
+restore and spare-page budget at compile time. **Derive these from
 `sizeof(PartyMon)` when the time comes rather than trusting the numbers in this
 paragraph** -- they have been wrong once already, which is § "sizeof(PartyMon) is
-load-bearing in four places" wearing a doc instead of code. RAM is a non-issue.
+load-bearing in four places" wearing a doc instead of code. Large buffers belong
+in PSRAM; static internal RAM and the production task stack are not substitutes.
 
 Check the headroom too, not just the blob limit: see § "NVS can run out". A box
 that fits one blob can still be the thing that fills the partition.
@@ -1611,6 +1639,10 @@ that fits one blob can still be the thing that fills the partition.
 recognised by `sizeof(PartyMon)`, while pre-v3.24 boxes use the explicit
 `BOX_V323_SLOTS` dimension. Never infer an old stride by dividing by today's
 slot count.
+
+Both `build_web.sh` and the test runner use private Arduino build directories.
+`check_installer.py --partitions` checks the freshly compiled table, not a stale
+committed asset, and runs negative controls on protected offsets and types.
 
 Note on (6): the battle screen is a 2x2 move grid, not four stacked rows --
 the round panel has to fit both creatures, both HP bars and the menu. The only

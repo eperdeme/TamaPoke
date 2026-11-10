@@ -4,7 +4,7 @@
 
 // A whole-save backup, over the serial console.
 //
-// A run is weeks of real time living in one NVS partition, and there is now a
+// A run is weeks of real time across the game and collection partitions, with a
 // lot in it: the creature, the party, the box, both badge ladders, the Pokedex,
 // the streak, the trainer name. Nothing could get it back out.
 //
@@ -21,19 +21,13 @@
 #define SAVE_MAGIC1 'K'
 #define SAVE_MAGIC2 'P'
 #define SAVE_MAGIC3 'S'
-#define SAVE_VERSION 1
+#define SAVE_VERSION 3
 #define SAVE_HDR 8
 // Shared EXPORT/IMPORT ceiling, including every checkpoint.
 //
-// Raised from 4096 when the party and box became one atomic record, then from
-// 8192 when the box doubled to 36 slots. saveExport() returns 0 rather than
-// truncating, so outgrowing this turns EXPORT into "EXPORT FAIL" -- the backup
-// simply stops existing. save_test prints the margin and fails below a quarter
-// spare.
-//
-// Costs two static buffers of this size in the sketch, which is why it is not
-// simply enormous.
-#define SAVE_TRANSFER_MAX 12288
+// Includes BOTH 1200-slot collection checkpoints plus the original game keys.
+// Serial callers must allocate this on the heap/PSRAM, never the stack or BSS.
+#define SAVE_TRANSFER_MAX 262144
 
 enum SaveKind : uint8_t {
   SK_U8 = 1, SK_I8, SK_BOOL, SK_U16, SK_I16, SK_U32, SK_BYTES, SK_STR,
@@ -42,6 +36,7 @@ enum SaveKind : uint8_t {
 struct SaveField {
   const char *key;
   uint8_t kind;
+  uint8_t space = 0; // 0: tamapoke, 1: collection in tpcollect
 };
 extern const SaveField SAVE_FIELDS[];
 extern const uint16_t SAVE_FIELD_COUNT;
@@ -52,11 +47,20 @@ size_t saveExport(uint8_t *out, size_t cap);
 
 // Restores one. VALIDATES THE WHOLE BLOB FIRST and only then touches NVS: a
 // half-applied restore over a good save would be worse than no backup at all.
-// Returns false and changes nothing if the blob is not ours, is the wrong
-// version, or fails its checksum. The caller must reload afterwards.
+// Accepts v1 (implicit game namespace) and v2 (explicit namespace), both with
+// u16 field lengths. New exports use v3: explicit namespace and u32 lengths.
+// Invalid data changes nothing. Valid data is durably staged before replacement.
+// On I/O failure, a pending journal MUST be recovered before play resumes.
+// The caller must restart afterwards (also on failure if saveRestorePending()).
 bool saveImport(const uint8_t *in, size_t n);
 
-// Roughly what saveExport needs, for sizing a buffer.
+// Call before opening any game objects. False means recovery could not finish:
+// do not load or save a game until a later boot completes the staged restore.
+bool saveRecover();
+bool saveRestorePending();
+bool saveClearCollection(); // factory reset: collection AND any staged restore
+
+// Safe upper bound for sizing a buffer.
 size_t saveExportSize();
 
 // ---------------------------------------------------------------------------
@@ -81,8 +85,9 @@ size_t saveExportSize();
 //     the acknowledgement would leave a half-wiped save with no intent to finish
 //     it. Preferences::clear() empties one namespace, not the store.
 //   * not in SAVE_FIELDS, because a backup carrying it would arm a wipe on the
-//     device it was restored onto. saveExport/saveImport only ever open the game
-//     namespace, so this is true by construction rather than by remembering.
+//     device it was restored onto. The v2/v3 field namespace is restricted to the
+//     game and collection; neither the reset intent nor the restore journal is
+//     transferable save data.
 #define RESET_NS "tpsys"
 
 void resetArm();        // record the intent; the caller then restarts

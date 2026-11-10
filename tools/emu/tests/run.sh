@@ -83,7 +83,13 @@ bounded 30 --require 'PASS bounded gates:' -- node "$HERE/bounded.mjs" --self-te
 # it is declared. That shipped once. The mandatory firmware build decides.
 fw_pid=""
 FQBN="esp32:esp32:esp32s3:CDCOnBoot=cdc,FlashSize=16M,PSRAM=opi,PartitionScheme=app3M_fat9M_16MB"
-bounded 600 -- arduino-cli compile --fqbn "$FQBN" "$ROOT" >"$OUT_FW" 2>&1 &
+FW_BUILD="$OUT/firmware-build"
+(
+  trap 'rm -rf "$FW_BUILD"' EXIT
+  bounded 600 -- arduino-cli compile --fqbn "$FQBN" --build-path "$FW_BUILD" "$ROOT"
+  cp "$FW_BUILD/TamaPoke.ino.partitions.bin" "$OUT/firmware.partitions.bin"
+  bounded 30 -- python3 "$ROOT/tools/check_installer.py" --partitions "$OUT/firmware.partitions.bin"
+) >"$OUT_FW" 2>&1 &
 fw_pid=$!
 
 # The browser halves of the save backup and the pack upload. They are JavaScript,
@@ -100,7 +106,7 @@ CORE=("$ROOT/gbsynth.cpp" "$ROOT/pet.cpp" "$ROOT/i18n.cpp" "$ROOT/party.cpp" "$R
 FLAGS=(-std=c++17 -O1 -w -I"$EMU" -I"$ROOT" -DSPRITE_DIR="\"$SPRITE_DIR\"")
 
 # these drive setup()/loop()/render(), so they need the sketch itself
-needs_sketch() { case "$1" in touch_test|flush_test|joy_test|anim_test|swipe_test|lan_test|console_test|hit_test|starter_test|release_test|focus_test|explore_test|view_test|transfer_test) return 0;; *) return 1;; esac; }
+needs_sketch() { case "$1" in touch_test|flush_test|joy_test|anim_test|swipe_test|lan_test|console_test|capture_test|hit_test|starter_test|release_test|focus_test|explore_test|view_test|transfer_test) return 0;; *) return 1;; esac; }
 
 # and these are standalone: gbsynth.cpp has no Arduino dependency at all, which
 # is the point of it -- linking the game core in would only demand stubs for
@@ -185,8 +191,21 @@ run_one() {
   # grep's exit status and every failure would be counted as a pass
   test_command=(bounded 180)
   [ "$name" = workflow_test ] && test_command+=(--require 'PASS mandatory workflows complete:')
-  test_command+=(-- ./test)
+  [ "$name" = capture_test ] &&
+    test_command+=(--require 'PASS actual captures persisted: 1000'
+                   --require 'PASS 1000 real UI captures -> four exec cold reloads')
+  test_command+=(--)
+  [ "$name" = console_test ] &&
+    test_command+=(env "TAMA_SAVE_FIXTURE=$suite_out/expanded.tpsave")
+  test_command+=(./test)
   if (cd "$suite_out" && "${test_command[@]}" 2>&1 | grep -vE '^(TamaPoke fw|emu:|RTC )') >"$suite_out/test.log"; then
+    if [ "$name" = console_test ] &&
+       ! TAMA_EXPANDED_SAVE_FIXTURE="$suite_out/expanded.tpsave" bounded 60 -- \
+           node "$ROOT/tools/check_savefile.mjs" >>"$suite_out/test.log" 2>&1; then
+      { echo "=== $name"; cat "$suite_out/test.log"; echo "    ^ browser rejected firmware backup"; } >"$suite_out/output"
+      echo fail >"$suite_out/status"
+      return
+    fi
     if [ "$name" = workflow_test ]; then
       { echo "=== $name"; grep -E '^PASS (workflow|mandatory)' "$suite_out/test.log"; } >"$suite_out/output"
     else
@@ -240,6 +259,8 @@ if [ -n "$fw_pid" ] && ! wait "$fw_pid"; then
   echo "=== THE FIRMWARE DOES NOT COMPILE (the emulator does; that is not the same thing)"
   tail -20 "$OUT_FW"
   fw_ok=0
+else
+  grep '^PASS compiled partition' "$OUT_FW"
 fi
 mutation_ok=1
 native_ok=1
@@ -255,7 +276,8 @@ if [ -z "$FILTER" ]; then
     fi
   fi
   echo "=== original-defect end-to-end mutations"
-  if ! bounded 600 --require 'PASS mandatory original-defect mutations complete: 2' -- node "$HERE/mutations.mjs"; then
+  if ! bounded 600 --require 'PASS mandatory original-defect mutations complete: 2' \
+      --require 'PASS mandatory capture placement mutation complete' -- node "$HERE/mutations.mjs"; then
     mutation_ok=0
   fi
 fi

@@ -1,6 +1,6 @@
 import {
   verifyBackup, describeBackup, sendBackup, saveSummary, backupFileName,
-} from './savefile.js?v=46404cdccf162854';
+} from './savefile.js?v=15ed53ffdb34a7d9';
 import { parsePak, verifyPak, packIsCurrent, probeSum, installFile } from './packs.js?v=2d4d719f12e1ccb6';
 
 const byId = (id) => document.getElementById(id);
@@ -1019,7 +1019,7 @@ async function captureSave() {
   readQueue = [];
   await writeLine('EXPORT');
   const lines = [];
-  const deadline = Date.now() + 20000;
+  const deadline = Date.now() + 180000;
   while (Date.now() < deadline) {
     const line = await readLine(deadline - Date.now());
     if (line === null) throw new Error('the board did not finish the export');
@@ -1307,7 +1307,8 @@ async function restoreText(text, label, fromBoard = '') {
     lines.push('', current
       ? (kept ? 'A copy of the current save is kept in Recent backups below.' : 'A copy of the current save was downloaded.')
       : 'The current save could not be read, so no copy of it exists.');
-    lines.push('The board checks the backup, replaces its save and restarts.');
+    lines.push('The board checks the backup, safely stages it, replaces its save and restarts. '
+      + 'Large collections can take a minute. If power is interrupted, reconnect and let recovery finish.');
     if (!window.confirm(lines.join('\n'))) {
       log('Restore cancelled.');
       return;

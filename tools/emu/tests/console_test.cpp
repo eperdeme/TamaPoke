@@ -11,10 +11,12 @@
 #include "pet.h"
 #include "party.h"
 #include "save.h"
+#include "collection_store.h"
 #include <cstdio>
 #include <string>
 #include <vector>
 #include <unistd.h>
+#include <fcntl.h>
 uint32_t g_seed=3; FakeSerial Serial; FakeESP ESP; FakeWire Wire;
 volatile int g_touchX=0,g_touchY=0; volatile bool g_touchDown=false;
 
@@ -43,8 +45,8 @@ static void ck(bool ok,const char*w){printf("%s  %s\n",ok?"PASS":"FAIL",w); if(!
 // everything it printed.
 static std::string runConsole(const std::vector<std::string> &lines){
   gIn = lines; gAt = 0;
-  char path[] = "/tmp/tamapoke_console_XXXXXX";
-  int fd = mkstemp(path);
+  const std::string path = "console-capture-" + std::to_string(getpid()) + ".log";
+  int fd = open(path.c_str(), O_CREAT | O_EXCL | O_RDWR, 0600);
   if (fd < 0) return "";
   fflush(stdout);
   int saved = dup(fileno(stdout));
@@ -58,7 +60,7 @@ static std::string runConsole(const std::vector<std::string> &lines){
   char b[4096]; ssize_t n;
   while ((n = read(fd, b, sizeof(b))) > 0) out.append(b, (size_t)n);
   close(fd);
-  remove(path);
+  remove(path.c_str());
   return out;
 }
 
@@ -73,10 +75,49 @@ int main(){
   pet.streak = 8;
   for (int i=0;i<3;i++){ PartyMon m; m.dex=100+i; m.level=44+i;
     m.ivAtk=m.ivDef=m.ivSpe=m.ivHp=17; party.replaceAt(i,m); }
+  PartyMon last;
+  last.dex = 1025; last.level = 88;
+  party.box[BOX_SLOTS-1] = last;
+  party.boxSave();
   pet.renameTrainer("ASH");        // persists everything above
+
+  // Model an append-only PartyMon growth without changing today's firmware
+  // struct. The console must carry each >64 KB snapshot, not merely a transfer
+  // whose two individually narrow fields happen to add up to more than 64 KB.
+  {
+    Preferences collection;
+    bool expanded = collectionOpen(collection);
+    for (const char *key : {"cbA", "cbB"}) {
+      if (!expanded) break;
+      std::vector<uint8_t> original(collection.getBytesLength(key));
+      CollectionLayout layout;
+      expanded = collection.getBytes(key, original.data(), original.size()) == original.size() &&
+        collectionInspect(original.data(), original.size(), layout, PARTY_SLOTS, BOX_SLOTS, DEX_COUNT) &&
+        layout.stride <= 56;
+      if (!expanded) break;
+      const size_t records = layout.partyCount + layout.boxCount;
+      std::vector<uint8_t> future(COLLECTION_FIXED + 56 * records + CKPT_CRC, 0xA5);
+      for (size_t i = 0; i < records; i++)
+        memcpy(future.data() + COLLECTION_FIXED + 56 * i,
+               original.data() + layout.offset + layout.stride * i, layout.stride);
+      expanded = future.size() > UINT16_MAX &&
+        collectionSeal(future.data(), future.size() - CKPT_CRC, 56, layout.partyCount,
+                       layout.boxCount, layout.generation) == future.size() &&
+        collection.putBytes(key, future.data(), future.size()) == future.size();
+    }
+    ck(expanded, "the console fixture contains individual future-stride checkpoints above 65535 bytes");
+  }
 
   std::string out = runConsole({"EXPORT"});
   ck(out.find("# TamaPoke save") != std::string::npos, "EXPORT says what it is");
+  // Optional cross-language evidence: this is the REAL console output, with
+  // slot 1199 populated and >64 KB fields, not another backup implementation.
+  if (const char *fixture = getenv("TAMA_SAVE_FIXTURE")) {
+    FILE *file = fopen(fixture, "wb");
+    bool written = file && fwrite(out.data(), 1, out.size(), file) == out.size();
+    if (file) written = fclose(file) == 0 && written;
+    ck(written, "the firmware-emitted expanded fixture was written for the browser test");
+  }
 
   // every IMPORT line it printed, in order
   std::vector<std::string> back;
@@ -113,6 +154,8 @@ int main(){
      "and the IVs, badges and streak");
   ck(q2.count()==3 && q2.slots[1].dex==101 && q2.slots[1].level==45,
      "and the party");
+  ck(q2.box[BOX_SLOTS-1].dex == 1025 && q2.box[BOX_SLOTS-1].level == 88,
+     "and the highest collection slot survives the real serial round trip");
 
   // --- a mistyped paste must not be applied
   {

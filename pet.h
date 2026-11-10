@@ -4,6 +4,7 @@
 #include "dex.h"
 #include "trainers.h"   // GYM_REGIONS sizes the badge masks
 #include "party.h"
+#include "save.h"
 
 // 1 tick = 1 minuto de juego. Baja este valor para probar mas rapido
 // (p. ej. 5000UL = las estadisticas caen 12x mas rapido).
@@ -476,12 +477,18 @@ public:
   // It does NOT stop later saves. Keeping the in-RAM creature from being written
   // back over the wipe is the job of saveInhibited in the sketch, next to the
   // flush hooks that are the actual risk -- one guard, where the callers are.
-  void factoryReset() {
-    prefs.clear();
+  bool factoryReset() {
+    resetArm();
+    if (!resetArmed() || !resetRecover()) {
+      saveFailures = 3;
+      Serial.println("save: factory reset incomplete; recovery required");
+      return false;
+    }
     saveGeneration = 0;
     playerGeneration = 0;
     saveFailures = 0;
     pendingSave = false;
+    return true;
   }
   void dbgRunawayReady() { fullness = joy = energy = hygiene = 0; neglectTicks = RUNAWAY_TICKS; }  // test
   // test: force what the egg holds and hatch it now (serial command EGG).

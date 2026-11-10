@@ -21,14 +21,15 @@ Both are checked here because fixing either one alone still loses the save.
    It was set false deliberately, reading the name at face value, and that
    destroyed two real saves.
 
-The partition table is read out of the build itself rather than hardcoded, so a
-partition scheme change moves the check with it.
+The table is read from the actual build; shipped offsets and storage types are
+deliberately pinned so changing the CSV cannot quietly weaken save protection.
 
 3. WHO DECIDES ANY OF THAT: esp-web-tools. Point 2 is a line in THEIR install
    dialog, so the page loads a vendored, pinned copy and this reads it.
 
     python3 tools/check_installer.py                    # checks web/manifest.json
     python3 tools/check_installer.py web/beta/manifest.json
+    python3 tools/check_installer.py --partitions PATH/Sketch.ino.partitions.bin
 
 Run by build_web.sh on every build, so neither cause can come back.
 """
@@ -38,13 +39,34 @@ import os
 import struct
 import re
 import sys
+from typing import NamedTuple
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.path.join(ROOT, "web")
 
+EXPECTED_LAYOUT = {
+    "nvs": (1, 2, 0x9000, 0x5000),
+    "otadata": (1, 0, 0xE000, 0x2000),
+    "app0": (0, 0x10, 0x10000, 0x300000),
+    "app1": (0, 0x11, 0x310000, 0x300000),
+    "ffat": (1, 0x81, 0x610000, 0x940000),
+    "tpstate": (1, 2, 0xF50000, 0x20000),
+    "tpcollect": (1, 2, 0xF70000, 0x80000),
+    "coredump": (1, 3, 0xFF0000, 0x10000),
+}
 
-def partitions(path):
-    """The partition table as (label, offset, size), read from the .bin."""
+
+class Partition(NamedTuple):
+    label: str
+    offset: int
+    size: int
+    kind: int
+    subtype: int
+    flags: int
+
+
+def partitions(path: str) -> list[Partition]:
+    """Read the layout and storage types from the actual compiled table."""
     out = []
     with open(path, "rb") as f:
         blob = f.read()
@@ -54,8 +76,68 @@ def partitions(path):
             break
         off, size = struct.unpack("<II", e[4:12])
         label = e[12:28].rstrip(b"\x00").decode("ascii", "replace")
-        out.append((label, off, size))
+        flags = struct.unpack("<I", e[28:32])[0]
+        out.append(Partition(label, off, size, e[2], e[3], flags))
     return out
+
+
+def partition_layout_errors(table: list[Partition]) -> list[str]:
+    errors = []
+    actual = {part.label: part for part in table}
+    if len(actual) != len(table):
+        errors.append("duplicate partition labels")
+    nvs_parts = [part for part in table if part.kind == 1 and part.subtype == 2]
+    if not nvs_parts or nvs_parts[0].label != "nvs":
+        errors.append("original nvs must remain the first NVS partition")
+    for label, expected in EXPECTED_LAYOUT.items():
+        part = actual.get(label)
+        if part is None or (part.kind, part.subtype, part.offset, part.size) != expected:
+            errors.append(f"incompatible {label} partition: expected {expected}, got {part}")
+    for part in table:
+        if part.label not in EXPECTED_LAYOUT:
+            errors.append(f"unexpected partition {part.label}")
+        if (part.offset < 0x9000 or part.size <= 0 or part.offset % 4096 or
+                part.size % 4096 or part.offset + part.size > 16 * 1024 * 1024):
+            errors.append(f"invalid flash bounds/alignment for {part.label}")
+        if part.kind == 0 and part.offset % 0x10000:
+            errors.append(f"unaligned application {part.label}")
+        if part.flags:
+            errors.append(f"unsupported partition flags for {part.label}: {part.flags}")
+    ordered = sorted(table, key=lambda part: part.offset)
+    for left, right in zip(ordered, ordered[1:]):
+        if left.offset + left.size > right.offset:
+            errors.append(f"overlapping partitions {left.label} and {right.label}")
+    return errors
+
+
+def check_compiled_partitions(path: str) -> int:
+    table = partitions(path)
+    errors = partition_layout_errors(table)
+    if errors:
+        print("\n".join(f"FAIL: {error}" for error in errors))
+        return 1
+    # Each control must trip its own pinned contract, not just a generic overlap.
+    for label in ("nvs", "otadata", "app0", "app1", "tpstate", "tpcollect", "coredump"):
+        changed = [part._replace(offset=part.offset + 4096) if part.label == label else part
+                   for part in table]
+        if not any(f"incompatible {label} partition" in error
+                   for error in partition_layout_errors(changed)):
+            print(f"FAIL: compiled layout guard missed moving {label}")
+            return 1
+    changed = [part._replace(subtype=0x81) if part.label == "tpcollect" else part
+               for part in table]
+    if not any("incompatible tpcollect partition" in error
+               for error in partition_layout_errors(changed)):
+        print("FAIL: compiled layout guard missed changing collection storage type")
+        return 1
+    changed = [part for part in table if part.label == "tpstate"] + [
+        part for part in table if part.label != "tpstate"]
+    if "original nvs must remain the first NVS partition" not in partition_layout_errors(changed):
+        print("FAIL: compiled layout guard missed unsafe NVS ordering")
+        return 1
+    print("PASS compiled partition contract: fixed saves/apps, reserved state, types and bounds")
+    print("PASS compiled partition negative controls: moved offsets, unsafe NVS order and wrong type refused")
+    return 0
 
 
 def check_flash_trigger():
@@ -203,6 +285,11 @@ def check_vendored_flasher():
     return bad
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--partitions":
+        if len(sys.argv) != 3:
+            print("usage: check_installer.py --partitions COMPILED.partitions.bin")
+            return 2
+        return check_compiled_partitions(sys.argv[2])
     manifest_path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(WEB, "manifest.json")
     manifest_path = os.path.abspath(manifest_path)
     manifest_dir = os.path.dirname(manifest_path)
@@ -245,16 +332,20 @@ def main():
         print("could not find a partition table in anything the manifest ships")
         return 1
 
-    keep = [(l, o, s) for (l, o, s) in table if l in ("nvs", "ffat")]
+    keep = [part for part in table if part.label in ("nvs", "ffat", "tpstate", "tpcollect")]
     print("what the installer writes:")
     for path, off, size in sorted(parts, key=lambda p: p[1]):
         print("  0x%06X..0x%06X  %s" % (off, off + size, path))
     print("what must survive it:")
-    for label, off, size in keep:
-        print("  0x%06X..0x%06X  %s" % (off, off + size, label))
+    for part in keep:
+        print("  0x%06X..0x%06X  %s" % (part.offset, part.offset + part.size, part.label))
 
-    bad = 0
-    for label, poff, psize in keep:
+    errors = partition_layout_errors(table)
+    for error in errors:
+        print(f"FAIL: {error}")
+    bad = len(errors)
+    for part in keep:
+        label, poff, psize = part.label, part.offset, part.size
         for path, off, size in parts:
             if off < poff + psize and poff < off + size:
                 print("\nFAIL: %s (0x%06X..0x%06X) is written over by %s "

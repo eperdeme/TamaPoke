@@ -153,11 +153,11 @@ int main(){
 
   // --- and the whole thing can then be backed up and restored
   {
-   static uint8_t buf[SAVE_TRANSFER_MAX];
-    size_t n = saveExport(buf, sizeof(buf));
+    std::vector<uint8_t> buf(SAVE_TRANSFER_MAX);
+    size_t n = saveExport(buf.data(), buf.size());
     ck(n > 0, "an upgraded save exports");
     pet.factoryReset();
-    ck(saveImport(buf, n), "and imports again");
+    ck(saveImport(buf.data(), n), "and imports again");
     Pet p2; Party q2; p2.begin(); q2.begin();
     ck(p2.speciesId == 59 && !strcmp(p2.nick, "BLAZE") && q2.count() == 4,
        "with the upgraded contents intact");
@@ -217,15 +217,17 @@ int main(){
     // present, and oversized).
     {
       // -- shape 1: legacy keys only, as a pre-checkpoint build left them
+      collectionReset();
       Preferences pr2; pr2.begin("tamapoke", false);
       pr2.remove("pbA");
       pr2.remove("pbB");
+      pr2.remove("colv");
       std::vector<uint8_t> bigp(sizeof(PartyMon) * (PARTY_SLOTS + 3), 0);
       PartyMon m; m.dex = 149; m.level = 100;
       snprintf(m.nick, sizeof(m.nick), "DRAGO");
       memcpy(bigp.data(), &m, sizeof(m));
       pr2.putBytes("party", bigp.data(), bigp.size());
-      std::vector<uint8_t> bigb2(sizeof(PartyMon) * (BOX_SLOTS + 5), 0);
+      std::vector<uint8_t> bigb2(sizeof(PartyMon) * 41, 0);
       PartyMon b; b.dex = 6; b.level = 100;
       memcpy(bigb2.data(), &b, sizeof(b));
       pr2.putBytes("box", bigb2.data(), bigb2.size());
@@ -240,7 +242,8 @@ int main(){
       // travel in its own header, so the extra records are consumed and dropped
       // rather than misaligning ours. Built by hand: the running build cannot
       // write a record with dimensions it does not have.
-      const uint8_t moreParty = PARTY_SLOTS + 2, moreBox = BOX_SLOTS + 4;
+      collectionReset();
+      const uint8_t moreParty = PARTY_SLOTS + 2, moreBox = 40;
       const size_t mon = sizeof(PartyMon);
       const size_t fixed = 18;                     // PAIR_FIXED
       std::vector<uint8_t> blob(fixed + mon * (moreParty + moreBox) + 2, 0);
@@ -267,8 +270,11 @@ int main(){
       memcpy(blob.data() + blob.size() - 2, &crc, 2);
 
       Preferences pr3; pr3.begin("tamapoke", false);
+      pr3.remove("colv");
       pr3.putBytes("pbA", blob.data(), blob.size());
       pr3.remove("pbB");
+      const uint8_t staleRaw[] = {1, 2, 3};
+      pr3.putBytes("box", staleRaw, sizeof(staleRaw));
       pr3.end();
       Party pq2; pq2.begin();
       ck(pq2.slots[0].dex == 144 && pq2.slots[0].level == 70 &&
@@ -276,6 +282,7 @@ int main(){
          "a pair CHECKPOINT from a build with more slots keeps its first six");
       ck(pq2.box[0].dex == 9 && pq2.box[0].level == 55,
          "and the supported prefix of its box");
+      ck(pq2.saveHealthy(), "verified checkpoint migrates despite malformed obsolete raw keys");
     }
 
     Pet q; q.begin();

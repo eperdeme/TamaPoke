@@ -4,11 +4,13 @@
 set -e
 cd "$(dirname "$0")/.."
 FQBN="esp32:esp32:esp32s3:CDCOnBoot=cdc,FlashSize=16M,PSRAM=opi,PartitionScheme=app3M_fat9M_16MB"
+B="$(mktemp -d "${TMPDIR:-/tmp}/tamapoke-web.XXXXXX")"
+trap 'rm -rf "$B"' EXIT
 
 echo "Compilando..."
-arduino-cli compile --fqbn "$FQBN" --export-binaries .
+arduino-cli compile --fqbn "$FQBN" --build-path "$B" --export-binaries .
+python3 tools/check_installer.py --partitions "$B/TamaPoke.ino.partitions.bin"
 
-B=build/esp32.esp32.esp32s3
 echo "Fusionando binarios..."
 # esptool is not on PATH; the Arduino core ships one and that is the version
 # that matches the build we just made.

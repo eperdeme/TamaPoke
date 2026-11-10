@@ -54,8 +54,10 @@ public:
   NvsStore &kv() { return *ns; }
   bool readable() const { return !handle || *handle; }
   bool writable() const { return readable() && !readOnly; }
-  bool begin(const char *name, bool ro = false) {
-    ns = &nvsNamed(name);
+  bool begin(const char *name, bool ro = false, const char *partition = nullptr) {
+    const std::string location = partition && strcmp(partition, "nvs")
+        ? std::string(partition) + ":" + name : std::string(name ? name : "");
+    ns = &nvsNamed(location.c_str());
     handle = std::make_shared<bool>(true);
     readOnly = ro;
     return true;
@@ -65,7 +67,11 @@ public:
   // Empties ONLY this namespace. That is the whole point of the separation:
   // Pet::factoryReset() clears the game's keys and must not be able to reach
   // the reset intent that asked for it.
-  void clear() { if (writable()) kv().clear(); }
+  bool clear() {
+    if (!writable() || !nvsCanWrite()) return false;
+    kv().clear();
+    return true;
+  }
   bool isKey(const char *k) { return readable() && kv().count(k) != 0; }
   // Arduino's Preferences has this and the stub did not, so anything that
   // retracts a single key had no way to be tested. Returns false for a key that
@@ -164,7 +170,7 @@ inline void nvsLoad(const char *path) {
     if (fread(&kl, 4, 1, f) != 1 || kl > 64) break;
     std::string k(kl, 0);
     if (fread(&k[0], 1, kl, f) != kl) break;
-    if (fread(&vl, 4, 1, f) != 1 || vl > 4096) break;
+    if (fread(&vl, 4, 1, f) != 1 || vl > 256 * 1024) break;
     std::vector<uint8_t> v(vl);
     if (vl && fread(v.data(), 1, vl, f) != vl) break;
     if (!k.empty() && k[0] == '@') {

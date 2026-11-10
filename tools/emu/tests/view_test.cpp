@@ -19,6 +19,7 @@
 #include <cstdio>
 #include <cstring>
 #include <set>
+#include <vector>
 
 uint32_t g_seed=17; FakeSerial Serial; FakeESP ESP; FakeWire Wire;
 volatile int g_touchX=0,g_touchY=0; volatile bool g_touchDown=false;
@@ -37,7 +38,7 @@ uint16_t galleryCount();
 int16_t galleryAt(uint16_t visual);
 uint8_t galleryPages();
 void galleryClampPage();
-uint8_t boxSlotFor(uint8_t visual);
+uint16_t boxSlotFor(uint16_t visual);
 const char *personalityName();
 int uiGoalCount();
 bool uiGoalMet(int i);
@@ -208,7 +209,7 @@ int main(){
   for (int i = 0; i < BOX_SLOTS; i++) party.box[i] = PartyMon();
   struct { int slot, dex, lvl; } seed[] = {
     { 0, 149, 55 }, { 1,   6, 90 }, { 3,  25, 12 },
-    { 4, 131, 40 }, { 9,   9, 90 }, { 17, 3, 71 },
+    { 4, 131, 40 }, { 9,   9, 90 }, { BOX_SLOTS - 1, 3, 71 },
   };
   for (auto &s : seed) {
     PartyMon m; m.dex = s.dex; m.level = s.lvl;
@@ -218,8 +219,7 @@ int main(){
   party.boxSave();
 
   // A copy, to prove the sort never touches the data.
-  PartyMon before[BOX_SLOTS];
-  memcpy(before, party.box, sizeof(before));
+  std::vector<PartyMon> before(party.box.begin(), party.box.end());
 
   for (uint8_t mode = 0; mode < boxSortCount(); mode++) {
     boxSort = mode;
@@ -227,8 +227,8 @@ int main(){
     // real slot is reachable. Anything less means two cells share a creature.
     std::set<int> hit;
     bool inRange = true;
-    for (uint8_t v = 0; v < BOX_SLOTS; v++) {
-      const uint8_t s = boxSlotFor(v);
+    for (uint16_t v = 0; v < BOX_SLOTS; v++) {
+      const uint16_t s = boxSlotFor(v);
       if (s >= BOX_SLOTS) inRange = false;
       hit.insert(s);
     }
@@ -240,7 +240,7 @@ int main(){
     // and the creatures on screen are the creatures in the box, once each
     std::set<int> shown;
     int nonEmpty = 0;
-    for (uint8_t v = 0; v < BOX_SLOTS; v++) {
+    for (uint16_t v = 0; v < BOX_SLOTS; v++) {
       const PartyMon &mm = party.box[boxSlotFor(v)];
       if (!mm.empty()) { nonEmpty++; shown.insert(boxSlotFor(v)); }
     }
@@ -250,7 +250,7 @@ int main(){
 
     // EMPTY SLOTS LAST, so the grid reads full-first rather than gap-toothed.
     bool sawEmpty = false, gapAfter = false;
-    for (uint8_t v = 0; v < BOX_SLOTS; v++) {
+    for (uint16_t v = 0; v < BOX_SLOTS; v++) {
       if (party.box[boxSlotFor(v)].empty()) sawEmpty = true;
       else if (sawEmpty) gapAfter = true;
     }
@@ -258,13 +258,13 @@ int main(){
     ck(mode == BSORT_SLOT ? true : !gapAfter, m);
 
     snprintf(m, sizeof(m), "order %u: sorting the VIEW left the box untouched", mode);
-    ck(memcmp(before, party.box, sizeof(before)) == 0, m);
+    ck(memcmp(before.data(), party.box.data(), before.size() * sizeof(PartyMon)) == 0, m);
   }
 
   boxSort = BSORT_SLOT;
   {
     bool identity = true;
-    for (uint8_t v = 0; v < BOX_SLOTS; v++) if (boxSlotFor(v) != v) identity = false;
+    for (uint16_t v = 0; v < BOX_SLOTS; v++) if (boxSlotFor(v) != v) identity = false;
     ck(identity, "the default order is the slots themselves, unchanged");
   }
 
@@ -274,8 +274,19 @@ int main(){
     const int want[6] = { 3, 6, 9, 25, 131, 149 };
     bool ok = true;
     for (int i = 0; i < 6; i++)
-      if (party.box[boxSlotFor((uint8_t)i)].dex != want[i]) ok = false;
+      if (party.box[boxSlotFor((uint16_t)i)].dex != want[i]) ok = false;
     ck(ok, "by NUMBER runs up the dex");
+    ck(boxSlotFor(0) == BOX_SLOTS - 1,
+       "a creature beyond byte-sized indices sorts into the first cell");
+    PartyMon replacement = party.box[BOX_SLOTS - 1];
+    replacement.dex = 151;
+    party.box[BOX_SLOTS - 1] = replacement;
+    party.boxSave();
+    ck(party.box[boxSlotFor(0)].dex == 6,
+       "a committed mutation refreshes the cached order without changing mode");
+    replacement.dex = 3;
+    party.box[BOX_SLOTS - 1] = replacement;
+    party.boxSave();
   }
 
   boxSort = BSORT_LEVEL;
@@ -284,7 +295,7 @@ int main(){
     const int wantLvl[6] = { 90, 90, 71, 55, 40, 12 };
     bool ok = true;
     for (int i = 0; i < 6; i++)
-      if (party.box[boxSlotFor((uint8_t)i)].level != wantLvl[i]) ok = false;
+      if (party.box[boxSlotFor((uint16_t)i)].level != wantLvl[i]) ok = false;
     ck(ok, "by LEVEL puts the strongest first");
     ck(party.box[boxSlotFor(0)].dex == 6 && party.box[boxSlotFor(1)].dex == 9,
        "and equal levels stay in slot order, so the order is stable");
@@ -293,11 +304,12 @@ int main(){
   // A box that is entirely empty must not confuse the permutation.
   {
     for (int i = 0; i < BOX_SLOTS; i++) party.box[i] = PartyMon();
+    party.boxSave();
     int wrong = 0;
     for (uint8_t mode = 0; mode < boxSortCount(); mode++) {
       boxSort = mode;
       std::set<int> hit;
-      for (uint8_t v = 0; v < BOX_SLOTS; v++) hit.insert(boxSlotFor(v));
+      for (uint16_t v = 0; v < BOX_SLOTS; v++) hit.insert(boxSlotFor(v));
       if (hit.size() != BOX_SLOTS) wrong++;
     }
     ck(wrong == 0, "an empty box is still a clean permutation in every order");

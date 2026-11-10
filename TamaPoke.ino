@@ -26,7 +26,9 @@
 #include "badges.h"
 #include "avatars.h"
 #include <stdarg.h>
+#include <algorithm>
 #include "party.h"
+#include "collection_store.h"
 #include "save.h"
 #include "pet.h"
 #include "items.h"
@@ -40,7 +42,7 @@
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
-#define FW_VERSION "4.1.1"
+#define FW_VERSION "4.2.0"
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
   LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -152,13 +154,15 @@ bool menuOpen = false;
 // either taps someone to replace or lets it go.
 bool partyOpen = false;
 bool partyPick = false;
+bool handoverStored = false;  // collection committed; retry only the pet acknowledgement
+bool focusBlocked = false;
 uint8_t partyDetail = 0;   // 0 = the grid, else slot + 1
 // The box, reached from the party screen. `boxSwapFrom` is the party slot
 // waiting for something to trade with, 0 when nothing is pending.
 bool boxOpen = false;
 uint8_t boxPage = 0;
 uint8_t boxSwapFrom = 0;   // party slot + 1, armed from the party side
-uint8_t boxSel = 0;        // box slot + 1, armed from the box side
+uint16_t boxSel = 0;       // box slot + 1, armed from the box side
 // How the box is ORDERED ON SCREEN. RAM only, like the Pokedex filter, and for a
 // stronger reason: see boxSlotFor(). Sorting the array itself would rewrite half
 // of a CRC'd checkpoint every time somebody glanced at the box.
@@ -168,7 +172,8 @@ uint8_t boxSortCount() { return BSORT_COUNT; }
 // The box gets the same detail sheet the party has. Tapping a box slot used to
 // yank the creature into the party immediately, which is a surprising amount to
 // happen from one tap -- and left nowhere to put a RELEASE button.
-uint8_t boxDetail = 0;        // box slot + 1 whose sheet is open
+uint16_t boxDetail = 0;       // box slot + 1 whose sheet is open
+bool boxJumpOpen = false;
 // The RELEASE confirm, on whichever sheet is up. One flag rather than two,
 // because only one sheet can be open at a time and partyDetail/boxDetail
 // already say which.
@@ -299,6 +304,7 @@ uint8_t pickCandidates();
 void uiConfirmRects(int *b1Top, int *b1Bot, int *b2Top, int *b2Bot);
 void renderParty();
 void renderBox();
+void drawSaveWarning();
 // The bag and wild encounters are defined ~3000 lines below render() and the
 // touch handler that reach them. arduino-cli does not always auto-prototype,
 // and the emulator's generated proto.h would hide that -- see the note above.
@@ -307,7 +313,8 @@ void bagTap(int16_t x, int16_t y);
 uint8_t bagPages();
 bool startWildBattle(uint8_t region, bool hard);
 PartyMon wildToPartyMon();
-void focusSwap(uint8_t slot);
+bool focusSwap(uint8_t slot);
+bool clearHandover();
 // Declared here because setup() calls it ~5000 lines above its definition, and
 // arduino-cli does not always auto-prototype -- see the note at the top of this
 // block. The emulator's generated proto.h would have hidden it.
@@ -330,7 +337,9 @@ void memoTap(int16_t x, int16_t y);
 void leaveMemo();
 void memoPadPos(int i, int *cx, int *cy);
 int memoPadAt(int16_t x, int16_t y);
-uint8_t boxSlotFor(uint8_t visual);
+uint16_t boxSlotFor(uint16_t visual);
+bool boxHubHold(int16_t x, int16_t y);
+void boxJumpRect(int dir, int *x, int *y, int *w, int *h);
 const char *boxSortName();
 uint8_t galleryFilterCount();
 uint8_t boxSortCount();
@@ -1034,7 +1043,7 @@ bool saveInhibited = false;
 // a visible stutter is a far smaller price than the last few minutes of a
 // creature's life.
 void flushBeforePowerLoss(const char *why) {
-  if (saveInhibited) return;
+  if (saveInhibited || focusBlocked) return;
   if (!pet.savePending()) return;
   Serial.printf("save: flushing (%s)\n", why);
   pet.flushSave();
@@ -1052,7 +1061,10 @@ void setup() {
   // BEFORE anything opens the game namespace or loads a creature into RAM. A
   // wipe asked for on the previous run finishes here, where there is no window
   // for the old creature to be written back over it. See save.h § RESET_NS.
-  resetRecover();
+  if ((resetArmed() && !resetRecover()) || !saveRecover()) {
+    Serial.println("save: boot recovery failed; gameplay blocked. Keep your backup and retry after checking power.");
+    while (true) delay(1000);
+  }
   loadLang();  // idioma guardado (ES por defecto)
   brightLoad();  // brillo guardado (por defecto: el de siempre)
   Wire.begin(IIC_SDA, IIC_SCL);
@@ -1095,6 +1107,10 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(TP_INT), touchIsr, FALLING);
 
   party.begin();
+  if (!party.box.data()) {
+    Serial.println("save: box allocation failed; gameplay blocked. Check OPI PSRAM configuration.");
+    while (true) delay(1000);
+  }
   bag.begin();
   pet.begin();
   // AFTER pet.begin(), because it compares against the pet checkpoint's loaded
@@ -1117,7 +1133,7 @@ void setup() {
     e = rtcEpoch();                  // igual, solo importan las diferencias)
     Serial.println("RTC sin hora: sembrado, sin progresion offline esta vez");
   }
-  pet.syncClock(e);
+  if (!focusBlocked) pet.syncClock(e);
 
   audioBegin();  // ES8311 + I2S + amplificador (suena un jingle de arranque)
 
@@ -1173,6 +1189,7 @@ void ensureMon() {
 }
 
 void loop() {
+  if (focusBlocked) { focusRecover(); render(); delay(20); return; }
   uint32_t now = millis();
   pet.update(now);
 
@@ -1222,15 +1239,22 @@ void loop() {
   // A farewell or release just finished: the creature is waiting for a slot.
   // With room it simply joins; with a full party the player is taken straight
   // to the party screen to choose who it replaces, or to let it go.
-  if (pet.endedKind != CER_NONE && !partyPick) {
+  if (pet.endedKind != CER_NONE && !partyPick && party.writable()) {
     // party first, then the box; only a full box makes it your choice
-    if (party.add(pet.endedMon) || party.boxAdd(pet.endedMon)) {
-      snprintf(partyBannerName, sizeof(partyBannerName), "%s",
-               pet.endedMon.nick[0] ? pet.endedMon.nick : DEX_TBL[pet.endedMon.dex].name);
-      partyBannerUntil = now + 3500;
-      pet.clearEnded();
-      sfxPlay(SFX_MEDAL);
-    } else {
+    if (!handoverStored) {
+      if (party.firstFree() >= 0) handoverStored = party.add(pet.endedMon);
+      else if (party.boxFirstFree() >= 0) handoverStored = party.boxAdd(pet.endedMon);
+    }
+    if (handoverStored) {
+      PartyMon ended = pet.endedMon;
+      if (clearHandover()) {
+        snprintf(partyBannerName, sizeof(partyBannerName), "%s",
+                 ended.nick[0] ? ended.nick : DEX_TBL[ended.dex].name);
+        partyBannerUntil = now + 3500;
+        sfxPlay(SFX_MEDAL);
+      }
+    } else if (party.saveHealthy() && party.writable() &&
+               party.isFull() && party.boxFirstFree() < 0) {
       partyPick = true;
       partyOpen = true;
       menuOpen = false;
@@ -1281,9 +1305,10 @@ void loop() {
   static uint32_t lastHealth = 0;
   if (now - lastHealth > 300000) {
     lastHealth = now;
-    Serial.printf("HEALTH up=%lus heap=%u min=%u save=%s\n",
+    Serial.printf("HEALTH up=%lus heap=%u min=%u save=%s collection=%s\n",
                   (unsigned long)(now / 1000), ESP.getFreeHeap(),
-                  ESP.getMinFreeHeap(), pet.saveHealthy() ? "ok" : "BROKEN");
+                  ESP.getMinFreeHeap(), pet.saveHealthy() ? "ok" : "BROKEN",
+                  party.saveHealthy() ? "ok" : "BROKEN");
     // NVS headroom rides the same heartbeat as the heap, and for the same
     // reason: the value on its own says little, the trend over a soak says
     // everything. See nvsinfo.cpp for what running out costs.
@@ -1501,8 +1526,9 @@ void handleSerial() {
     int s = -1;
     if (sscanf(line.c_str() + 6, "%d", &s) == 1 && s >= 0 && s < PARTY_SLOTS &&
         !party.slots[s].empty()) {
-      focusSwap((uint8_t)s);
-      Serial.printf("raising %s Lv.%u\n", DEX_TBL[pet.speciesId].name, pet.level());
+      if (focusSwap((uint8_t)s))
+        Serial.printf("raising %s Lv.%u\n", DEX_TBL[pet.speciesId].name, pet.level());
+      else Serial.println("FOCUS SAVE FAIL");
     } else {
       Serial.println("empty or out of range");
     }
@@ -1564,9 +1590,10 @@ void handleSerial() {
     // saveExport() reads the checkpoints only (see save.cpp) -- those are what
     // save() and persist() write on every change, so nothing needs forcing
     // fresh here first.
-    static uint8_t buf[SAVE_TRANSFER_MAX];
-    size_t n = saveExport(buf, sizeof(buf));
-    if (!n) { Serial.println("EXPORT FAIL"); return; }
+    uint8_t *buf = static_cast<uint8_t *>(saveAlloc(SAVE_TRANSFER_MAX));
+    if (!buf) { Serial.println("EXPORT FAIL"); return; }
+    size_t n = saveExport(buf, SAVE_TRANSFER_MAX);
+    if (!n) { free(buf); Serial.println("EXPORT FAIL"); return; }
     Serial.printf("# TamaPoke save, %u bytes. Paste this whole block back.\n",
                   (unsigned)n);
     for (size_t i = 0; i < n; i += 48) {
@@ -1575,17 +1602,21 @@ void handleSerial() {
       Serial.println();
     }
     Serial.println("IMPORT");        // the empty one commits
+    free(buf);
   } else if (line.startsWith("IMPORT")) {
     // IMPORT <hex>   append a chunk
     // IMPORT         commit what has been appended
-    static uint8_t in[SAVE_TRANSFER_MAX];
+    static uint8_t *in = nullptr;
     static size_t inN = 0;
+    auto resetImport = [&]() { free(in); in = nullptr; inN = 0; };
     String hex = line.substring(6);
     hex.trim();
     if (hex.length()) {
-      if (hex.length() & 1) { Serial.println("IMPORT ODD"); inN = 0; return; }
+      if (hex.length() & 1) { Serial.println("IMPORT ODD"); resetImport(); return; }
+      if (!in) in = static_cast<uint8_t *>(saveAlloc(SAVE_TRANSFER_MAX));
+      if (!in) { Serial.println("IMPORT FULL"); resetImport(); return; }
       for (size_t i = 0; i + 1 < (size_t)hex.length(); i += 2) {
-        if (inN >= sizeof(in)) { Serial.println("IMPORT FULL"); inN = 0; return; }
+        if (inN >= SAVE_TRANSFER_MAX) { Serial.println("IMPORT FULL"); resetImport(); return; }
         auto nyb = [](char c) -> int {
           if (c >= '0' && c <= '9') return c - '0';
           if (c >= 'A' && c <= 'F') return c - 'A' + 10;
@@ -1594,23 +1625,34 @@ void handleSerial() {
         };
         const char *hs = hex.c_str();
         int hi = nyb(hs[i]), lo = nyb(hs[i + 1]);
-        if (hi < 0 || lo < 0) { Serial.println("IMPORT BAD"); inN = 0; return; }
+        if (hi < 0 || lo < 0) { Serial.println("IMPORT BAD"); resetImport(); return; }
         in[inN++] = (uint8_t)((hi << 4) | lo);
       }
       Serial.println("IMPORT MORE");
       return;                        // wait for the next chunk or commit
     }
-    if (!inN) { Serial.println("IMPORT EMPTY"); return; }
+    if (!inN) { resetImport(); Serial.println("IMPORT EMPTY"); return; }
     bool ok = saveImport(in, inN);
     Serial.println(ok ? "IMPORT OK" : "IMPORT REJECTED");
-    inN = 0;
+    resetImport();
+    if (!ok && saveRestorePending()) {
+      saveInhibited = true;
+      delay(100);
+      ESP.restart();
+      return;
+    }
     if (ok) { Serial.println("DONE"); delay(100); ESP.restart(); }
   } else if (line == "WIPE") {
-    pet.factoryReset();     // borra NVS y reinicia -> partida nueva (eleccion de inicial)
     // Set BEFORE the restart, because the restart runs the shutdown handler, and
     // that handler's whole job is to flush a pending save. Without this it would
     // write the creature that was just deleted straight back into the empty NVS.
     saveInhibited = true;
+    if (!pet.factoryReset()) {
+      Serial.println("WIPE FAIL");
+      if (resetArmed()) { delay(100); ESP.restart(); }
+      else saveInhibited = false;
+      return;
+    }
     Serial.println("DONE");
     delay(100);
     ESP.restart();
@@ -1621,7 +1663,8 @@ void handleSerial() {
     String arg = line.substring(5);
     arg.trim();
     if (arg == "CLEAR") {
-      for (int i = 0; i < PARTY_SLOTS; i++) party.releaseAt(i);
+      for (int i = 0; i < PARTY_SLOTS; i++)
+        if (!party.releaseAt(i)) { Serial.println("PARTY SAVE FAIL"); return; }
     } else if (arg.length()) {
       int d = arg.toInt();
       if (d >= 1 && d <= DEX_COUNT) {
@@ -1630,7 +1673,8 @@ void handleSerial() {
         m.level = 50;
         m.ivAtk = m.ivDef = m.ivSpe = m.ivHp = 20;
         m.trAtk = m.trDef = m.trSpe = 50;
-        Serial.println(party.add(m) ? "added" : "party full");
+        Serial.println(party.add(m) ? "added" :
+                       (party.saveHealthy() && party.writable() ? "party full" : "PARTY SAVE FAIL"));
       }
     }
     Serial.printf("party %u/%u:", party.count(), PARTY_SLOTS);
@@ -1659,7 +1703,8 @@ void handleSerial() {
     // The same two lines the periodic heartbeat prints. Typed on a board is when
     // you actually want them, and a console HEALTH that reported LESS than the
     // automatic one is § "A rule enforced in one path but not in its twin".
-    Serial.printf("save=%s pending=%d\n", pet.saveHealthy() ? "ok" : "BROKEN",
+    Serial.printf("save=%s collection=%s pending=%d\n", pet.saveHealthy() ? "ok" : "BROKEN",
+                  party.saveHealthy() ? "ok" : "BROKEN",
                   pet.savePending() ? 1 : 0);
     nvsReport("health");
     gNvsLow = nvsLowOnSpace();
@@ -1760,6 +1805,9 @@ void handleTouch() {
     // dialog's YES box sits on top of party slot 4. Hold a slot, tap where you
     // think a creature is, lose the creature you are actually raising.
     // One question with one answer, so a new screen cannot be forgotten.
+    if (!holdFired && !swallowGesture && !rimActive && millis() - tStart >= 1000 &&
+        abs(tXl - tX0) < 30 && abs(tYl - tY0) < 30 && boxHubHold(tX0, tY0))
+      holdFired = true;
     if (!holdFired && !swallowGesture && uiCurrentScreen() == SCR_MAIN && millis() - tStart > 3000 &&
         abs(tXl - tX0) < 30 && abs(tYl - tY0) < 30 && inPetZone(tX0, tY0) &&
         !pet.isEgg() && !confirmUntil && !pet.ceremony) {
@@ -1803,7 +1851,14 @@ void onSwipeV(int dir) {
   if (trainOpen)    { if (back) trainOpen = false; return; }
   if (bagOpen)      { if (back) bagOpen = false; return; }
   if (movePickOpen) { if (back) movePickOpen = false; return; }
-  if (boxOpen)      { if (back) { boxOpen = false; boxSel = 0; } return; }
+  if (boxOpen) {
+    if (back) {
+      if (boxJumpOpen) boxJumpOpen = false;
+      else if (boxDetail) { boxDetail = 0; releaseConfirm = false; }
+      else { boxOpen = false; boxSel = 0; }
+    }
+    return;
+  }
   // Either minigame exits on a swipe, keeping what was earned. A swipe cannot
   // be confused with a ball hit -- the gesture resolver separates them -- which
   // the header tap no longer could once the ball became hittable up there.
@@ -1858,7 +1913,10 @@ void onSwipeV(int dir) {
   if (partyOpen) {
     if (partyDetail) { if (back) partyDetail = 0; return; }
     if (back) {
-      if (partyPick) { partyPick = false; pet.clearEnded(); }
+      if (partyPick) {
+        if (!clearHandover()) { sfxPlay(SFX_DENY); return; }
+        partyPick = false;
+      }
       uiTileGo(TILE_PET);
     }
     return;
@@ -1979,7 +2037,7 @@ void renderPartyDetail() {
 }
 
 void renderBoxDetail() {
-  if (party.box[boxDetail - 1].empty()) {
+  if (!party.box.data() || boxDetail > BOX_SLOTS || party.box[boxDetail - 1].empty()) {
     boxDetail = 0;
     releaseConfirm = false;
     renderBox();
@@ -2087,8 +2145,10 @@ bool monSheetConfirmTap(int16_t x, int16_t y, bool fromBox) {
   uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
   if (x < CONFIRM_BTN_X || x > CONFIRM_BTN_X + CONFIRM_BTN_W) return false;
   if (y >= c1t && y <= c1b) {            // YES -- and it does not come back
-    if (fromBox) { party.boxReleaseAt(boxDetail - 1); boxDetail = 0; }
-    else { party.releaseAt(partyDetail - 1); partyDetail = 0; }
+    if (!(fromBox ? party.boxReleaseAt(boxDetail - 1) :
+                   party.releaseAt(partyDetail - 1))) { sfxPlay(SFX_DENY); return true; }
+    if (fromBox) boxDetail = 0;
+    else partyDetail = 0;
     // A half-finished swap named a slot that may now be empty, so disarm both
     // sides rather than leaving one pointing at a creature that is gone.
     boxSwapFrom = 0;
@@ -2138,6 +2198,20 @@ int uiTapFinger() { return UI_TAP_FINGER; }
 // The home icons' TAP radius, which is larger than the graphic they draw.
 int uiButtonHitR() { return BTN_HIT; }
 
+bool clearHandover() {
+  const PartyMon ended = pet.endedMon;
+  const uint8_t kind = pet.endedKind;
+  const uint32_t gen = pet.petGeneration();
+  pet.clearEnded();
+  if (kind != CER_NONE && pet.petGeneration() == gen) {
+    pet.endedMon = ended;
+    pet.endedKind = kind;
+    return false;
+  }
+  handoverStored = false;
+  return true;
+}
+
 void partyTap(int16_t x, int16_t y) {
   if (boxOpen) { boxTap(x, y); return; }
   // The SHEET IS CHECKED FIRST, and that is not cosmetic ordering. It covers the
@@ -2151,7 +2225,7 @@ void partyTap(int16_t x, int16_t y) {
     if (releaseConfirm) { monSheetConfirmTap(x, y, false); return; }
     if (monSheetBtn(x, y, true)) {           // MAKE ACTIVE
       if (pet.ceremony != CER_NONE || pet.awaitingStarter()) { sfxPlay(SFX_DENY); return; }
-      focusSwap((uint8_t)(partyDetail - 1));
+      if (!focusSwap((uint8_t)(partyDetail - 1))) { sfxPlay(SFX_DENY); return; }
       partyDetail = 0;
       boxSwapFrom = 0;
       partyOpen = false;
@@ -2191,8 +2265,8 @@ void partyTap(int16_t x, int16_t y) {
   if ((y >= PARTYCLOSE_Y && y <= PARTYCLOSE_Y + PARTYCLOSE_H &&
        x >= PARTYCLOSE_X && x <= PARTYCLOSE_X + PARTYCLOSE_W) || y < 34) {
     if (partyPick) {                 // declined the swap: the pet is let go
+      if (!clearHandover()) { sfxPlay(SFX_DENY); return; }
       partyPick = false;
-      pet.clearEnded();
     }
     partyOpen = false;
     sfxPlay(SFX_TAP);
@@ -2201,7 +2275,7 @@ void partyTap(int16_t x, int16_t y) {
   for (int i = 0; i < PARTY_SLOTS; i++) {
     if (partySlotAt(x, y) != i) continue;
     if (boxSel) {                    // a box creature is waiting for a slot
-      party.swapPartyBox(i, boxSel - 1);
+      if (!party.swapPartyBox(i, boxSel - 1)) { sfxPlay(SFX_DENY); return; }
       boxSel = 0;
       sfxPlay(SFX_MEDAL);
       return;
@@ -2219,11 +2293,15 @@ void partyTap(int16_t x, int16_t y) {
       sfxPlay(SFX_TAP);
       return;
     }
-    party.replaceAt(i, pet.endedMon);
+    if (!handoverStored) {
+      if (!party.replaceAt(i, pet.endedMon)) { sfxPlay(SFX_DENY); return; }
+      handoverStored = true;
+    }
+    const PartyMon ended = pet.endedMon;
+    if (!clearHandover()) { sfxPlay(SFX_DENY); return; }
     snprintf(partyBannerName, sizeof(partyBannerName), "%s",
-             pet.endedMon.nick[0] ? pet.endedMon.nick : DEX_TBL[pet.endedMon.dex].name);
+             ended.nick[0] ? ended.nick : DEX_TBL[ended.dex].name);
     partyBannerUntil = millis() + 3500;
-    pet.clearEnded();
     partyPick = false;
     partyOpen = false;
     sfxPlay(SFX_MEDAL);
@@ -2251,7 +2329,10 @@ void onSwipe(int dir) {
     // A sheet drawn on top of a tile closes first; the axis is underneath it.
     if (galleryDetail) { galleryDetail = 0; galleryPmd.unload(); galleryDirty = true; return; }
     if (partyDetail) { partyDetail = 0; return; }
-    if (partyPick) { partyPick = false; pet.clearEnded(); }
+    if (partyPick) {
+      if (!clearHandover()) { sfxPlay(SFX_DENY); return; }
+      partyPick = false;
+    }
     if (pet.ceremony || confirmUntil) return;
     int n = t - dir;   // the content follows the finger
     // IT BUMPS. This is the whole point of the axis: a horizontal swipe can no
@@ -2267,7 +2348,10 @@ void onSwipe(int dir) {
   if (trainOpen) { trainOpen = false; return; }
   if (bagOpen) { bagOpen = false; return; }
   if (movePickOpen) { movePickOpen = false; return; }
-  if (boxOpen) { boxOpen = false; boxSel = 0; return; }
+  if (boxOpen) {
+    if (boxJumpOpen) { boxJumpOpen = false; return; }
+    boxOpen = false; boxSel = 0; return;
+  }
   if (gameOpen) { leaveGame(); return; }   // swipe out, keeping what you earned
   if (spdOpen) { leaveSpeed(); return; }
   if (memoOpen) { leaveMemo(); return; }
@@ -2473,11 +2557,20 @@ void onTap(int16_t x, int16_t y) {
       sfxPlay(SFX_TAP);
       // Swapping for a move already in another slot would silently duplicate
       // it, so trade the two slots instead of overwriting.
+      if (movePickParty && !party.writable()) { sfxPlay(SFX_DENY); return; }
       uint8_t *tgt = pickTargetMoves();
+      uint8_t before[MOVE_SLOTS];
+      memcpy(before, tgt, sizeof(before));
       for (int s = 0; s < MOVE_SLOTS; s++)
         if (tgt[s] == all[idx] && s != movePickSlot) tgt[s] = tgt[movePickSlot];
       tgt[movePickSlot] = all[idx];
-      if (movePickParty) party.save(); else pet.saveNow();
+      if (movePickParty) {
+        if (!party.save()) {
+          memcpy(tgt, before, sizeof(before));
+          sfxPlay(SFX_DENY);
+          return;
+        }
+      } else pet.saveNow();
       movePickOpen = false;
       return;
     }
@@ -2866,6 +2959,7 @@ void uiTileGo(int i) {
   if (i >= TILE_COUNT) i = TILE_COUNT - 1;
   exploreOpen = gymOpen = partyOpen = galleryOpen = playerOpen = false;
   boxOpen = false;
+  boxJumpOpen = false;
   boxDetail = partyDetail = 0;
   galleryDetail = 0;
   switch (TILE[i].scr) {
@@ -2900,7 +2994,9 @@ static uint8_t *uiRimTarget(uint8_t *pages) {
     // the region, and paging past the filtered end draws an empty screen.
     case SCR_GALLERY: p = &galleryPage; n = galleryPages(); break;
     case SCR_PLAYER:  p = &playerPage;  n = PLAYER_PAGES; break;
-    case SCR_BOX:     p = &boxPage;     n = BOX_SLOTS / BOX_PER_PAGE; break;
+    case SCR_BOX:
+      if (!boxJumpOpen) { p = &boxPage; n = BOX_SLOTS / BOX_PER_PAGE; }
+      break;
     case SCR_BAGSCR:  p = &bagPage;     n = bagPages(); break;
     case SCR_CARD:    p = &cardPage;    n = CARD_PAGES; break;
     // Settings became two pages when brightness and the reset arrived; the rim
@@ -4003,6 +4099,11 @@ void clockTap(int16_t x, int16_t y) {
         // restart. The wipe itself happens at the top of the next boot, before
         // any of this is loaded again -- see save.h section RESET_NS.
         resetArm();
+        if (!resetArmed()) {
+          Serial.println("reset: intent could not be verified; save left intact");
+          sfxPlay(SFX_DENY);
+          return;
+        }
         saveInhibited = true;
         Serial.println("reset: armed by the player; restarting");
         delay(100);
@@ -4720,23 +4821,37 @@ static void wildGrantDrops() {
 // uses -- party, then box, then ask -- rather than growing a second copy of it.
 // CLAUDE.md's most repeated bug is a rule enforced in one path but not its
 // twin, and "which slot does a creature take" is exactly that shape.
-static void wildStoreCaught() {
+static bool wildStoreCaught() {
   PartyMon m = wildToPartyMon();
   // NOT registered in the Pokedex here. Registration means "you raised this",
   // and switchTo() does it when the creature actually becomes the one you are
   // raising -- so catching one and leaving it in the box does not fill the dex.
-  if (party.add(m) || party.boxAdd(m)) return;
+  if (!party.writable()) return false;
+  if (party.firstFree() >= 0) return party.add(m);
+  if (party.boxFirstFree() >= 0) return party.boxAdd(m);
   // Both full: hand it to the chooser the endings already own. endedKind is
   // only ever tested against CER_NONE by that flow, so this is the intended
   // handover and not a borrowed meaning. Through setEnded() so it is written to
   // the pet checkpoint as well -- a creature you just caught and have not yet
   // found a slot for must not evaporate on a power cut either.
+  if (pet.endedKind != CER_NONE) return false;
+  const uint32_t gen = pet.petGeneration();
   pet.setEnded(m, CER_RELEASE);
+  if (pet.petGeneration() == gen) {
+    pet.endedMon = PartyMon();
+    pet.endedKind = CER_NONE;
+    return false;
+  }
+  return true;
 }
 
 // Throwing a ball. Spends the turn either way: a free capture attempt every
 // round would make weakening the target pointless.
 static void btlThrowBall(ItemKey k) {
+  if (!party.writable() || pet.endedKind != CER_NONE) {
+    sfxPlay(SFX_DENY);
+    return;
+  }
   if (!bag.consume(k)) { sfxPlay(SFX_DENY); return; }
   btlMenu = 0;
   btlSay(T(S_THREW), itemEntry(k).name);
@@ -4744,10 +4859,15 @@ static void btlThrowBall(ItemKey k) {
                                      btlFoe.maxHp, btlFoe.ailment != AIL_NONE,
                                      itemEntry(k).param);
   if (random(100) < chance) {
+    if (!wildStoreCaught()) {
+      Serial.println("save: capture storage failed; encounter retained");
+      sfxPlay(SFX_DENY);
+      btlSay("%s", T(S_ITEM_NOUSE));
+      return;
+    }
     wildCaught = true;
     btlOver = true;
     btlWon = true;
-    wildStoreCaught();
     audioMusic(MUS_VICTORY);
     sfxPlay(SFX_VICTORY);
     btlSay(T(S_CAUGHT), btlFoe.name);
@@ -6939,21 +7059,36 @@ void drawMenu() {
 // end state rather than guessing which half landed. A cut before 2 leaves the
 // game exactly as it was and the journal is replayed onto an unchanged state,
 // which lands in the same place.
-void focusSwap(uint8_t slot) {
-  if (slot >= PARTY_SLOTS) return;
+static bool focusMonValid(const PartyMon &m) {
+  if (m.empty() || m.dex > DEX_COUNT || !memchr(m.nick, '\0', sizeof(m.nick))) return false;
+  for (uint8_t move : m.moves) if (move >= MOVE_COUNT) return false;
+  return true;
+}
+
+bool focusSwap(uint8_t slot) {
+  if (slot >= PARTY_SLOTS || !party.writable()) return false;
+  uint8_t pendingSlot; PartyMon pendingOut, pendingIn; bool pendingEgg; uint32_t pendingGen;
+  if (party.focusPending(&pendingSlot, &pendingOut, &pendingEgg, &pendingIn, &pendingGen))
+    return false;
+  if (!party.writable()) return false;
   PartyMon incoming = party.slots[slot];   // by value: the slot is about to change
-  if (incoming.empty()) return;
+  if (!focusMonValid(incoming)) return false;
   const bool wasEgg = pet.isEgg();
   const PartyMon outgoing = wasEgg ? PartyMon() : pet.toPartyMon();
-  // If the intent cannot be written, do the swap anyway rather than refuse it: an
-  // unjournalled swap is what this firmware has always done, and blocking the
-  // button on a failing NVS would be a worse outcome than the old risk.
   if (!party.focusBegin(slot, outgoing, wasEgg, incoming, pet.petGeneration()))
-    Serial.println("save: focus journal failed; swapping unprotected");
-  if (wasEgg) party.releaseAt(slot);
-  else party.replaceAt(slot, outgoing);
+    return false;
+  focusBlocked = true;
+  if (!(wasEgg ? party.releaseAt(slot) : party.replaceAt(slot, outgoing))) return false;
+  const uint32_t gen = pet.petGeneration();
   pet.switchTo(incoming);
-  party.focusEnd();
+  if (pet.petGeneration() == gen) {
+    // Keep the journal authoritative; normal gameplay must not save over this
+    // half-finished exchange before recovery completes it.
+    return false;
+  }
+  const bool acknowledged = party.focusEnd();
+  focusBlocked = false;
+  return acknowledged;
 }
 
 // Finishes a swap that lost power part way through. Called once at boot, AFTER
@@ -6964,23 +7099,38 @@ void focusRecover() {
   PartyMon outgoing, incoming;
   bool wasEgg = false;
   uint32_t armedGen = 0;
-  if (!party.focusPending(&slot, &outgoing, &wasEgg, &incoming, &armedGen)) return;
-  if (slot >= PARTY_SLOTS || incoming.empty()) { party.focusEnd(); return; }
+  if (!party.focusPending(&slot, &outgoing, &wasEgg, &incoming, &armedGen)) {
+    focusBlocked = false;
+    return;
+  }
+  focusBlocked = true;
+  if (slot >= PARTY_SLOTS || !focusMonValid(incoming) ||
+      (!wasEgg && !focusMonValid(outgoing))) {
+    static bool reported = false;
+    if (!reported) Serial.println("save: invalid focus intent; recovery required, NOT discarding");
+    reported = true;
+    return;
+  }
 
   // The pet record's generation is the identity PartyMon lacks. switchTo() saves
   // once, so armedGen + 1 means the pet half committed; anything above that means
   // the game saved again afterwards and this journal is merely stale. Replaying
   // either would undo real play.
   if (pet.petGeneration() > armedGen) {
-    party.focusEnd();
+    // A prior pet commit proves the party half landed first. Leave the journal
+    // in place if storage is unavailable rather than acknowledging uncertainty.
+    if (party.writable() && party.saveHealthy()) party.focusEnd();
+    focusBlocked = false;
     return;
   }
   Serial.printf("save: finishing an interrupted focus swap into slot %u\n",
                 (unsigned)slot);
-  if (wasEgg) party.releaseAt(slot);
-  else party.replaceAt(slot, outgoing);
+  if (!(wasEgg ? party.releaseAt(slot) : party.replaceAt(slot, outgoing))) return;
+  const uint32_t gen = pet.petGeneration();
   pet.switchTo(incoming);
+  if (pet.petGeneration() == gen) return;
   party.focusEnd();
+  focusBlocked = false;
 }
 
 // ---------- the bag ----------
@@ -7269,7 +7419,7 @@ void renderTrain() {
 // Empty slots always last, whatever the key: a grid with holes punched through it
 // is harder to read than a full one, and the empty cells are only there to be
 // swap targets anyway.
-static bool boxSortAfter(uint8_t a, uint8_t b) {
+static bool boxSortAfter(uint16_t a, uint16_t b) {
   const PartyMon &ma = party.box[a], &mb = party.box[b];
   if (ma.empty() != mb.empty()) return ma.empty();
   if (ma.empty()) return false;                  // both empty: keep slot order
@@ -7288,24 +7438,27 @@ static bool boxSortAfter(uint8_t a, uint8_t b) {
 // party; reordering the array would rewrite the largest blob in the store every
 // time somebody glanced at the box, and boxDetail/boxSel/boxSwapFrom all carry
 // REAL indices into it, so a sort landing mid-gesture would retarget a pending
-// swap onto a different creature. Sorting the LOOK costs one pass over BOX_SLOTS
-// entries and cannot lose anything.
+// swap onto a different creature. Cache the sorted LOOK until a committed
+// mutation or load changes the collection revision, not once per drawn cell.
 //
 // box_test asserts this is a BIJECTION for every mode, because the one bug class
 // that matters here is two visual cells resolving to the same real slot -- which
 // is how a creature gets overwritten.
-uint8_t boxSlotFor(uint8_t visual) {
+uint16_t boxSlotFor(uint16_t visual) {
   if (visual >= BOX_SLOTS) return 0;
-  if (boxSort == BSORT_SLOT) return visual;
-  uint8_t order[BOX_SLOTS];
-  for (uint8_t i = 0; i < BOX_SLOTS; i++) order[i] = i;
-  // Insertion sort: few entries, and STABLE, which is what makes equal keys
-  // resolve to a deterministic order instead of one the algorithm chose.
-  for (uint8_t i = 1; i < BOX_SLOTS; i++) {
-    const uint8_t v = order[i];
-    int j = (int)i - 1;
-    while (j >= 0 && boxSortAfter(order[j], v)) { order[j + 1] = order[j]; j--; }
-    order[j + 1] = v;
+  if (boxSort == BSORT_SLOT || !party.box.data()) return visual;
+  static uint16_t order[BOX_SLOTS];
+  static uint32_t revision = 0;
+  static uint8_t mode = BSORT_COUNT;
+  if (mode != boxSort || revision != party.revision()) {
+    for (uint16_t i = 0; i < BOX_SLOTS; i++) order[i] = i;
+    std::sort(order, order + BOX_SLOTS, [](uint16_t a, uint16_t b) {
+      if (boxSortAfter(a, b)) return false;
+      if (boxSortAfter(b, a)) return true;
+      return a < b;  // deterministic slot order for equal keys, including empties
+    });
+    mode = boxSort;
+    revision = party.revision();
   }
   return order[visual];
 }
@@ -7318,6 +7471,21 @@ const char *boxSortName() {
   }
 }
 
+bool boxHubHold(int16_t x, int16_t y) {
+  if (uiCurrentScreen() != SCR_BOX || boxDetail || boxJumpOpen ||
+      movePickOpen || releaseConfirm || !partyHubAt(x, y)) return false;
+  boxJumpOpen = true;
+  sfxPlay(SFX_TAP);
+  return true;
+}
+
+void boxJumpRect(int dir, int *x, int *y, int *w, int *h) {
+  if (x) *x = CX - 110;
+  if (y) *y = dir < 0 ? 130 : 242;
+  if (w) *w = 220;
+  if (h) *h = UI_TAP_FINGER;
+}
+
 void renderBox() {
   gfx->fillScreen(RGB565_BLACK);
   gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
@@ -7327,6 +7495,25 @@ void renderBox() {
   gfx->setTextSize(2);
   gfx->setCursor(CX - (int)strlen(head) * 6, 40);
   gfx->print(head);
+  drawSaveWarning();
+  if (boxJumpOpen) {
+    char pg[12];
+    snprintf(pg, sizeof(pg), "%u/%u", (unsigned)(boxPage + 1),
+             (unsigned)(BOX_SLOTS / BOX_PER_PAGE));
+    gfx->setCursor(CX - (int)strlen(pg) * 6, 86);
+    gfx->print(pg);
+    for (int dir = -1; dir <= 1; dir += 2) {
+      int x, y, w, h;
+      boxJumpRect(dir, &x, &y, &w, &h);
+      gfx->fillRoundRect(x, y, w, h, 16, UI_TRACK);
+      gfx->setCursor(CX - 18, y + h / 2 - 8);
+      gfx->print(dir < 0 ? "-10" : "+10");
+    }
+    gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 392);
+    gfx->print(T(S_BACK));
+    gfx->flush();
+    return;
+  }
   if (boxSwapFrom) {
     const PartyMon &p = party.slots[boxSwapFrom - 1];
     char sub[40];
@@ -7337,8 +7524,8 @@ void renderBox() {
     gfx->setCursor(CX - (int)strlen(sub) * 3, PSLOT_PROMPT_Y);
     gfx->print(sub);
   }
-  for (uint8_t i = 0; i < BOX_PER_PAGE; i++) {
-    uint8_t visual = boxPage * BOX_PER_PAGE + i;
+  for (uint8_t i = 0; party.box.data() && i < BOX_PER_PAGE; i++) {
+    uint16_t visual = (uint16_t)boxPage * BOX_PER_PAGE + i;
     if (visual >= BOX_SLOTS) break;
     drawPartySlot(i, party.box[boxSlotFor(visual)]);
   }
@@ -7353,14 +7540,32 @@ void renderBox() {
     drawPartyHub(pg, boxSortName(), boxSwapFrom != 0);
   }
   gfx->setTextColor(UI_INK_SOFT);
+  gfx->setTextSize(1);
+  gfx->setCursor(CX - 27, 375);
+  gfx->print("1s: +/-10");
   gfx->setTextSize(2);
-  gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 392);
+  gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 402);
   gfx->print(T(S_BACK));
   uiChrome();
   gfx->flush();
 }
 
 void boxTap(int16_t x, int16_t y) {
+  if (!party.box.data()) { boxOpen = false; boxDetail = 0; sfxPlay(SFX_DENY); return; }
+  if (boxJumpOpen) {
+    for (int dir = -1; dir <= 1; dir += 2) {
+      int bx, by, w, h;
+      boxJumpRect(dir, &bx, &by, &w, &h);
+      if (x < bx || x >= bx + w || y < by || y >= by + h) continue;
+      int page = (int)boxPage + dir * 10;
+      const int last = BOX_SLOTS / BOX_PER_PAGE - 1;
+      boxPage = (uint8_t)(page < 0 ? 0 : page > last ? last : page);
+      sfxPlay(SFX_TAP);
+      return;
+    }
+    boxJumpOpen = false;
+    return;
+  }
   // The sheet is checked first and is modal in the same way the party's is.
   if (boxDetail) {
     if (releaseConfirm) { monSheetConfirmTap(x, y, true); return; }
@@ -7373,7 +7578,7 @@ void boxTap(int16_t x, int16_t y) {
         sfxPlay(SFX_TAP);
         return;
       }
-      party.swapPartyBox((uint8_t)free, boxDetail - 1);
+      if (!party.swapPartyBox((uint8_t)free, boxDetail - 1)) { sfxPlay(SFX_DENY); return; }
       boxDetail = 0;
       boxSel = 0;
       sfxPlay(SFX_MEDAL);
@@ -7404,16 +7609,16 @@ void boxTap(int16_t x, int16_t y) {
     return;
   }
   for (uint8_t i = 0; i < BOX_PER_PAGE; i++) {
-    uint8_t visual = boxPage * BOX_PER_PAGE + i;
+    uint16_t visual = (uint16_t)boxPage * BOX_PER_PAGE + i;
     if (visual >= BOX_SLOTS) break;
-    uint8_t idx = boxSlotFor(visual);
+    uint16_t idx = boxSlotFor(visual);
     if (partySlotAt(x, y) != (int)i) continue;
     if (boxSwapFrom) {           // a party slot is waiting: complete the trade
       if (party.slots[boxSwapFrom - 1].empty() && party.box[idx].empty()) {
         sfxPlay(SFX_DENY);
         return;
       }
-      party.swapPartyBox(boxSwapFrom - 1, idx);
+      if (!party.swapPartyBox(boxSwapFrom - 1, idx)) { sfxPlay(SFX_DENY); return; }
       boxSwapFrom = 0;
       boxSel = 0;
       sfxPlay(SFX_MEDAL);
@@ -7505,7 +7710,7 @@ void renderParty() {
     drawPartyHub(bl, T(S_BOX_BTN), boxSwapFrom != 0);
   }
 
-  if (boxSel) {
+  if (boxSel && party.box.data() && boxSel <= BOX_SLOTS) {
     const PartyMon &b = party.box[boxSel - 1];
     char sw[44];
     snprintf(sw, sizeof(sw), T(S_BOX_SWAP),
@@ -7647,8 +7852,8 @@ static bool dexHeldNow(int16_t dex) {
   if (!pet.isEgg() && pet.speciesId == dex) return true;
   for (int i = 0; i < PARTY_SLOTS; i++)
     if (party.slots[i].dex == dex) return true;
-  for (int i = 0; i < BOX_SLOTS; i++)
-    if (party.box[i].dex == dex) return true;
+  for (const PartyMon &m : party.box)
+    if (m.dex == dex) return true;
   return false;
 }
 
@@ -7884,7 +8089,7 @@ void drawBattery() {
 // EXPORT. The firmware could not say this at all before: the only symptom was a
 // line on a serial port no player has attached.
 void drawSaveWarning() {
-  if (pet.saveHealthy() && !gNvsLow) return;
+  if (pet.saveHealthy() && party.saveHealthy() && !gNvsLow && !focusBlocked) return;
   const int x = CX - 40, y = 11, w = 13, h = 13;
   gfx->fillTriangle(x + w / 2, y, x, y + h, x + w, y + h, UI_BAR_BAD);
   gfx->fillRect(x + w / 2, y + 5, 2, 4, RGB565_BLACK);   // the "!"

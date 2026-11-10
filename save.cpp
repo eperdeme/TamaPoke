@@ -1,261 +1,337 @@
 #include "save.h"
 #include <Arduino.h>
 #include <Preferences.h>
+#include <stdlib.h>
 #include <string.h>
-#include "party.h"   // MAX_VAL is derived from the box, see below
+#include "party.h"
+#include "dex.h"
+#include "collection_store.h"
 
-// Every key the firmware persists. Adding one here is the whole job of adding
-// it to the backup; save_test fails if a key exists in NVS and not in this list.
-//
-// Legacy fields migrate on load; exports keep checkpoints and standalone keys.
+// Namespace is part of every v2/v3 field, never inferred from its name.
 const SaveField SAVE_FIELDS[] = {
-  { "init", SK_BOOL },
-  // The alternating checkpoints -- everything about the creature and the
-  // player lives here now. This IS the save; nothing below is redundant with it.
-  { "petA", SK_BYTES }, { "petB", SK_BYTES },
-  { "plyA", SK_BYTES }, { "plyB", SK_BYTES },
-  { "pbA", SK_BYTES },  { "pbB", SK_BYTES },
-  // What has no checkpoint of its own
-  { "bag", SK_BYTES },
-  // settings, so a restored device plays the way it did
-  { "lang", SK_U8 },    { "snd", SK_BOOL },   { "vol", SK_U8 },
-  // Screen brightness, 1..BRIGHT_LEVELS. Here beside the volume it mirrors, and
-  // NOT a bump of SAVE_VERSION: export omits a key that is absent and import
-  // skips one it does not recognise, so adding a field is invisible to every
-  // .tpsave already in a player's hands. Bumping the version would refuse all of
-  // them outright -- saveImport() tests it for exact equality.
-  { "brt", SK_U8 },
+  {"init", SK_BOOL}, {"petA", SK_BYTES}, {"petB", SK_BYTES},
+  {"plyA", SK_BYTES}, {"plyB", SK_BYTES}, {"pbA", SK_BYTES}, {"pbB", SK_BYTES},
+  {"fxA", SK_BYTES}, {"fxB", SK_BYTES},
+  {"bag", SK_BYTES}, {"lang", SK_U8}, {"snd", SK_BOOL},
+  {"vol", SK_U8}, {"brt", SK_U8},
+  {"colv", SK_U8},
+  // Upgrades deliberately retain these original keys. Preserve them too:
+  // checkpoints remain authoritative, but an export must not silently drop
+  // fields that are still present on an upgraded device.
+  {"full", SK_U8}, {"joy", SK_U8}, {"ene", SK_U8}, {"hyg", SK_U8},
+  {"poop", SK_U8}, {"wgt", SK_U8}, {"age", SK_U32}, {"dexn", SK_I16},
+  {"eggT2", SK_I16}, {"spec", SK_I8}, {"eggT", SK_I8},
+  {"crack", SK_U8}, {"mist", SK_U8}, {"sleep", SK_BOOL}, {"lend", SK_U8},
+  {"seen", SK_U32}, {"bond", SK_U8}, {"nick", SK_STR}, {"froz", SK_BOOL},
+  {"ivat", SK_U8}, {"ivdf", SK_U8}, {"ivsp", SK_U8}, {"ivhp", SK_U8},
+  {"gatk", SK_U8}, {"gdef", SK_U8}, {"gspe", SK_U8},
+  {"tatk", SK_U8}, {"tdef", SK_U8}, {"tspe", SK_U8}, {"mvs", SK_BYTES},
+  {"mvlv", SK_U8}, {"bk", SK_BOOL}, {"shy", SK_BOOL}, {"eshy", SK_BOOL},
+  {"stpk", SK_BOOL}, {"evop", SK_U8}, {"slpa", SK_U8}, {"rtpn", SK_BOOL},
+  {"tnam", SK_STR}, {"avtr", SK_U8}, {"badg", SK_U16}, {"badh", SK_U16},
+  {"reg", SK_U8}, {"eggR", SK_BYTES}, {"regn", SK_U8},
+  {"badgX", SK_BYTES}, {"badhX", SK_BYTES}, {"dexreg", SK_BYTES}, {"dexsh", SK_BYTES},
+  {"strk", SK_U16}, {"bstrk", SK_U16}, {"cday", SK_U32}, {"medal", SK_U16},
+  {"tmedal", SK_U16}, {"mstone", SK_U16}, {"ghi", SK_U16}, {"shi", SK_U16},
+  {"qhi", SK_U16}, {"mhi", SK_U16}, {"party", SK_BYTES}, {"box", SK_BYTES},
+  {"cbA", SK_BYTES, 1}, {"cbB", SK_BYTES, 1}, {"active", SK_BOOL, 1},
 };
 const uint16_t SAVE_FIELD_COUNT = sizeof(SAVE_FIELDS) / sizeof(SAVE_FIELDS[0]);
+static constexpr size_t MAX_VAL = COLLECTION_MAX_BYTES;
+static const char *RESTORE_NS = "restore";
+static const char *RESET_KEY = "rst";
+static const uint8_t RESET_WANTED = 0xA5;
 
-// The largest single value in the backup. It USED to be the box -- BOX_SLOTS
-// whole records -- and is now the party+box CHECKPOINT, which holds both arrays
-// plus its own header. Getting this wrong does not fail loudly: readField()
-// returns -1 for anything longer, so the oversized key is quietly left out and
-// the backup is silently partial. That already happened once, when this was the
-// literal 768 and a PartyMon grew past 42 bytes.
-//
-// DERIVED, never a literal, and derived from the same expression party.cpp uses
-// so the two cannot drift.
-#define PAIR_BLOB_MAX (18 + sizeof(PartyMon) * (PARTY_SLOTS + BOX_SLOTS) + 2)
-#define MAX_VAL (PAIR_BLOB_MAX > sizeof(PartyMon) * BOX_SLOTS \
-                 ? PAIR_BLOB_MAX : sizeof(PartyMon) * BOX_SLOTS)
+static bool restoreOpen(Preferences &p, bool ro = false) {
+  return collectionStorageReady() && p.begin(RESTORE_NS, ro, COLLECTION_PARTITION);
+}
+
+static bool clearChecked(Preferences &p) { return p.clear(); }
 
 static uint16_t crc16(const uint8_t *p, size_t n) {
   uint16_t c = 0xFFFF;
   for (size_t i = 0; i < n; i++) {
     c ^= (uint16_t)p[i] << 8;
-    for (int b = 0; b < 8; b++) c = (c & 0x8000) ? (uint16_t)((c << 1) ^ 0x1021)
-                                                : (uint16_t)(c << 1);
+    for (int b = 0; b < 8; b++)
+      c = (c & 0x8000) ? (uint16_t)((c << 1) ^ 0x1021) : (uint16_t)(c << 1);
   }
   return c;
 }
 
+static uint16_t u16(const uint8_t *p) { return p[0] | ((uint16_t)p[1] << 8); }
+static uint32_t u32(const uint8_t *p) {
+  return u16(p) | ((uint32_t)u16(p + 2) << 16);
+}
 static uint8_t widthOf(uint8_t kind) {
   switch (kind) {
     case SK_U8: case SK_I8: case SK_BOOL: return 1;
     case SK_U16: case SK_I16: return 2;
     case SK_U32: return 4;
-    default: return 0;               // variable
+    default: return 0;
   }
 }
 
-// Reads one field out of NVS. Returns its length, or -1 if the key is absent --
-// absent is normal (a fresh save has no party) and is simply left out.
+// -1 is absent; -2 is a read error. A read error must NEVER omit a field.
 static int readField(Preferences &p, const SaveField &f, uint8_t *val) {
   if (!p.isKey(f.key)) return -1;
   switch (f.kind) {
-    case SK_U8:   val[0] = p.getUChar(f.key, 0); return 1;
-    case SK_I8:   val[0] = (uint8_t)p.getChar(f.key, 0); return 1;
-    case SK_BOOL: val[0] = p.getBool(f.key, false) ? 1 : 0; return 1;
-    case SK_U16: { uint16_t v = p.getUShort(f.key, 0); memcpy(val, &v, 2); return 2; }
-    case SK_I16: { int16_t v = p.getShort(f.key, 0); memcpy(val, &v, 2); return 2; }
-    case SK_U32: { uint32_t v = p.getUInt(f.key, 0); memcpy(val, &v, 4); return 4; }
+    case SK_U8:
+      val[0] = p.getUChar(f.key, 0);
+      return val[0] == p.getUChar(f.key, 255) ? 1 : -2;
+    case SK_I8:
+      val[0] = (uint8_t)p.getChar(f.key, 0);
+      return val[0] == (uint8_t)p.getChar(f.key, -1) ? 1 : -2;
+    case SK_BOOL:
+      val[0] = p.getBool(f.key, false) ? 1 : 0;
+      return val[0] == (p.getBool(f.key, true) ? 1 : 0) ? 1 : -2;
+    case SK_U16: {
+      uint16_t v = p.getUShort(f.key, 0);
+      if (v != p.getUShort(f.key, UINT16_MAX)) return -2;
+      memcpy(val, &v, 2); return 2;
+    }
+    case SK_I16: {
+      int16_t v = p.getShort(f.key, 0);
+      if (v != p.getShort(f.key, -1)) return -2;
+      memcpy(val, &v, 2); return 2;
+    }
+    case SK_U32: {
+      uint32_t v = p.getUInt(f.key, 0);
+      if (v != p.getUInt(f.key, UINT32_MAX)) return -2;
+      memcpy(val, &v, 4); return 4;
+    }
     case SK_BYTES: {
       size_t n = p.getBytesLength(f.key);
-      if (n > MAX_VAL) return -1;
-      p.getBytes(f.key, val, n);
+      if (!n || n > MAX_VAL || p.getBytes(f.key, val, n) != n) return -2;
       return (int)n;
     }
     case SK_STR: {
-      char tmp[64] = {0};
-      p.getString(f.key, tmp, sizeof(tmp));
-      size_t n = strlen(tmp);
-      memcpy(val, tmp, n);
+      char text[64] = {};
+      if (!p.getString(f.key, text, sizeof(text))) return -2;
+      size_t n = strlen(text);
+      if (n >= sizeof(text) - 1) return -2;
+      memcpy(val, text, n);
       return (int)n;
     }
   }
-  return -1;
+  return -2;
 }
 
-static void writeField(Preferences &p, const SaveField &f,
-                       const uint8_t *val, uint16_t n) {
+static bool writeField(Preferences &p, const SaveField &f,
+                       const uint8_t *v, size_t n, uint8_t *check) {
+  size_t written = 0;
   switch (f.kind) {
-    case SK_U8:   if (n == 1) p.putUChar(f.key, val[0]); break;
-    case SK_I8:   if (n == 1) p.putChar(f.key, (int8_t)val[0]); break;
-    case SK_BOOL: if (n == 1) p.putBool(f.key, val[0] != 0); break;
-    case SK_U16:  if (n == 2) { uint16_t v; memcpy(&v, val, 2); p.putUShort(f.key, v); } break;
-    case SK_I16:  if (n == 2) { int16_t v; memcpy(&v, val, 2); p.putShort(f.key, v); } break;
-    case SK_U32:  if (n == 4) { uint32_t v; memcpy(&v, val, 4); p.putUInt(f.key, v); } break;
-    case SK_BYTES: if (n) p.putBytes(f.key, val, n); break;
+    case SK_U8: written = p.putUChar(f.key, v[0]); break;
+    case SK_I8: written = p.putChar(f.key, (int8_t)v[0]); break;
+    case SK_BOOL: written = p.putBool(f.key, v[0] != 0); break;
+    case SK_U16: { uint16_t x; memcpy(&x, v, 2); written = p.putUShort(f.key, x); break; }
+    case SK_I16: { int16_t x; memcpy(&x, v, 2); written = p.putShort(f.key, x); break; }
+    case SK_U32: { uint32_t x; memcpy(&x, v, 4); written = p.putUInt(f.key, x); break; }
+    case SK_BYTES: written = p.putBytes(f.key, v, n); break;
     case SK_STR: {
-      char tmp[64] = {0};
-      if (n >= sizeof(tmp)) return;
-      memcpy(tmp, val, n);
-      tmp[n] = 0;
-      p.putString(f.key, tmp);
+      char text[64] = {};
+      memcpy(text, v, n);
+      written = p.putString(f.key, text);
       break;
     }
   }
+  if (!written && !(f.kind == SK_STR && !n)) return false;
+  int got = readField(p, f, check);
+  return got >= 0 && (size_t)got == n && !memcmp(check, v, n);
 }
 
-size_t saveExportSize() {
-  size_t n = SAVE_HDR + 2;
-  for (uint16_t i = 0; i < SAVE_FIELD_COUNT; i++)
-    n += 1 + strlen(SAVE_FIELDS[i].key) + 1 + 2 + MAX_VAL / 16;
-  return n + 1024;                   // the two big blobs
+struct Entry {
+  char key[16] = {};
+  uint8_t kind = 0, space = 0;
+  size_t length = 0;
+  const uint8_t *value = nullptr;
+};
+
+static bool nextEntry(const uint8_t *in, size_t end, size_t &at, Entry &e) {
+  e = Entry{};
+  if (in[4] >= 2) {
+    if (at >= end) return false;
+    e.space = in[at++];
+    if (e.space > 1) return false;
+  }
+  if (at >= end) return false;
+  uint8_t k = in[at++];
+  size_t lengthBytes = in[4] >= 3 ? 4 : 2;
+  if (!k || k > 15 || k + 1 + lengthBytes > end - at) return false;
+  for (uint8_t i = 0; i < k; i++)
+    if (in[at + i] < 33 || in[at + i] > 126) return false;
+  memcpy(e.key, in + at, k); at += k;
+  e.kind = in[at++];
+  e.length = lengthBytes == 4 ? u32(in + at) : u16(in + at);
+  at += lengthBytes;
+  if (e.kind < SK_U8 || e.kind > SK_STR || e.length > MAX_VAL ||
+      e.length > end - at) return false;
+  uint8_t w = widthOf(e.kind);
+  if ((w && e.length != w) || (e.kind == SK_BYTES && !e.length) ||
+      (e.kind == SK_STR && (e.length >= 63 || memchr(in + at, 0, e.length))) ||
+      (e.kind == SK_BOOL && in[at] > 1)) return false;
+  e.value = in + at;
+  at += e.length;
+  return true;
 }
+
+static bool validCollection(const uint8_t *p, size_t n) {
+  CollectionLayout layout;
+  return collectionInspect(p, n, layout, PARTY_SLOTS, BOX_SLOTS, DEX_COUNT);
+}
+
+static bool validate(const uint8_t *in, size_t n) {
+  if (!in || n < SAVE_HDR + 2 || n > SAVE_TRANSFER_MAX ||
+      memcmp(in, "TKPS", 4) || (in[4] < 1 || in[4] > SAVE_VERSION) || in[7] ||
+      crc16(in, n - 2) != u16(in + n - 2)) return false;
+  size_t at = SAVE_HDR;
+  uint16_t seen = 0;
+  bool active = false, collection = false;
+  while (at < n - 2) {
+    size_t start = at;
+    Entry e;
+    if (!nextEntry(in, n - 2, at, e)) return false;
+    if (e.space) {
+      if (!strcmp(e.key, "active") && e.kind == SK_BOOL) active = e.value[0];
+      else if ((!strcmp(e.key, "cbA") || !strcmp(e.key, "cbB")) && e.kind == SK_BYTES)
+        collection |= validCollection(e.value, e.length);
+      else return false;
+    } else if (in[4] >= 2) {
+      bool known = false;
+      for (const SaveField &f : SAVE_FIELDS)
+        if (!f.space && !strcmp(f.key, e.key) && f.kind == e.kind) known = true;
+      if (!known) return false;
+    }
+    // Duplicate keys could verify against one value and finish with another.
+    size_t prior = SAVE_HDR;
+    while (prior < start) {
+      Entry previous;
+      if (!nextEntry(in, n - 2, prior, previous)) return false;
+      if (previous.space == e.space && !strcmp(previous.key, e.key)) return false;
+    }
+    if (++seen == 0) return false;
+  }
+  return at == n - 2 && seen == u16(in + 5) &&
+         (in[4] == 1 || (active && collection));
+}
+
+size_t saveExportSize() { return SAVE_TRANSFER_MAX; }
 
 size_t saveExport(uint8_t *out, size_t cap) {
-  if (cap < SAVE_HDR + 2) return 0;
-  Preferences p;
-  p.begin("tamapoke", true);
+  if (!out || cap < SAVE_HDR + 2 || saveRestorePending()) return 0;
+  if (cap > SAVE_TRANSFER_MAX) cap = SAVE_TRANSFER_MAX;
+  Preferences game, collection;
+  if (!game.begin("tamapoke", true) || !collectionOpen(collection, false)) return 0;
+  if (!collection.isKey("active") || !collection.getBool("active", false) ||
+      (!collection.isKey("cbA") && !collection.isKey("cbB"))) return 0;
+  uint8_t *val = (uint8_t *)saveAlloc(MAX_VAL);
+  if (!val) return 0;
   size_t at = SAVE_HDR;
   uint16_t count = 0;
-  uint8_t val[MAX_VAL];
-  for (uint16_t i = 0; i < SAVE_FIELD_COUNT; i++) {
-    const SaveField &f = SAVE_FIELDS[i];
-    int n = readField(p, f, val);
-    if (n < 0) continue;             // absent: nothing to back up
-    size_t klen = strlen(f.key);
-    if (klen > 15) continue;         // NVS keys cannot be longer anyway
-    if (at + 1 + klen + 1 + 2 + (size_t)n + 2 > cap) { p.end(); return 0; }
-    out[at++] = (uint8_t)klen;
-    memcpy(out + at, f.key, klen); at += klen;
+  bool ok = true;
+  for (const SaveField &f : SAVE_FIELDS) {
+    int n = readField(f.space ? collection : game, f, val);
+    if (n == -1) continue;
+    size_t k = strlen(f.key);
+    if (n < 0 || at + 7 + k + (size_t)n + 2 > cap) { ok = false; break; }
+    out[at++] = f.space;
+    out[at++] = (uint8_t)k;
+    memcpy(out + at, f.key, k); at += k;
     out[at++] = f.kind;
-    out[at++] = (uint8_t)(n & 0xFF);
-    out[at++] = (uint8_t)(n >> 8);
-    memcpy(out + at, val, (size_t)n); at += (size_t)n;
+    for (uint8_t b = 0; b < 4; b++) out[at++] = ((uint32_t)n >> (8 * b)) & 255;
+    memcpy(out + at, val, n); at += n;
     count++;
   }
-  p.end();
-  out[0] = SAVE_MAGIC0; out[1] = SAVE_MAGIC1;
-  out[2] = SAVE_MAGIC2; out[3] = SAVE_MAGIC3;
-  out[4] = SAVE_VERSION;
-  out[5] = (uint8_t)(count & 0xFF);
-  out[6] = (uint8_t)(count >> 8);
-  out[7] = 0;
+  free(val);
+  if (!ok) return 0;
+  memcpy(out, "TKPS", 4);
+  out[4] = SAVE_VERSION; out[5] = count & 255; out[6] = count >> 8; out[7] = 0;
   uint16_t c = crc16(out, at);
-  out[at++] = (uint8_t)(c & 0xFF);
-  out[at++] = (uint8_t)(c >> 8);
-  return at;
+  out[at++] = c & 255; out[at++] = c >> 8;
+  return validate(out, at) ? at : 0;
 }
 
-// Looks a key up in the table. An unknown key is skipped rather than trusted:
-// the kind on the wire decides nothing, the table does.
-static const SaveField *fieldFor(const char *key, uint8_t kind) {
-  for (uint16_t i = 0; i < SAVE_FIELD_COUNT; i++)
-    if (SAVE_FIELDS[i].kind == kind && !strcmp(SAVE_FIELDS[i].key, key))
-      return &SAVE_FIELDS[i];
-  return nullptr;
+bool saveRestorePending() {
+  Preferences journal;
+  // An inaccessible partition cannot safely be treated as an empty journal.
+  if (!restoreOpen(journal, false)) return true;
+  return journal.isKey("pending");
+}
+
+bool saveRecover() {
+  Preferences journal;
+  if (!restoreOpen(journal)) return false;
+  if (!journal.isKey("pending")) return true;
+  if (!journal.getBool("pending", false)) return false;
+  size_t n = journal.getBytesLength("blob");
+  if (n < SAVE_HDR + 2 || n > SAVE_TRANSFER_MAX) return false;
+  uint8_t *blob = (uint8_t *)saveAlloc(n);
+  uint8_t *check = (uint8_t *)saveAlloc(MAX_VAL);
+  if (!blob || !check) { free(blob); free(check); return false; }
+  bool ok = journal.getBytes("blob", blob, n) == n && validate(blob, n);
+  Preferences game, collection, system;
+  if (ok) ok = game.begin("tamapoke", false) && collectionOpen(collection) &&
+               system.begin(RESET_NS, false);
+  if (ok) ok = clearChecked(game) && clearChecked(collection) && clearChecked(system);
+  size_t at = SAVE_HDR;
+  while (ok && at < n - 2) {
+    Entry e;
+    ok = nextEntry(blob, n - 2, at, e);
+    if (!ok) break;
+    SaveField f{e.key, e.kind, e.space};
+    ok = writeField(e.space ? collection : game, f, e.value, e.length, check);
+  }
+  // Nothing can load the restored game until the reset intent is also gone.
+  if (ok) ok = !system.isKey(RESET_KEY);
+  if (ok) {
+    ok = journal.remove("pending") && !journal.isKey("pending");
+    if (ok) journal.remove("blob"); // uncommitted debris is harmless
+  }
+  free(check); free(blob);
+  return ok;
 }
 
 bool saveImport(const uint8_t *in, size_t n) {
-  if (n < SAVE_HDR + 2) return false;
-  if (in[0] != SAVE_MAGIC0 || in[1] != SAVE_MAGIC1 ||
-      in[2] != SAVE_MAGIC2 || in[3] != SAVE_MAGIC3) return false;
-  if (in[4] != SAVE_VERSION) return false;
-  uint16_t count = (uint16_t)in[5] | ((uint16_t)in[6] << 8);
-  uint16_t want = (uint16_t)in[n - 2] | ((uint16_t)in[n - 1] << 8);
-  if (crc16(in, n - 2) != want) return false;
-
-  // PASS ONE: walk the whole thing and prove it parses. Nothing is written
-  // yet -- a restore that fell over halfway would leave a save that is neither
-  // the old one nor the new one, which is the one outcome worse than no backup.
-  size_t at = SAVE_HDR;
-  uint16_t seen = 0;
-  while (at + 4 <= n - 2) {
-    uint8_t klen = in[at];
-    if (!klen || klen > 15 || at + 1 + klen + 3 > n - 2) return false;
-    size_t vat = at + 1 + klen;
-    uint8_t kind = in[vat];
-    uint16_t vlen = (uint16_t)in[vat + 1] | ((uint16_t)in[vat + 2] << 8);
-    if (vlen > MAX_VAL) return false;
-    if (vat + 3 + vlen > n - 2) return false;
-    uint8_t w = widthOf(kind);
-    if (w && vlen != w) return false;          // a scalar of the wrong width
-    at = vat + 3 + vlen;
-    seen++;
-  }
-  if (at != n - 2 || seen != count) return false;
-
-  // PASS TWO: it parses, so commit. Cleared first, or keys the backup does not
-  // contain would survive from whatever save happened to be on the device.
-  Preferences p;
-  p.begin("tamapoke", false);
-  p.clear();
-  at = SAVE_HDR;
-  while (at + 4 <= n - 2) {
-    uint8_t klen = in[at];
-    char key[16] = {0};
-    memcpy(key, in + at + 1, klen);
-    size_t vat = at + 1 + klen;
-    uint8_t kind = in[vat];
-    uint16_t vlen = (uint16_t)in[vat + 1] | ((uint16_t)in[vat + 2] << 8);
-    const SaveField *f = fieldFor(key, kind);
-    if (f) writeField(p, *f, in + vat + 3, vlen);
-    at = vat + 3 + vlen;
-  }
-  p.end();
-  return true;
+  if (!validate(in, n) || saveRestorePending()) return false;
+  Preferences journal;
+  if (!restoreOpen(journal)) return false;
+  uint8_t *check = (uint8_t *)saveAlloc(n);
+  if (!check) return false;
+  // An uncommitted attempt is not recovery data. Reclaim it BEFORE writing its
+  // replacement, so NVS never needs room for two full staging blobs.
+  bool ok = !journal.isKey("blob") || (journal.remove("blob") && !journal.isKey("blob"));
+  if (ok) ok = journal.putBytes("blob", in, n) == n &&
+               journal.getBytesLength("blob") == n &&
+               journal.getBytes("blob", check, n) == n && !memcmp(in, check, n);
+  free(check);
+  if (!ok) return false;
+  // This is the commit point. Before it the original game is untouched; after
+  // it every boot replays the complete backup until every write has verified.
+  if (journal.putBool("pending", true) != 1 || !journal.getBool("pending")) return false;
+  journal.end();
+  return saveRecover();
 }
-
-// ---------------------------------------------------------------------------
-// The durable reset intent. See the essay above RESET_NS in save.h.
-//
-// One scalar in a namespace of its own. A single put() is the smallest thing NVS
-// commits, so arming cannot itself be torn: the flag is either there or it is
-// not, and both readings are safe -- absent means the save stands.
-static const char *RESET_KEY = "rst";
-static const uint8_t RESET_WANTED = 0xA5;   // a value, not merely a present key,
-                                            // so a stray zeroed byte is not a wipe
 
 void resetArm() {
   Preferences p;
-  if (!p.begin(RESET_NS, false)) {
-    Serial.println("reset: could not record the intent -- NOT restarting into a wipe");
-    return;
-  }
-  p.putUChar(RESET_KEY, RESET_WANTED);
-  p.end();
+  if (p.begin(RESET_NS, false)) p.putUChar(RESET_KEY, RESET_WANTED);
 }
-
 bool resetArmed() {
   Preferences p;
-  if (!p.begin(RESET_NS, true)) return false;
-  const bool armed = p.getUChar(RESET_KEY, 0) == RESET_WANTED;
-  p.end();
-  return armed;
+  return p.begin(RESET_NS, true) && p.getUChar(RESET_KEY, 0) == RESET_WANTED;
 }
-
 void resetComplete() {
   Preferences p;
-  if (!p.begin(RESET_NS, false)) return;
-  p.remove(RESET_KEY);
-  p.end();
+  if (p.begin(RESET_NS, false)) p.remove(RESET_KEY);
 }
-
+bool saveClearCollection() {
+  Preferences collection, journal;
+  return collectionOpen(collection) && restoreOpen(journal) &&
+         clearChecked(collection) && clearChecked(journal);
+}
 bool resetRecover() {
   if (!resetArmed()) return false;
-  Preferences p;
-  if (p.begin("tamapoke", false)) {
-    p.clear();
-    p.end();
-  }
-  // SECOND, deliberately. Acknowledging first would let a cut in between leave a
-  // save that is half wiped with nothing left to say so; this way the worst case
-  // is clearing an already-empty namespace one more time.
+  Preferences game;
+  if (!game.begin("tamapoke", false) || !clearChecked(game) || !saveClearCollection()) return false;
   resetComplete();
-  Serial.println("reset: completed a requested wipe before loading anything");
-  return true;
+  return !resetArmed();
 }
