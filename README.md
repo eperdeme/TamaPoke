@@ -881,8 +881,9 @@ and burns off with training.
   real day advances the streak; 3/7/30/100 milestones are celebrated; skipping a
   day breaks it. Flame badge on the main screen.
 - **Bond** (the creature's): rises with care and petting, drops with slip-ups.
-  The active creature also gains +1 per cared-for hour (all four needs at least
-  50), up to 10 passive points per day shared across the game.
+  While the device is on, the active, non-frozen creature also gains +1 per
+  cared-for hour (all four needs at least 50), up to 10 passive points per day
+  shared across the game. Powered-off time and frozen companions do not earn it.
 - **Medals** for the individual (level, berry, streak, bond, final form, fit) +
   a global counter. Medals page of the stat card.
 - **Name**: touch keyboard; the nickname rules the header and the card.
