@@ -165,7 +165,7 @@ static bool readPetCore(Preferences &prefs, const char *key,
 // however big the table got -- applied inside one atomic blob instead of across
 // twenty-five separate writes.
 static constexpr uint32_t PLAYER_MAGIC = 0x31594B54UL;   // "TKY1"
-static constexpr uint16_t PLAYER_VERSION = 2;   // v2 appended memoHi; see below
+static constexpr uint16_t PLAYER_VERSION = 3;   // v2 appended memoHi, v3 the passive bond day; see below
 // Header + every scalar, before the arrays begin.
 //
 // THIS LENGTH NOW TRAVELS IN THE RECORD, at buf[19], for exactly the reason the
@@ -179,7 +179,8 @@ static constexpr uint16_t PLAYER_VERSION = 2;   // v2 appended memoHi; see below
 // So a future scalar goes at the end of the block, this number moves, and both
 // directions keep working. No magic bump, no version check.
 static constexpr size_t PLAYER_FIXED_V1 = 42;
-static constexpr size_t PLAYER_FIXED = 44;   // v2: + memoHi at offset 42
+static constexpr size_t PLAYER_FIXED_V2 = 44;   // v2: + memoHi at offset 42
+static constexpr size_t PLAYER_FIXED = 50;      // v3: + calmToday (44), reserved (45), calmDay (46)
 static constexpr size_t PLAYER_CAP = 512;
 static constexpr size_t PLAYER_DEX_BYTES = (DEX_COUNT + 7) / 8;
 // DERIVED from the tables, never restated: CLAUDE.md § "sizeof(PartyMon) is
@@ -218,6 +219,9 @@ bool Pet::savePlayerSnapshot() {
   ckptWr16(buf + 38, strHi);
   ckptWr16(buf + 40, spdHi);
   ckptWr16(buf + 42, memoHi);                     // v2
+  buf[44] = calmToday;                            // v3
+  buf[45] = 0;                                    // v3, reserved
+  ckptWr32(buf + 46, calmDay);                    // v3
 
   CkptCursor cur{ buf, PLAYER_FIXED, sizeof(buf) - CKPT_CRC };
   cur.put(dexReg, sizeof(dexReg));
@@ -293,7 +297,13 @@ bool Pet::loadPlayerSnapshot() {
   // Only if the record actually HAS it. A v1 record's offset 42 is the first byte
   // of the Pokedex bitmap, so reading it unconditionally would invent a memory
   // record out of dex bits.
-  if (fixed >= PLAYER_FIXED) memoHi = ckptRd16(buf + 42);
+  if (fixed >= PLAYER_FIXED_V2) memoHi = ckptRd16(buf + 42);
+  // v3, the same way. calmDay 0 means "no clock when it was saved": nothing to
+  // keep, so the allowance starts fresh as it would have.
+  if (fixed >= PLAYER_FIXED) {
+    calmDay = ckptRd32(buf + 46);
+    calmToday = calmDay ? buf[44] : 0;
+  }
 
   CkptCursor cur{ buf, fixed, body };
   cur.take(dexReg, sizeof(dexReg), dexBytes);
@@ -514,6 +524,7 @@ void Pet::tick() {
     }
     if (ageMinutes % 3 == 0) hygiene = dropTo(hygiene, 1, 45);
     defTick(true);  // descansar tambien es bienestar: cuenta para la DEF
+    calmBondTick();
     checkMedals();  // aun puede cruzar un nivel por edad mientras duerme
     if (++ticksSinceSave >= 5) pendingSave = true;
     return;
@@ -531,6 +542,7 @@ void Pet::tick() {
   if (weight > 0 && ageMinutes % 3 == 0) weight--;
 
   defTick(false);  // la calma forja la defensa
+  calmBondTick();
 
   int dJoy = -1;
   if (fullness < 30) dJoy -= 2;
@@ -574,6 +586,7 @@ void Pet::tick() {
 // Brings a banked creature back as the live pet, frozen.
 void Pet::reviveFrom(const PartyMon &m) {
   if (m.empty()) return;
+  calmTicks = 0;           // progress toward passive bond is per creature
   ceremony = CER_NONE;
   neglectTicks = 0;
   speciesId = m.dex;
@@ -648,6 +661,7 @@ PartyMon Pet::toPartyMon() const {
 // hands back a creature that carries on living.
 void Pet::switchTo(const PartyMon &m) {
   if (m.empty()) return;
+  calmTicks = 0;           // progress toward passive bond is per creature
   ceremony = CER_NONE;
   neglectTicks = 0;
   speciesId = m.dex;
@@ -742,6 +756,24 @@ void Pet::defTick(bool resting) {
   if (++goodTicks < DEF_TRAIN_TICKS) return;
   goodTicks = 0;
   if (trDef < trMaxDef()) trDef++;
+}
+
+// Passive bond (see BOND_CALM_MIN). Not saved, like goodTicks: a reboot costs
+// at most the minutes toward one point.
+void Pet::calmBondTick() {
+  if (frozen || lowestStat() < BOND_CALM_MIN) return;
+  // A new calendar day refills the allowance. Checked here rather than in
+  // registerCare(): a creature asleep past midnight earns before anyone cares.
+  // Without a clock today() is 0 throughout, so the day never turns and the
+  // allowance is per boot (calmDay 0 is not restored on load).
+  const uint32_t d = today();
+  if (d != calmDay) { calmDay = d; calmToday = 0; }
+  if (calmToday >= BOND_CALM_DAILY) return;
+  if (++calmTicks < BOND_CALM_TICKS) return;
+  calmTicks = 0;
+  calmToday++;
+  bond = clamp100(bond + 1);
+  pendingSave = true;
 }
 
 // quedan miembros sin registrar en la linea evolutiva de esta base?
@@ -1447,6 +1479,7 @@ void Pet::hatch() {
   rollIVs();
   trAtk = trDef = trSpe = 0;
   goodTicks = 0;
+  calmTicks = 0;
   berryKnown = false;
   bond = 0;          // vinculo, medallas y nombre son del individuo
   bondToday = 0;
