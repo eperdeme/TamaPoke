@@ -47,7 +47,7 @@ jobs:
           TAMA_ESP_EMULATOR: ${{ runner.temp }}/esp-emu/esp-emu
           TAMA_TEST_JOBS: "2"
           TAMA_TEST_LOG_DIR: ${{ runner.temp }}/tamapoke-test-logs
-        run: node tools/emu/tests/bounded.mjs 2400 --require 'PASS compiled partition contract:' --require 'PASS 1000 real UI captures -> four exec cold reloads' --require 'PASS migrated native suites:' --require 'PASS native post-panic fresh-process persistence;' -- bash tools/emu/tests/run.sh
+        run: node tools/emu/tests/bounded.mjs 2400 --require 'PASS compiled partition contract:' --require 'PASS 1000 real UI captures -> four exec cold reloads' --require 'PASS migrated native suites:' --require 'PASS historical NVS headroom recovered:' --require 'PASS native post-panic fresh-process persistence;' -- bash tools/emu/tests/run.sh
       - name: Retain test evidence
         if: always()
         uses: actions/upload-artifact@v4

@@ -3,6 +3,7 @@
 #include "party.h"
 #include "dex.h"
 #include "ckpt.h"
+#include "nvsinfo.h"
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -252,6 +253,8 @@ int main() {
   seedLowHeadroom();
   nvs_stats_t beforePrune{};
   const bool measuredBefore = nvs_get_stats(nullptr, &beforePrune) == ESP_OK;
+  ck(measuredBefore && beforePrune.available_entries < 126 && nvsLowOnSpace(),
+     "real ESP32 NVS headroom check raises the save-warning condition before migration cleanup");
 #endif
   Party p;
   p.begin();
@@ -270,8 +273,9 @@ int main() {
       preserved.getBytesLength("plyB") == 368;
   ck(measuredBefore && nvs_get_stats(nullptr, &afterPrune) == ESP_OK &&
      beforePrune.available_entries < 126 && afterPrune.available_entries >= 126 &&
-     afterPrune.available_entries > beforePrune.available_entries && petPlayerKept,
-     "verified pruning restores original NVS headroom without touching pet/player checkpoints");
+     afterPrune.available_entries > beforePrune.available_entries && petPlayerKept &&
+     !nvsLowOnSpace(),
+     "verified pruning clears the real save-warning condition without touching pet/player checkpoints");
   printf("      original NVS available=%u -> %u entries\n",
          unsigned(beforePrune.available_entries), unsigned(afterPrune.available_entries));
 #endif

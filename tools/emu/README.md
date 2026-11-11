@@ -121,6 +121,15 @@ rules. Host suites retain synthetic UI/gesture/framebuffer controls, filesystem
 sprites, NVS partial-write injection, and resumable task/PCM workflow controls
 that the native whole-board setup does not yet provide.
 
+NVS headroom is a native-only invariant: the desktop `Preferences` map has no
+flash-page capacity model, so host tests cannot prove the red save-warning
+triangle appears or clears. `collection_test` runs against ESP-IDF NVS, seeds a
+bounded legacy-save footprint that reproduces the low-space condition, confirms
+the production warning predicate sees it, then performs the verified migration
+cleanup and requires the predicate to clear while pet/player checkpoints remain
+intact. The release workflow requires this named test result; do not replace it
+with a host-only approximation or use a player's private backup as a fixture.
+
 The full runner also requires the real application Arduino compile, both web
 suites, native PSRAM/reboot/watchdog probes, native assertion-failure controls
 and the original-defect mutations. A substring filter selects suites across both

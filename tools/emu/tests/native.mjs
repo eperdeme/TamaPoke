@@ -37,7 +37,7 @@ async function main() {
   const sketch = join(directory, 'native');
   await mkdir(sketch);
   for (const file of await readdir(root))
-    if (file.endsWith('.h') || ['pet.cpp', 'party.cpp', 'inventory.cpp', 'i18n.cpp', 'save.cpp',
+    if (file.endsWith('.h') || ['pet.cpp', 'party.cpp', 'inventory.cpp', 'i18n.cpp', 'save.cpp', 'nvsinfo.cpp',
       ...(suites.length ? ['gbsynth.cpp', 'battle.cpp', 'link.cpp', 'wild.cpp'] : [])].includes(file))
       await cp(join(root, file), join(sketch, file));
   await cp(join(root, 'partitions.csv'), join(sketch, 'partitions.csv'));
@@ -110,6 +110,8 @@ async function main() {
         assert.deepEqual(finished, [suite], 'native suite missed or repeated its completion');
         await checkReserved();
         console.log(`PASS native suite: ${suite}`);
+        if (suite === 'collection_test')
+          console.log('PASS historical NVS headroom recovered: low-space warning clears after verified migration cleanup');
       }
       console.log(`PASS native reserved app-state unchanged: ${suites.length} suites`);
       console.log(`PASS native-suite-matrix complete: ${suites.length}`);
