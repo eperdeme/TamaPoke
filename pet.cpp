@@ -768,7 +768,10 @@ void Pet::calmBondTick() {
   // allowance is per boot (calmDay 0 is not restored on load).
   const uint32_t d = today();
   if (d != calmDay) { calmDay = d; calmToday = 0; }
-  if (calmToday >= BOND_CALM_DAILY) return;
+  if (calmToday >= BOND_CALM_DAILY || bond >= 100) {
+    calmTicks = 0;
+    return;
+  }
   if (++calmTicks < BOND_CALM_TICKS) return;
   calmTicks = 0;
   calmToday++;
@@ -1114,6 +1117,12 @@ static uint8_t tmLevelFor(const MoveEntry &m) {
   return TM_LEVEL;
 }
 
+static int16_t moveDamageScore(const MoveEntry &m, uint8_t level) {
+  if (m.effect == EF_FIXED) return m.param > 0 ? m.param : 1;
+  if (m.effect == EF_FIXED_LVL) return level ? level : 1;
+  return m.power;
+}
+
 // THE single answer, used by relearnFromLevel(), by the STAB fallback and by
 // the move picker in the sketch. Three call sites once had three opinions.
 uint8_t moveUnlockLevel(int16_t dex, uint8_t idx) {
@@ -1229,7 +1238,7 @@ void Pet::relearnFromLevel() {
     // guarantee reached past every check and handed it the best one in the
     // table. A creature with no STAB it can legally use simply has none yet.
     if (at == 0 && lvl < tmLevelFor(m)) continue;
-    int16_t sc = (int16_t)m.power;
+    int16_t sc = moveDamageScore(m, lvl);
     if (m.effect == EF_RECHARGE) sc -= 35;
     if (m.effect == EF_RECOIL) sc -= 20;
     if (sc > bestSc) { bestSc = sc; best = mv; }
@@ -1247,6 +1256,7 @@ void Pet::relearnFromLevel() {
 // legally use at this level -- the same gates as everything above.
 void Pet::ensureCoverage() {
   const DexEntry &d = DEX_TBL[speciesId];
+  const uint8_t lvl = level(), n = learnCount(speciesId);
   int8_t type = -1;
   int weakest = -1;
   int16_t weakestPow = 0x7FFF;
@@ -1256,12 +1266,12 @@ void Pet::ensureCoverage() {
     if (m.cat == MC_STATUS) continue;
     if (type < 0) type = (int8_t)m.type;
     else if (m.type != (uint8_t)type) return;     // already covers two types
-    if ((int16_t)m.power < weakestPow) { weakestPow = (int16_t)m.power; weakest = i; }
+    const int16_t power = moveDamageScore(m, lvl);
+    if (power < weakestPow) { weakestPow = power; weakest = i; }
   }
   if (type < 0 || weakest < 0) return;
   // only when the set is full of attacks: a free slot is the player's to fill
   for (int i = 0; i < MOVE_SLOTS; i++) if (!moves[i]) return;
-  const uint8_t lvl = level(), n = learnCount(speciesId);
   uint8_t best = 0;
   int16_t bestSc = 0;
   for (uint8_t i = 0; i < n; i++) {

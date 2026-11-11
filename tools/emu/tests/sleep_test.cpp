@@ -257,6 +257,18 @@ int main(){
       run(r, D2 + 23 * 3600 + 30 * 60, 25, true);
       ck(r.bond == rb, "and a reboot does not refill it");
     }
+
+    // Reaching bond 100 must not spend the remaining shared allowance. A
+    // different active creature can still earn the tenth point that day.
+    const uint32_t D3 = D2 + 86400UL;
+    Pet maxed; fresh(maxed, 13);
+    maxed.bond = 91;
+    run(maxed, D3 + 8 * 3600, 9 * 60, true);
+    ck(maxed.bond == 100, "passive bond can bring a creature to 100");
+    maxed.switchTo(other); maxed.sleeping = false;
+    run(maxed, D3 + 17 * 3600, 60, true);
+    ck(maxed.bond == 1,
+       "a creature already at 100 does not consume another member's daily point");
   }
 
   printf("%s\n", bad?"FAILURES":"all good");

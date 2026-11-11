@@ -191,6 +191,8 @@ int main(){
      "CHIMCHAR exists from 1, MONFERNO from 14, INFERNAPE from 36");
   ck(speciesMinLevel(136) == DEX_TBL[DEX_EEVEE].evolveLevel,
      "an Eevee form (FLAREON) from Eevee's evolution level");
+  ck(speciesMinLevel(184) == 25 && speciesMinLevel(464) == 42,
+     "later forms respect the highest level required along their full evolution line");
   {
     bool none = true, early = true, infernape = false, below = false;
     for (uint32_t r = 0; r < 4000; r++) {
@@ -204,6 +206,17 @@ int main(){
     ck(none, "below the first evolution level (7) no evolved form is picked");
     ck(early, "at 7 only forms that evolve by 7 (the cocoons)");
     ck(infernape && !below, "at 40 INFERNAPE can appear, nothing above its level does");
+    bool azuAt24 = false, azuAt25 = false, rhyperiorAt41 = false, rhyperiorAt42 = false;
+    for (uint32_t r = 0; r < 256; r++) {
+      azuAt24 |= wildPickSpecies(1, R_EVO, r, 24) == 184;
+      azuAt25 |= wildPickSpecies(1, R_EVO, r, 25) == 184;
+      rhyperiorAt41 |= wildPickSpecies(3, R_EVO, r, 41) == 464;
+      rhyperiorAt42 |= wildPickSpecies(3, R_EVO, r, 42) == 464;
+    }
+    ck(!azuAt24 && azuAt25,
+       "Azumarill cannot appear before Azurill can evolve into Marill");
+    ck(!rhyperiorAt41 && rhyperiorAt42,
+       "Rhyperior cannot appear before the Rhyhorn line's level-42 gate");
     bool base = true;
     for (uint32_t r = 0; r < 200; r++) {
       if (!wildPickSpecies(0, R_COMUN, r * 31u, 1)) base = false;

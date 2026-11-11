@@ -91,21 +91,62 @@ uint8_t wildTierForRoll(uint8_t roll) {
   return R_COMUN;                      // the rest
 }
 
-uint8_t speciesMinLevel(int16_t dex) {
-  if (dex < 1 || dex > DEX_COUNT) return 1;
-  for (int16_t d = 1; d <= DEX_COUNT; d++)
-    if (DEX_TBL[d].evolvesTo == dex) return DEX_TBL[d].evolveLevel ? DEX_TBL[d].evolveLevel : 1;
-  for (uint8_t i = 0; i < EEVEE_EVO_COUNT; i++)
-    if (EEVEE_EVOS[i] == dex) return DEX_TBL[DEX_EEVEE].evolveLevel ? DEX_TBL[DEX_EEVEE].evolveLevel : 1;
+static uint8_t minLevels[DEX_COUNT + 1] = {};
+static bool minLevelHasParent[DEX_COUNT + 1] = {};
+static bool minLevelsReady = false;
+
+static void initSpeciesMinLevels() {
+  if (minLevelsReady) return;
+  for (int16_t dex = 1; dex <= DEX_COUNT; dex++) minLevels[dex] = 1;
+  auto markParent = [](int16_t target) {
+    if (target < 1 || target > DEX_COUNT) return;
+    minLevelHasParent[target] = true;
+    minLevels[target] = 255;
+  };
+  for (int16_t parent = 1; parent <= DEX_COUNT; parent++)
+    markParent(DEX_TBL[parent].evolvesTo);
+  for (uint8_t i = 0; i < EEVEE_EVO_COUNT; i++) markParent(EEVEE_EVOS[i]);
 #ifdef EVO_BRANCH_COUNT
   for (uint8_t i = 0; i < EVO_BRANCH_COUNT; i++)
     for (uint8_t k = 0; k < EVO_BRANCHES[i].count; k++)
-      if (EVO_BRANCHES[i].to[k] == dex) {
-        const uint8_t l = DEX_TBL[EVO_BRANCHES[i].from].evolveLevel;
-        return l ? l : 1;
-      }
+      markParent(EVO_BRANCHES[i].to[k]);
 #endif
-  return 1;
+
+  // Propagate the required level through the graph; alternate parents use the
+  // lowest valid path, while every stage on that path must meet its own gate.
+  for (int pass = 0; pass < DEX_COUNT; pass++) {
+    bool changed = false;
+    auto applyEdge = [&](int16_t parent, int16_t target) {
+      if (parent < 1 || parent > DEX_COUNT || target < 1 || target > DEX_COUNT)
+        return;
+      uint8_t required = minLevels[parent];
+      if (DEX_TBL[parent].evolveLevel > required)
+        required = DEX_TBL[parent].evolveLevel;
+      if (required < minLevels[target]) {
+        minLevels[target] = required;
+        changed = true;
+      }
+    };
+    for (int16_t parent = 1; parent <= DEX_COUNT; parent++)
+      applyEdge(parent, DEX_TBL[parent].evolvesTo);
+    for (uint8_t i = 0; i < EEVEE_EVO_COUNT; i++)
+      applyEdge(DEX_EEVEE, EEVEE_EVOS[i]);
+#ifdef EVO_BRANCH_COUNT
+    for (uint8_t i = 0; i < EVO_BRANCH_COUNT; i++)
+      for (uint8_t k = 0; k < EVO_BRANCHES[i].count; k++)
+        applyEdge(EVO_BRANCHES[i].from, EVO_BRANCHES[i].to[k]);
+#endif
+    if (!changed) break;
+  }
+  for (int16_t dex = 1; dex <= DEX_COUNT; dex++)
+    if (minLevelHasParent[dex] && minLevels[dex] == 255) minLevels[dex] = 1;
+  minLevelsReady = true;
+}
+
+uint8_t speciesMinLevel(int16_t dex) {
+  if (dex < 1 || dex > DEX_COUNT) return 1;
+  initSpeciesMinLevels();
+  return minLevels[dex];
 }
 
 int16_t wildPickSpecies(uint8_t region, uint8_t tier, uint32_t roll, uint8_t level) {
@@ -115,9 +156,8 @@ int16_t wildPickSpecies(uint8_t region, uint8_t tier, uint32_t roll, uint8_t lev
     hi = REGIONS[region].hi;
   }
   if (hi > DEX_COUNT) hi = DEX_COUNT;
-  // Two passes rather than a candidate array: DEX_COUNT is 809 and an int16_t
-  // buffer of that size is 1.6 KB of stack on a device whose framebuffer
-  // already lives in PSRAM.
+  // Two passes rather than a candidate array to keep the picker off the task
+  // stack; the cached thresholds also avoid rescanning the evolution graph.
   uint16_t n = 0;
   for (uint16_t d = lo; d <= hi; d++) {
     if (DEX_TBL[d].rarity != tier) continue;

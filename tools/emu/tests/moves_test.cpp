@@ -97,6 +97,20 @@ int main() {
   }
   ck(true, "default sets are attack-led with STAB (see above)");
 
+  // Fixed-damage attacks have zero listed power, but remain valid STAB moves.
+  // Ignoring that distinction left level-25 Druddigon with no Dragon attack.
+  {
+    Pet q;
+    q.dbgHatchAs(621, false);
+    q.ageMinutes = 24UL * MINUTES_PER_LEVEL;
+    q.relearnFromLevel();
+    bool hasDragon = false;
+    for (uint8_t mv : q.moves)
+      if (mv && MOVE_TBL[mv].type == T_DRAGON &&
+          MOVE_TBL[mv].cat != MC_STATUS) hasDragon = true;
+    ck(hasDragon, "level-25 Druddigon keeps its fixed-damage Dragon Rage");
+  }
+
   // --- learn candidates are offered, and never ones already known
   uint8_t cand[8];
   uint8_t n = p.pendingLearnables(cand, 8);

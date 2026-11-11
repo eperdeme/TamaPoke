@@ -3,7 +3,7 @@
 [![Flash in browser](https://img.shields.io/badge/flash-in%20browser-FF6B00?logo=googlechrome&logoColor=white)](https://eperdeme.github.io/TamaPoke/web/)
 [![MakerWorld](https://img.shields.io/badge/MakerWorld-3D%20case-00AE42?logo=bambulab&logoColor=white)](https://makerworld.com/es/models/2937822-tamapoke-a-pokemon-pokeball-tamagotchi)
 ![Board](https://img.shields.io/badge/board-ESP32--S3%20round%20AMOLED-E7352C?logo=espressif&logoColor=white)
-![Firmware](https://img.shields.io/badge/firmware-v4.2.1-8A2BE2)
+![Firmware](https://img.shields.io/badge/firmware-v4.2.2-8A2BE2)
 ![Code](https://img.shields.io/badge/code-MIT-blue)
 ![Languages](https://img.shields.io/badge/languages-6-FFCB05)
 [![Stars](https://img.shields.io/github/stars/DylanPDao/TamaPoke?style=flat&logo=github&color=yellow)](https://github.com/DylanPDao/TamaPoke/stargazers)
@@ -364,6 +364,7 @@ that could only ever draw as a dex number would be a permanent defect.
 | ⚪ Common | the rest |
 
 - **Level**: within 5 either side of yours on normal; the whole 1–100 ladder on hard.
+  Evolved forms only appear once their full evolution line's level gates are met.
 - **Shiny**: exactly **1/4096** per encounter, flooring every IV at 20 without
   capping one that already rolled higher.
 - Ordinary IVs roll **8–31**, independently.
@@ -879,7 +880,9 @@ and burns off with training.
 - **Streak** (the player's, persists across creatures): the first care of each
   real day advances the streak; 3/7/30/100 milestones are celebrated; skipping a
   day breaks it. Flame badge on the main screen.
-- **Bond** (the creature's): rises slowly with care and petting, drops with slip-ups.
+- **Bond** (the creature's): rises with care and petting, drops with slip-ups.
+  The active creature also gains +1 per cared-for hour (all four needs at least
+  50), up to 10 passive points per day shared across the game.
 - **Medals** for the individual (level, berry, streak, bond, final form, fit) +
   a global counter. Medals page of the stat card.
 - **Name**: touch keyboard; the nickname rules the header and the card.
