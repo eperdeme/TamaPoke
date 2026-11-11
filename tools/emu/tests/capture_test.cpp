@@ -71,7 +71,7 @@ struct Player {
   std::array<int16_t, REGION_COUNT> eggs{};
   std::array<char, sizeof(pet.trainerName)> trainer{};
   uint16_t medals = 0, streak = 0, bestStreak = 0, milestone = 0;
-  uint16_t gameHi = 0, strHi = 0, spdHi = 0, memoHi = 0;
+  uint16_t gameHi = 0, strHi = 0, spdHi = 0, memoHi = 0, quizHi = 0;
   uint32_t careDay = 0;
   uint8_t avatar = 0, region = 0;
 };
@@ -90,7 +90,7 @@ static Player playerOf(const Pet &p) {
   result.streak = p.streak; result.bestStreak = p.bestStreak;
   result.milestone = p.lastMilestone; result.careDay = p.lastCareDay;
   result.gameHi = p.gameHi; result.strHi = p.strHi;
-  result.spdHi = p.spdHi; result.memoHi = p.memoHi;
+  result.spdHi = p.spdHi; result.memoHi = p.memoHi; result.quizHi = p.quizHi;
   result.avatar = p.avatar; result.region = p.region;
   return result;
 }
@@ -99,9 +99,9 @@ static bool samePlayer(const Player &a, const Player &b) {
   return a.easy == b.easy && a.hard == b.hard && a.dex == b.dex &&
          a.shiny == b.shiny && a.eggs == b.eggs && a.trainer == b.trainer &&
          std::tie(a.medals, a.streak, a.bestStreak, a.milestone, a.careDay,
-                  a.gameHi, a.strHi, a.spdHi, a.memoHi, a.avatar, a.region) ==
+                  a.gameHi, a.strHi, a.spdHi, a.memoHi, a.quizHi, a.avatar, a.region) ==
          std::tie(b.medals, b.streak, b.bestStreak, b.milestone, b.careDay,
-                  b.gameHi, b.strHi, b.spdHi, b.memoHi, b.avatar, b.region);
+                  b.gameHi, b.strHi, b.spdHi, b.memoHi, b.quizHi, b.avatar, b.region);
 }
 
 struct Expected {
@@ -278,7 +278,7 @@ static void fixture() {
   pet.careMistakes = 2;
   pet.medals = 0x15; pet.totalMedals = 23;
   pet.streak = 3; pet.bestStreak = 7; pet.lastMilestone = 2; pet.lastCareDay = 20300;
-  pet.gameHi = 17; pet.strHi = 29; pet.spdHi = 31; pet.memoHi = 11;
+  pet.gameHi = 17; pet.strHi = 29; pet.spdHi = 31; pet.memoHi = 11; pet.quizHi = 13;
   pet.avatar = 3; pet.region = 0;
   strcpy(pet.nick, "ORIGINAL"); strcpy(pet.trainerName, "COLLECTOR");
   for (uint8_t region = 0; region < GYM_REGIONS; region++) {

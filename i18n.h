@@ -165,11 +165,11 @@ enum StrId : uint8_t {
   // so nothing new is written and the list resets itself with the day.
   S_GOALS, S_GOALS_FMT,
   S_GOAL_CARED, S_GOAL_FED, S_GOAL_CLEAN, S_GOAL_HAPPY, S_GOAL_RESTED,
-  // the memory game
+  // the type quiz (it took the memory game's place, and its strings)
   S_MEMO,           // the training-menu row
-  S_MEMO_FMT,       // the result: how long a sequence was remembered
-  S_MEMO_WATCH,     // the sequence is playing -- do not tap yet
-  S_MEMO_GO,        // ...and now repeat it
+  S_MEMO_FMT,       // the result: how many right answers
+  S_MEMO_WATCH,     // the question: "super effective vs" a type
+  S_MEMO_GO,        // spare (was the memory game's "your turn")
   S_PLUS_JOY_FMT,   // "JOY +%u", the reward
   S_BOX_PUT,        // party detail sheet: move this creature into the box
   // shown while a sprite pack streams in over USB

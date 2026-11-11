@@ -45,11 +45,10 @@ void uiConfirmRects(int *b1Top, int *b1Bot, int *b2Top, int *b2Bot);
 int uiSafeHalfWidth(int y);
 int uiTapFinger();
 int uiButtonHitR();
-// the memory game and the training menu, asked of the firmware not restated
-int uiMemoPads();
-int uiMemoPadR();
-void memoPadPos(int i, int *cx, int *cy);
-int memoPadAt(int16_t x, int16_t y);
+// the type quiz and the training menu, asked of the firmware not restated
+int uiQuizOpts();
+void quizOptRect(int i, int *x, int *y, int *w, int *h);
+int quizOptAt(int16_t x, int16_t y);
 int uiTrainRows();
 int uiTrainRowH();
 int uiTrainRowTop(int i);
@@ -496,42 +495,32 @@ int main(){
     ck(!badgeArtExists(0, TRAINER_GYMS), "and an out-of-range gym index is refused");
   }
 
-  // ---- the memory game's pads, and the training rows that launch it
+  // ---- the type quiz's answer buttons
   //
-  // Four big circles on a ring. Two things can go wrong here and neither shows up
-  // in a screenshot: pads that OVERLAP, so one tap is inside two of them and the
-  // draw path and the tap path can disagree about which; and pads that reach off
-  // the round glass, which is the mistake the gym ladder made before
-  // uiSafeHalfWidthFor() existed.
+  // Three wide buttons stacked in the middle. What can go wrong and not show in a
+  // screenshot: buttons that overlap, so the draw path and the tap path disagree
+  // about which was meant, and corners that reach off the round glass.
   {
-    const int r = uiMemoPadR();
-    int worstGap = 9999, offGlass = 0, tooSmall = 0;
-    for (int i = 0; i < uiMemoPads(); i++) {
-      int ax, ay;
-      memoPadPos(i, &ax, &ay);
-      const int reach = (int)sqrt((double)((ax - 233) * (ax - 233) +
-                                           (ay - 233) * (ay - 233))) + r;
-      if (reach > 233) offGlass++;
-      if (r * 2 < uiTapFinger()) tooSmall++;
-      for (int j = i + 1; j < uiMemoPads(); j++) {
-        int bx, by;
-        memoPadPos(j, &bx, &by);
-        const int d = (int)sqrt((double)((ax - bx) * (ax - bx) + (ay - by) * (ay - by)));
-        if (d - 2 * r < worstGap) worstGap = d - 2 * r;
+    int overlap = 0, offGlass = 0, tooSmall = 0, wrong = 0;
+    for (int i = 0; i < uiQuizOpts(); i++) {
+      int x, y, w, hh; quizOptRect(i, &x, &y, &w, &hh);
+      const int cs[4][2] = { { x, y }, { x + w, y }, { x, y + hh }, { x + w, y + hh } };
+      for (auto &c : cs) {
+        const double d = sqrt((double)((c[0] - 233) * (c[0] - 233) + (c[1] - 233) * (c[1] - 233)));
+        if (d > 233) offGlass++;
+      }
+      if (hh < 44) tooSmall++;
+      if (quizOptAt((int16_t)(x + w / 2), (int16_t)(y + hh / 2)) != i) wrong++;
+      for (int j = i + 1; j < uiQuizOpts(); j++) {
+        int x2, y2, w2, h2; quizOptRect(j, &x2, &y2, &w2, &h2);
+        if (y2 < y + hh && y < y2 + h2) overlap++;
       }
     }
-    printf("      memo pads: r=%d, closest gap %d px\n", r, worstGap);
-    ck(offGlass == 0, "every memory pad is fully on the glass");
-    ck(worstGap >= 0, "and no two of them overlap, so a tap is unambiguous");
-    ck(tooSmall == 0, "each is at least a finger across");
-    int wrong = 0;
-    for (int i = 0; i < uiMemoPads(); i++) {
-      int px, py;
-      memoPadPos(i, &px, &py);
-      if (memoPadAt((int16_t)px, (int16_t)py) != i) wrong++;
-    }
-    ck(wrong == 0, "and tapping a pad's centre resolves to that pad");
-    ck(memoPadAt(233, 233) < 0, "the middle belongs to the counter, not to a pad");
+    ck(offGlass == 0, "every quiz button is fully on the glass");
+    ck(overlap == 0, "and no two of them overlap, so a tap is unambiguous");
+    ck(tooSmall == 0, "each is a full-width row above the 44 px floor (judged as a row, see uiRowHeights)");
+    ck(wrong == 0, "and tapping a button's centre resolves to that button");
+    ck(quizOptAt(233, 40) < 0, "the question above them is not a button");
   }
   {
     // The training menu grew a fourth row, so its pitch was retuned. The rows must

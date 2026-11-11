@@ -165,7 +165,7 @@ static bool readPetCore(Preferences &prefs, const char *key,
 // however big the table got -- applied inside one atomic blob instead of across
 // twenty-five separate writes.
 static constexpr uint32_t PLAYER_MAGIC = 0x31594B54UL;   // "TKY1"
-static constexpr uint16_t PLAYER_VERSION = 3;   // v2 appended memoHi, v3 the passive bond day; see below
+static constexpr uint16_t PLAYER_VERSION = 4;
 // Header + every scalar, before the arrays begin.
 //
 // THIS LENGTH NOW TRAVELS IN THE RECORD, at buf[19], for exactly the reason the
@@ -180,7 +180,8 @@ static constexpr uint16_t PLAYER_VERSION = 3;   // v2 appended memoHi, v3 the pa
 // directions keep working. No magic bump, no version check.
 static constexpr size_t PLAYER_FIXED_V1 = 42;
 static constexpr size_t PLAYER_FIXED_V2 = 44;   // v2: + memoHi at offset 42
-static constexpr size_t PLAYER_FIXED = 50;      // v3: + calmToday (44), reserved (45), calmDay (46)
+static constexpr size_t PLAYER_FIXED_V3 = 50;   // v3: + calmToday (44), reserved (45), calmDay (46)
+static constexpr size_t PLAYER_FIXED = 52;      // v4: + quizHi at offset 50
 static constexpr size_t PLAYER_CAP = 512;
 static constexpr size_t PLAYER_DEX_BYTES = (DEX_COUNT + 7) / 8;
 // DERIVED from the tables, never restated: CLAUDE.md § "sizeof(PartyMon) is
@@ -222,6 +223,7 @@ bool Pet::savePlayerSnapshot() {
   buf[44] = calmToday;                            // v3
   buf[45] = 0;                                    // v3, reserved
   ckptWr32(buf + 46, calmDay);                    // v3
+  ckptWr16(buf + 50, quizHi);                     // v4
 
   CkptCursor cur{ buf, PLAYER_FIXED, sizeof(buf) - CKPT_CRC };
   cur.put(dexReg, sizeof(dexReg));
@@ -300,10 +302,11 @@ bool Pet::loadPlayerSnapshot() {
   if (fixed >= PLAYER_FIXED_V2) memoHi = ckptRd16(buf + 42);
   // v3, the same way. calmDay 0 means "no clock when it was saved": nothing to
   // keep, so the allowance starts fresh as it would have.
-  if (fixed >= PLAYER_FIXED) {
+  if (fixed >= PLAYER_FIXED_V3) {
     calmDay = ckptRd32(buf + 46);
     calmToday = calmDay ? buf[44] : 0;
   }
+  if (fixed >= PLAYER_FIXED) quizHi = ckptRd16(buf + 50);
 
   CkptCursor cur{ buf, fixed, body };
   cur.take(dexReg, sizeof(dexReg), dexBytes);
@@ -1729,14 +1732,13 @@ uint8_t Pet::trainStrength(uint16_t hits) {
   return gain;
 }
 
-// The memory game. JOY AND BOND, no stat -- see the note in pet.h. Modelled on
+// The type quiz. JOY AND BOND, no stat -- see the note in pet.h. Modelled on
 // play() rather than on the three trainers, and it obeys the same contract they
 // all do: nothing while an egg or a ceremony is in progress, the daily bond cap
 // still applies, the day is registered, and it saves.
-uint8_t Pet::playMemo(uint16_t best) {
+uint8_t Pet::playQuiz(uint16_t best) {
   if (ceremony != CER_NONE || isEgg()) return 0;
-  // A longer sequence is worth more, with a ceiling: the game gets harder on its
-  // own, so the reward does not also need to run away.
+  // More correct answers are worth more, up to the existing reward ceiling.
   uint8_t gain = (uint8_t)(best * 4);
   if (gain > 40) gain = 40;
   const uint8_t before = joy;
@@ -1748,7 +1750,7 @@ uint8_t Pet::playMemo(uint16_t best) {
   energy = dropTo(energy, 4, 5);
   fullness = dropTo(fullness, 2, 5);
   if (best >= 4) heartUntil = millis() + HEART_MS;
-  if (best > memoHi) memoHi = best;
+  if (best > quizHi) quizHi = best;
   addBond((uint8_t)(2 + best / 3));
   registerCare();
   save();
@@ -2073,6 +2075,7 @@ void Pet::load() {
   strHi = prefs.getUShort("shi", 0);
   spdHi = prefs.getUShort("qhi", 0);
   memoHi = prefs.getUShort("mhi", 0);   // absent on an older save: no record yet
+  quizHi = 0;
   prefs.getString("nick", nick, sizeof(nick));
   // Moves load last: relearnFromLevel() needs speciesId and ageMinutes, both of
   // which are read above. A save from before moves existed has no "mvs" key and

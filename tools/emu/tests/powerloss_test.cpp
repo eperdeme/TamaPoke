@@ -278,6 +278,70 @@ int main() {
     }
   }
 
+  // A v3 player checkpoint has the passive-bond fields but no quiz record.
+  // Construct it from a checkpoint the firmware wrote, retaining its arrays.
+  {
+    nvs().clear();
+    Pet p; p.begin(); p.dbgHatchAs(6, false);
+    const uint32_t day = 20000UL * 86400UL;
+    p.memoHi = 9;
+    p.quizHi = 31;
+    p.badgesX[0] = 0x20;
+    p.dexReg[(25 - 1) >> 3] |= 1 << ((25 - 1) & 7);
+    p.bond = 0;
+    for (int i = 0; i < BOND_CALM_DAILY * BOND_CALM_TICKS; i++) {
+      p.lastSeenEpoch = day + 8 * 3600 + i * 60;
+      p.fullness = p.joy = p.energy = p.hygiene = 100;
+      p.poops = 0;
+      p.dbgTick();
+    }
+    ck(p.bond == BOND_CALM_DAILY, "the old day's passive allowance was actually spent");
+    p.saveNow();
+
+    const char *slot = newerSlot("plyA", "plyB");
+    std::vector<uint8_t> v3 = slotBytes(slot);
+    ck(v3.size() > 54 && v3[19] == 52, "the current player checkpoint has the appended quiz field");
+    if (v3.size() > 54 && v3[19] == 52) {
+      v3.erase(v3.begin() + 50, v3.begin() + 52);
+      v3[19] = 50;
+      const uint16_t version = 3;
+      memcpy(v3.data() + 4, &version, 2);
+      uint16_t total = (uint16_t)v3.size();
+      memcpy(v3.data() + 6, &total, 2);
+      reseal(v3);
+      nvs()[slot] = v3;
+      nvs().erase(std::string(slot) == "plyA" ? "plyB" : "plyA");
+      poisonLegacy();
+
+      Pet loaded; loaded.begin();
+      ck(loaded.memoHi == 9 && loaded.quizHi == 0,
+         "a v3 checkpoint keeps the old record and starts the quiz at zero");
+      ck(loaded.badgesX[0] == 0x20 && loaded.isRegistered(25),
+         "its player arrays still follow the original scalar block");
+      loaded.bond = 0;
+      for (int i = 0; i < BOND_CALM_TICKS; i++) {
+        loaded.lastSeenEpoch = day + 18 * 3600 + i * 60;
+        loaded.fullness = loaded.joy = loaded.energy = loaded.hygiene = 100;
+        loaded.poops = 0;
+        loaded.dbgTick();
+      }
+      ck(loaded.bond == 0, "the v3 passive-bond allowance remains spent after upgrade");
+
+      loaded.quizHi = 7;
+      loaded.saveNow();
+      Pet saved; saved.begin();
+      ck(saved.memoHi == 9 && saved.quizHi == 7,
+         "the new quiz record and the old memory record survive together");
+      loaded.quizHi = 8;
+      nvsFailWritesAfter(1);
+      loaded.saveNow();
+      nvsResumeWrites();
+      Pet interrupted; interrupted.begin();
+      ck(interrupted.memoHi == 9 && interrupted.quizHi == 7,
+         "an interrupted player write retains both previous records");
+    }
+  }
+
   // --- the handover, which was only ever in RAM -----------------------------
   //
   // update() hands the creature over and then newEgg() saves the egg. The party

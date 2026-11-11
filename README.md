@@ -184,12 +184,11 @@ While **awake**, per minute:
 - 🎯 **Reaction test:** a target appears, tap it before it shrinks away. Trains
   **SPEED**; the window tightens as you go.
 - 🥊 **Training bag:** trains **STRENGTH** (~4 hits = 1 pt, cap +18/session), tires it.
-- 🧠 **Memory:** four pads flash a sequence and you repeat it; one more step every
-  round, and your score is the longest sequence you got back. **+4 JOY per step**
-  (max +40) and bond. It trains **no stat at all**, deliberately — all three
-  trainable stats already have a game, so a fourth would just be another grind.
-  It also costs almost no energy and burns no weight, which makes it the one to
-  reach for when your creature is too worn out for the others.
+- 🧠 **Types:** choose the attack type that is super effective against the one
+  shown. Score as many as you can in **20 seconds**, with up to **three mistakes**.
+  Each correct answer earns **+4 JOY** (max +40), plus bond; it trains **no stat**,
+  costs little energy and burns no weight. Its record starts fresh independently
+  of the old memory game's record.
 - 🫧 **Bath:** clears poops, HYG → 100.
 - 👆 **Pet it:** +5 JOY + bond.
 - 🌙 **Sleep:** rest — ENE **+6/min**, needs drain ~**4× slower** with floors
@@ -517,7 +516,7 @@ the games: **they cap training.**
 Training: **STRENGTH** ← the bag, **SPEED** ← the reaction test, **DEFENSE** ← the
 ball game (and still 1 h of wellbeing passively). **VIT** can't be trained. All three
 live in the training menu now; the ball moved off the home row when it became
-defence's trainer. The **memory** game shares that menu and trains nothing — it
+defence's trainer. The **type quiz** shares that menu and trains nothing — it
 pays in joy and bond, which is why it is the one row with no progress bar.
 
 **TMs unlock at level 40**, all of them, and nothing before. A TM carries no level

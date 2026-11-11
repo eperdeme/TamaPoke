@@ -10,6 +10,7 @@ extern bool wasPressed;             // sketch: a gesture is being tracked
 static std::chrono::steady_clock::time_point g_tLast = std::chrono::steady_clock::now();
 static uint64_t g_virtUs = 0;      // accumulated in us so the scaling cannot drift
 static uint32_t g_timeScale = 1;   // >1 makes in-game minutes pass faster
+static bool g_clockPaused = false;
 
 void emuSetTimeScale(uint32_t s) { g_timeScale = s ? s : 1; }
 uint32_t emuTimeScale() { return g_timeScale; }
@@ -29,7 +30,7 @@ uint32_t millis() {
   uint64_t dus = std::chrono::duration_cast<std::chrono::microseconds>(now - g_tLast).count();
   g_tLast = now;
   bool gesturing = g_touchDown || wasPressed;   // press .. release resolved
-  g_virtUs += dus * (gesturing ? 1 : g_timeScale);
+  if (!g_clockPaused) g_virtUs += dus * (gesturing ? 1 : g_timeScale);
   return (uint32_t)(g_virtUs / 1000);
 #endif
 }
@@ -46,3 +47,8 @@ uint32_t millis() {
 // is letting the harness drive a condition the hardware reaches by itself. It is
 // additive to g_virtUs, so the clock stays monotonic.
 void emuAdvanceMs(uint32_t ms) { g_virtUs += (uint64_t)ms * 1000; }
+
+void emuSetClockPaused(bool paused) {
+  millis();
+  g_clockPaused = paused;
+}

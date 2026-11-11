@@ -381,6 +381,7 @@ int main(){
     ck(p.isRegistered(25), "the Pokedex still lines up, so the arrays were not shifted");
     ck(p.memoHi == 0,
        "while the field that record never had reads as no-record-yet, not as dex bits");
+    ck(p.quizHi == 0, "and the newer quiz record also starts empty");
   }
 
   printf("%s\n", bad?"FAILURES":"all good");

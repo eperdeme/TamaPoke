@@ -280,14 +280,14 @@ public:
   // already spent the energy, and that is what rate-limits rematching.
   uint8_t rewardTraining(uint8_t amount, uint8_t &which);
   uint16_t spdHi = 0;    // best reaction-test score
-  // Longest sequence repeated back in the memory game. Player-wide like the other
-  // three records, so it outlives the creature that set it.
+  // The old memory record remains in the checkpoint for save compatibility.
   uint16_t memoHi = 0;
-  // The memory game's reward. Deliberately joy and bond rather than a stat: all
+  uint16_t quizHi = 0;    // player-wide type-quiz record
+  // The type quiz's reward. Deliberately joy and bond rather than a stat: all
   // three trainable stats already have a game (the bag trains ATK, the reaction
   // test SPE, the ball DEF), so a fourth would be another grind rather than
   // another thing to do. Returns the joy actually gained.
-  uint8_t playMemo(uint16_t best);
+  uint8_t playQuiz(uint16_t best);
 
   // stats de combate: base real de gen 1 + nivel + IV + entrenamiento
   uint16_t atkStat() const;
