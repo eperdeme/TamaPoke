@@ -159,6 +159,7 @@ private:
   uint32_t changes = 0;
   bool loadCollection();
   void migrateCollection();
+  bool retireLegacyCollection();
   bool loadLegacyPair();
   // Its own counter, never shared with the pet's: if one record's write
   // succeeded and another's did not, a shared counter would advance anyway and

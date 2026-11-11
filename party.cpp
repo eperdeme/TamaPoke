@@ -32,6 +32,7 @@ void Party::begin() {
     }
     ready = healthy = true;
     if (!loadedCollectionWide) migrateCollection();
+    else retireLegacyCollection();
     return;
   }
   if (prefs.isKey("colv")) {
@@ -42,6 +43,7 @@ void Party::begin() {
     }
     ready = healthy = true;
     if (!loadedCollectionWide) migrateCollection();
+    else retireLegacyCollection();
     return;
   }
   const bool pairLoaded = loadLegacyPair();
@@ -154,7 +156,59 @@ void Party::migrateCollection() {
     return;
   }
   healthy = true;
-  Serial.println("save: collection migrated and verified; old save preserved");
+  Serial.println("save: collection migrated and verified");
+  retireLegacyCollection();
+}
+
+bool Party::retireLegacyCollection() {
+  const char *keys[] = {"pbA", "pbB", "box", "party"};
+  bool hasLegacy = false;
+  for (const char *key : keys) hasLegacy |= prefs.isKey(key);
+  if (!hasLegacy) return true;
+
+  if (!prefs.isKey("colv") || prefs.getUChar("colv", 0) != 2 ||
+      !collection.isKey("active") || !collection.getBool("active", false)) {
+    Serial.println("save: legacy collection retained; activation is not verified");
+    return false;
+  }
+
+  const size_t expected = collectionSize(sizeof(PartyMon), PARTY_SLOTS, BOX_SLOTS);
+  uint8_t *buf = static_cast<uint8_t *>(saveAlloc(expected));
+  if (!buf) {
+    Serial.println("save: legacy collection retained; verification allocation failed");
+    return false;
+  }
+  bool verified = true;
+  for (const char *key : {"cbA", "cbB"}) {
+    CollectionLayout layout;
+    if (collectionRead(collection, key, buf, expected, layout,
+                       PARTY_SLOTS, BOX_SLOTS, DEX_COUNT) != expected ||
+        !layout.wide || layout.offset != COLLECTION_FIXED ||
+        layout.stride != sizeof(PartyMon) ||
+        layout.partyCount != PARTY_SLOTS || layout.boxCount != BOX_SLOTS) {
+      verified = false;
+      break;
+    }
+  }
+  free(buf);
+  if (!verified) {
+    Serial.println("save: legacy collection retained; both expanded checkpoints are not verified");
+    return false;
+  }
+
+  for (const char *key : keys) {
+    if (!prefs.isKey(key)) continue;
+    if (!prefs.remove(key) && prefs.isKey(key)) {
+      Serial.printf("save: legacy %s could not be retired; will retry\n", key);
+      return false;
+    }
+    if (prefs.isKey(key)) {
+      Serial.printf("save: legacy %s remains; will retry\n", key);
+      return false;
+    }
+  }
+  Serial.println("save: obsolete collection copies retired; verified collection remains active");
+  return true;
 }
 
 // ---------------------------------------------------------------------------

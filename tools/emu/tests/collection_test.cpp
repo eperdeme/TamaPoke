@@ -54,16 +54,52 @@ static void seedLegacy() {
      "real 36-slot legacy source stored");
 }
 
-static bool originalIntact() {
+#ifdef TAMA_NATIVE_TEST
+static void seedDuplicateLegacyCopies() {
+  Preferences p;
+  ck(p.begin("tamapoke", false), "open active save for duplicate-source fixture");
+  uint8_t oldParty[PARTY_SLOTS * sizeof(PartyMon)] = {};
+  uint8_t oldBox[36 * sizeof(PartyMon)] = {};
+  uint8_t oldCheckpoint[20 + (PARTY_SLOTS + 36) * sizeof(PartyMon)] = {};
+  ck(p.putBytes("party", oldParty, sizeof(oldParty)) == sizeof(oldParty) &&
+     p.putBytes("box", oldBox, sizeof(oldBox)) == sizeof(oldBox) &&
+     p.putBytes("pbA", oldCheckpoint, sizeof(oldCheckpoint)) == sizeof(oldCheckpoint) &&
+     p.putBytes("pbB", oldCheckpoint, sizeof(oldCheckpoint)) == sizeof(oldCheckpoint),
+     "seed the historical duplicate collection footprint");
+}
+
+static void seedLowHeadroom() {
+  Preferences p;
+  ck(p.begin("tamapoke", false), "open historical save for headroom fixture");
+  uint8_t pet[124] = {}, player[368] = {};
+  ck(p.putBytes("petA", pet, sizeof(pet)) == sizeof(pet) &&
+     p.putBytes("petB", pet, sizeof(pet)) == sizeof(pet) &&
+     p.putBytes("plyA", player, sizeof(player)) == sizeof(player) &&
+     p.putBytes("plyB", player, sizeof(player)) == sizeof(player),
+     "seed existing active-pet and player checkpoints");
+  nvs_stats_t stats{};
+  if (nvs_get_stats(nullptr, &stats) != ESP_OK) {
+    ck(false, "read original NVS stats for the low-headroom fixture");
+    return;
+  }
+  for (unsigned i = 0; stats.used_entries < 399 && i < 1000; ++i) {
+    char key[16];
+    snprintf(key, sizeof(key), "old%03u", i);
+    if (!p.putUChar(key, uint8_t(i)) || nvs_get_stats(nullptr, &stats) != ESP_OK) {
+      ck(false, "fill historical NVS fixture to its measured used-entry count");
+      return;
+    }
+  }
+  ck(stats.used_entries == 399 && stats.available_entries < 126,
+     "historical customer footprint reproduces the original low-headroom warning");
+}
+#endif
+
+static bool legacySourcesPresent() {
   Preferences p;
   if (!p.begin("tamapoke", true)) return false;
-  PartyMon oldBox[36];
-  if (p.getBytes("box", oldBox, sizeof(oldBox)) != sizeof(oldBox)) return false;
-  for (int i = 0; i < 36; ++i) {
-    const PartyMon expected = mon(i);
-    if (memcmp(&oldBox[i], &expected, sizeof(expected))) return false;
-  }
-  return !p.isKey("cbA") && !p.isKey("cbB");
+  return p.isKey("party") || p.isKey("box") ||
+         p.isKey("pbA") || p.isKey("pbB");
 }
 
 static void checkSnapshotFormats() {
@@ -89,7 +125,8 @@ static void checkSnapshotFormats() {
   bool kept = upgraded.saveHealthy() && upgraded.boxCount() == BOX_SLOTS;
   for (int i = 0; i < BOX_SLOTS; ++i)
     kept &= !memcmp(&upgraded.box[i], &source.box[i], sizeof(PartyMon));
-  ck(kept && originalIntact(), "widening the collection header preserves every old record");
+  ck(kept && !legacySourcesPresent(),
+     "widening the collection preserves every record before retiring legacy copies");
   std::vector<uint8_t> check(COLLECTION_MAX_BYTES);
   CollectionLayout layout;
   bool bothWide = true;
@@ -204,11 +241,40 @@ static void checkSnapshotFormats() {
 
 int main() {
   seedLegacy();
+#ifdef TAMA_NATIVE_TEST
+  {
+    Party migrated;
+    migrated.begin();
+    ck(migrated.saveHealthy() && migrated.boxCount() == 36 && !legacySourcesPresent(),
+       "native migration first verifies the expanded collection");
+  }
+  seedDuplicateLegacyCopies();
+  seedLowHeadroom();
+  nvs_stats_t beforePrune{};
+  const bool measuredBefore = nvs_get_stats(nullptr, &beforePrune) == ESP_OK;
+#endif
   Party p;
   p.begin();
   ck(p.saveHealthy() && p.writable() && p.boxCount() == 36,
      "36-slot collection migrates to writable verified storage");
-  ck(originalIntact(), "migration leaves original save bytes and namespace intact");
+  ck(!legacySourcesPresent(),
+     "migration retires the old collection only after both replacement copies verify");
+#ifdef TAMA_NATIVE_TEST
+  nvs_stats_t afterPrune{};
+  Preferences preserved;
+  const bool petPlayerKept =
+      preserved.begin("tamapoke", true) &&
+      preserved.getBytesLength("petA") == 124 &&
+      preserved.getBytesLength("petB") == 124 &&
+      preserved.getBytesLength("plyA") == 368 &&
+      preserved.getBytesLength("plyB") == 368;
+  ck(measuredBefore && nvs_get_stats(nullptr, &afterPrune) == ESP_OK &&
+     beforePrune.available_entries < 126 && afterPrune.available_entries >= 126 &&
+     afterPrune.available_entries > beforePrune.available_entries && petPlayerKept,
+     "verified pruning restores original NVS headroom without touching pet/player checkpoints");
+  printf("      original NVS available=%u -> %u entries\n",
+         unsigned(beforePrune.available_entries), unsigned(afterPrune.available_entries));
+#endif
   for (int i = 0; i < BOX_SLOTS; ++i) p.box[i] = mon(i);
   ck(p.savePair() && p.savePair(), "both full-size checkpoints commit");
   Party restored;
@@ -248,12 +314,59 @@ int main() {
     nvsFailWritesAfter(budget);
     Party interrupted;
     interrupted.begin();
+    ck(legacySourcesPresent(),
+       "an interrupted migration keeps its source until replacement checkpoints verify");
     nvsResumeWrites();
     Party resumed;
     resumed.begin();
-    ck(resumed.saveHealthy() && resumed.boxCount() == 36 && originalIntact(),
-       "interrupted migration resumes without losing source records");
+    ck(resumed.saveHealthy() && resumed.boxCount() == 36 && !legacySourcesPresent(),
+       "interrupted migration resumes before retiring its verified legacy source");
   }
+
+  Party activeCollection;
+  activeCollection.begin();
+  PartyMon expectedSlots[PARTY_SLOTS];
+  memcpy(expectedSlots, activeCollection.slots, sizeof(expectedSlots));
+  const uint16_t expectedBoxCount = activeCollection.boxCount();
+  std::vector<PartyMon> expectedBox(BOX_SLOTS);
+  memcpy(expectedBox.data(), activeCollection.box.data(), sizeof(PartyMon) * BOX_SLOTS);
+  auto &collectionStore = nvsNamed("tpcollect:collection");
+  const std::vector<uint8_t> goodA = collectionStore["cbA"];
+  for (int budget = 0; budget < 4; ++budget) {
+    Preferences old;
+    old.begin("tamapoke", false);
+    uint8_t stale[4] = {1, 2, 3, 4};
+    ck(old.putBytes("party", expectedSlots, sizeof(expectedSlots)) == sizeof(expectedSlots) &&
+       old.putBytes("box", expectedBox.data(), sizeof(PartyMon) * BOX_V323_SLOTS) ==
+           sizeof(PartyMon) * BOX_V323_SLOTS &&
+       old.putBytes("pbA", stale, sizeof(stale)) == sizeof(stale) &&
+       old.putBytes("pbB", stale, sizeof(stale)) == sizeof(stale),
+       "seed obsolete migration copies beside an active collection");
+    old.end();
+
+    collectionStore["cbA"].back() ^= 1;
+    Party gated;
+    gated.begin();
+    ck(gated.saveHealthy() && legacySourcesPresent(),
+       "one valid destination copy is not enough to retire the legacy source");
+    collectionStore["cbA"] = goodA;
+
+    nvsFailWritesAfter(budget);
+    Party interruptedCleanup;
+    interruptedCleanup.begin();
+    nvsResumeWrites();
+    Party resumedCleanup;
+    resumedCleanup.begin();
+    bool same = resumedCleanup.saveHealthy() &&
+                resumedCleanup.boxCount() == expectedBoxCount &&
+                !legacySourcesPresent();
+    for (int i = 0; i < PARTY_SLOTS; ++i)
+      same &= !memcmp(&resumedCleanup.slots[i], &expectedSlots[i], sizeof(PartyMon));
+    for (int i = 0; i < BOX_SLOTS; ++i)
+      same &= !memcmp(&resumedCleanup.box[i], &expectedBox[i], sizeof(PartyMon));
+    ck(same, "interrupted legacy cleanup retries without changing any saved Pokemon");
+  }
+
   seedLegacy();
   Party failed;
   failed.begin();
@@ -277,7 +390,8 @@ int main() {
   corrupt.begin();
   ck(!corrupt.writable() && !corrupt.saveHealthy() && !corrupt.savePair(),
      "two corrupt activated copies block writes rather than resurrect stale legacy data");
-  ck(originalIntact(), "recovery failure never overwrites the original collection");
+  ck(!corrupt.writable() && !corrupt.saveHealthy(),
+     "recovery failure never falls back to retired legacy copies");
   ck(collectionReset(), "simulate complete loss of the dedicated collection namespace");
   Party missing;
   missing.begin();
