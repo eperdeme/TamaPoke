@@ -91,7 +91,24 @@ uint8_t wildTierForRoll(uint8_t roll) {
   return R_COMUN;                      // the rest
 }
 
-int16_t wildPickSpecies(uint8_t region, uint8_t tier, uint32_t roll) {
+uint8_t speciesMinLevel(int16_t dex) {
+  if (dex < 1 || dex > DEX_COUNT) return 1;
+  for (int16_t d = 1; d <= DEX_COUNT; d++)
+    if (DEX_TBL[d].evolvesTo == dex) return DEX_TBL[d].evolveLevel ? DEX_TBL[d].evolveLevel : 1;
+  for (uint8_t i = 0; i < EEVEE_EVO_COUNT; i++)
+    if (EEVEE_EVOS[i] == dex) return DEX_TBL[DEX_EEVEE].evolveLevel ? DEX_TBL[DEX_EEVEE].evolveLevel : 1;
+#ifdef EVO_BRANCH_COUNT
+  for (uint8_t i = 0; i < EVO_BRANCH_COUNT; i++)
+    for (uint8_t k = 0; k < EVO_BRANCHES[i].count; k++)
+      if (EVO_BRANCHES[i].to[k] == dex) {
+        const uint8_t l = DEX_TBL[EVO_BRANCHES[i].from].evolveLevel;
+        return l ? l : 1;
+      }
+#endif
+  return 1;
+}
+
+int16_t wildPickSpecies(uint8_t region, uint8_t tier, uint32_t roll, uint8_t level) {
   uint16_t lo = 1, hi = DEX_COUNT;
   if (region < REGION_COUNT && region != REGION_ALL) {
     lo = REGIONS[region].lo;
@@ -106,6 +123,7 @@ int16_t wildPickSpecies(uint8_t region, uint8_t tier, uint32_t roll) {
     if (DEX_TBL[d].rarity != tier) continue;
     if (!speciesHasArt((int16_t)d)) continue;
     if (!regionAvailable(regionOfDex((int16_t)d))) continue;
+    if (speciesMinLevel((int16_t)d) > level) continue;
     n++;
   }
   if (!n) return 0;
@@ -114,6 +132,7 @@ int16_t wildPickSpecies(uint8_t region, uint8_t tier, uint32_t roll) {
     if (DEX_TBL[d].rarity != tier) continue;
     if (!speciesHasArt((int16_t)d)) continue;
     if (!regionAvailable(regionOfDex((int16_t)d))) continue;
+    if (speciesMinLevel((int16_t)d) > level) continue;
     if (!want) return (int16_t)d;
     want--;
   }

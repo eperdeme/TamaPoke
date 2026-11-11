@@ -7296,18 +7296,23 @@ void bagTap(int16_t x, int16_t y) {
 bool startWildBattle(uint8_t region, bool hard) {
   if (pet.isEgg() || pet.ceremony != CER_NONE) return false;
   if (region >= REGION_COUNT || !regionAvailable(region)) return false;
-  uint8_t tier = wildTierForRoll((uint8_t)random(100));
-  int16_t dex = wildPickSpecies(region, tier, (uint32_t)random(65536) * 31u + random(31));
-  // A tier can be empty when only some packs are installed -- Kanto has no
-  // R_LEGENDARIO gap, but a future region might. Fall back rather than refusing
-  // the encounter, since "nothing happened" reads as a broken button.
-  if (!dex) dex = wildPickSpecies(region, R_COMUN, random(65536));
-  if (!dex) return false;
-
+  // The level FIRST, so the species can be one that exists at it: an evolved
+  // form below the level it evolves at (a level 2 INFERNAPE) is not offered.
   uint8_t lo = wildLevelMin(pet.level(), hard);
   uint8_t hi = wildLevelMax(pet.level(), hard);
+  const uint8_t lvl = (uint8_t)(lo + random(hi - lo + 1));
+  uint8_t tier = wildTierForRoll((uint8_t)random(100));
+  int16_t dex = wildPickSpecies(region, tier, (uint32_t)random(65536) * 31u + random(31), lvl);
+  // A tier can be empty: only some packs installed, or -- for the evolved tier
+  // below a region's first evolution level (7 in Kanto) -- nothing evolved can
+  // exist yet. Fall back to a common one rather than refusing the encounter,
+  // since "nothing happened" reads as a broken button. Rare and legendary
+  // rolls are never moved: base forms exist at every level.
+  if (!dex) dex = wildPickSpecies(region, R_COMUN, random(65536), lvl);
+  if (!dex) return false;
+
   wildDex = dex;
-  wildLvl = (uint8_t)(lo + random(hi - lo + 1));
+  wildLvl = lvl;
   for (int i = 0; i < 4; i++) wildIv[i] = (uint8_t)(8 + random(24));
   // Bonus 0: nothing in this build earns one yet, so every wild shiny is the
   // flat 1/4096. The parameter stays because it is where a farewell reward
