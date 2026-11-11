@@ -202,6 +202,7 @@ static PartyMon encounter(unsigned index) {
   wildApplyShiny(mon.shiny, mon.ivAtk, mon.ivDef, mon.ivSpe, mon.ivHp);
   mon.stateVersion = 1;
   mon.ageMinutes = uint32_t(mon.level - 1) * MINUTES_PER_LEVEL;
+  if (mon.ageMinutes >= FAREWELL_AGE_MIN) mon.berryKnown |= PM_FAREWELL;
   mon.lastLearnLevel = mon.level;
   Pet foe;
   foe.dbgHatchAs(mon.dex, mon.shiny);

@@ -445,8 +445,9 @@ After any ending, a **new egg** appears.
 ### Bonds, streaks, medals, Pokédex
 - **Streak** (player-wide, survives across pets): first care each real day; milestones
   at **3 / 7 / 30 / 100** days; skipping a day breaks it.
-- **Bond** (per pet, resets on hatch): grows with affection (**cap +20/day**), cools on
-  neglect. Both streak & bond improve egg/shiny odds — **and the IVs of your next pet**.
+- **Bond** (per pet, resets on hatch): care actions share an allowance of **+20/day**
+  across creatures and reboots, plus +4 for the first care of the day; neglect cools
+  it. Both streak & bond improve egg/shiny odds — **and the IVs of your next pet**.
 - **8 medals** (Lv10/25/50, favorite berry found, 7-day streak, max bond, final form,
   "fit" = weight 0 & no slip-ups), per-pet + a global counter.
 - **Pokédex:** raising a species registers it; **809 + shinies** to complete.
@@ -545,7 +546,12 @@ on whether the farewell had been earned yet.
 | | |
 |---|---|
 | Retiring one that has **earned** its farewell | free -- it is simply the farewell reached by another button. It **joins your party** and **blesses** the next egg |
+| Retiring one whose farewell was **already spent** | free -- it rejoins your party, but the next egg is neutral |
 | Retiring one that has **not** | it is **gone for good** -- not banked, not in the box -- the next egg is **neutral** instead of blessed, and the **next** creature evolves a day later |
+
+A creature can bless an egg with a farewell only once, even if made active again.
+Wild captures already at the farewell age cannot bless an egg without being raised.
+Older saved creatures do not record a past farewell, so may offer it once more.
 
 An early retire used to bank the creature and bless the next egg exactly as a
 farewell does, which made it the good ending with a small tax on it: you could

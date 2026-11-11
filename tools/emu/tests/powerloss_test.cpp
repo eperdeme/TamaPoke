@@ -307,6 +307,8 @@ int main() {
        "a creature waiting for a party slot survives losing power");
     ck(rebooted.endedMon.dex == 6 && !strcmp(rebooted.endedMon.nick, "BLAZE"),
        "and it is the same creature, not a blank record");
+    ck(rebooted.endedMon.farewellDone(),
+       "the completed farewell travels with the durable handover");
     ck(rebooted.isEgg(),
        "with the new egg still in place -- the handover did not undo the ceremony");
 

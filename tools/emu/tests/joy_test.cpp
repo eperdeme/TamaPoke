@@ -56,14 +56,18 @@ int main(){
       {
         Pet p; p.begin(); p.dbgHatchAs(25, false);
         p.ivAtk = p.ivDef = p.ivSpe = p.ivHp = 31;
-        p.bond = 0;   // bondToday is private and starts at 0 on a fresh Pet
+        p.bond = 0;
+        // its own calendar day: the daily allowance is shared by every creature,
+        // so a second Pet on the same day would find it already spent
+        p.dbgSetSeen((30000UL + 2 * t) * 86400UL + 36000UL);
         if (t == 0) p.trainStrength(4); else if (t == 1) p.trainSpeed(2); else p.playResult(2);
         small = p.bond;
       }
       {
         Pet p; p.begin(); p.dbgHatchAs(25, false);
         p.ivAtk = p.ivDef = p.ivSpe = p.ivHp = 31;
-        p.bond = 0;   // bondToday is private and starts at 0 on a fresh Pet
+        p.bond = 0;
+        p.dbgSetSeen((30001UL + 2 * t) * 86400UL + 36000UL);
         if (t == 0) p.trainStrength(80); else if (t == 1) p.trainSpeed(40); else p.playResult(40);
         big = p.bond;
       }

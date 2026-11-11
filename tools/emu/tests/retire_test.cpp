@@ -166,6 +166,155 @@ int main(){
     ck(again.isEgg(), "and so is the egg it came with");
   }
 
+  // --- a farewell is said ONCE. Activated again, the creature lives on but is
+  // never offered a second one; retiring it banks it again for free and the egg
+  // is neutral. Without this: farewell, activate, farewell -- blessed eggs on
+  // demand from a creature nobody is raising.
+  {
+    Pet p; Party q; p.begin(); q.begin();
+    for (int i = 0; i < PARTY_SLOTS; i++) q.releaseAt(i);
+    p.dbgHatchAs(6, false);
+    p.ageMinutes = FAREWELL_AGE_MIN + 60;
+    p.fullness=p.joy=p.energy=p.hygiene=100;
+    p.berryKnown = true;
+    p.saveNow();
+    ck(p.canFarewellNow() && !p.farewellDone, "a first farewell is offered");
+    p.startFarewell();
+    {
+      Pet interrupted; interrupted.begin();
+      ck(interrupted.speciesId == 6 && !interrupted.farewellDone &&
+         interrupted.canFarewellNow(),
+         "a reboot during the ceremony keeps the unfinished farewell available");
+    }
+    finish(p, q);
+    ck(q.count() == 1 && q.slots[0].farewellDone(), "the banked record remembers its farewell");
+    ck(q.slots[0].berryFound(), "and still remembers its berry");
+    ck(p.lastEnd == CER_FAREWELL, "the first farewell blesses the egg");
+
+    p.dbgHatchAs(1, false);                 // raising something new
+    PartyMon back = q.slots[0];
+    q.replaceAt(0, p.toPartyMon());
+    p.switchTo(back);
+    p.fullness=p.joy=p.energy=p.hygiene=100; p.sleeping = false;
+    ck(p.speciesId == 6 && p.farewellDone && p.berryKnown, "activated again, flags and all");
+    { Pet r; r.begin(); ck(r.speciesId == 6 && r.farewellDone && r.berryKnown,
+                          "and both flags survive a reboot (the pet checkpoint)"); }
+    ck(!p.canFarewellNow() && !p.wantFarewellButton(), "no second farewell is offered");
+    ck(p.retireIsFree(), "retiring it is free");
+    p.startRetire();
+    ck(!p.retireIsEarly(), "and it is not an early retire");
+    finish(p, q);
+    bool banked = false;
+    for (int i = 0; i < PARTY_SLOTS; i++) if (q.slots[i].dex == 6) banked = true;
+    ck(banked, "so it is banked again, not given up");
+    ck(p.lastEnd == CER_RELEASE, "but the egg is neutral: one blessing per life");
+    ck(p.evoPenalty() == 0, "and the next creature owes nothing");
+
+    // a record from before the flag: 0 or 1 in that byte, berry only
+    PartyMon legacy; legacy.dex = 6; legacy.level = 74; legacy.stateVersion = 1;
+    legacy.ageMinutes = FAREWELL_AGE_MIN + 60; legacy.berryKnown = 1;
+    legacy.fullness = legacy.joy = legacy.energy = legacy.hygiene = 100;
+    p.switchTo(legacy); p.sleeping = false;
+    ck(p.berryKnown && !p.farewellDone && p.canFarewellNow(),
+       "an older record keeps its berry and reads as farewell not yet said");
+  }
+
+  // --- the daily bond allowance from actions is ONE per day for every creature:
+  // a swap does not refill it, a reboot does not refill it, a new day does.
+  {
+    Pet p; Party q; p.begin(); q.begin();
+    const uint32_t day = 20000;                 // any real calendar day
+    p.dbgHatchAs(25, false);
+    p.fullness=p.joy=p.energy=p.hygiene=100; p.sleeping=false;
+    p.dbgSetSeen(day * 86400 + 3600);
+    p.bond = 0;
+    for (int i = 0; i < 40; i++) p.caress();
+    const uint8_t first = p.bond;              // +4 for the day, +20ish from caresses
+    ck(first >= 20 && first <= 30, "a day of caresses stops at the daily allowance");
+    PartyMon other; other.dex = 1; other.level = 20; other.stateVersion = 1;
+    other.ageMinutes = 19UL * MINUTES_PER_LEVEL;
+    other.fullness = other.joy = other.energy = other.hygiene = 100;
+    PartyMon mine = p.toPartyMon();
+    p.switchTo(other); p.sleeping = false;
+    const uint8_t otherBefore = p.bond;
+    for (int i = 0; i < 10; i++) p.caress();
+    ck(p.bond == otherBefore, "the allowance is shared: another creature gets none today");
+    p.switchTo(mine); p.sleeping = false;
+    for (int i = 0; i < 10; i++) p.caress();
+    ck(p.bond == first, "and swapping back does not refill it");
+    p.saveNow();
+    {
+      Pet r; r.begin(); r.sleeping = false;
+      const uint8_t b = r.bond;
+      for (int i = 0; i < 10; i++) r.caress();
+      ck(r.bond == b, "nor does a reboot");
+      r.dbgSetSeen((day + 1) * 86400 + 3600);
+      r.caress();
+      ck(r.bond == b + 5, "a new day does: +4 for the day and the caress counts");
+    }
+  }
+
+  {
+    Pet p; p.begin(); p.dbgHatchAs(25, false);
+    p.dbgSetSeen(21000UL * 86400 + 3600);
+    p.bond = 0;
+    p.saveNow();
+    p.caress();
+    const uint8_t earned = p.bond;
+    Pet reloaded; reloaded.begin();
+    ck(earned > 0 && reloaded.bond == earned,
+       "a caress and its bond allowance survive an immediate reboot");
+  }
+
+  {
+    Pet p; p.begin(); p.dbgHatchAs(25, false);
+    p.dbgSetSeen(22000UL * 86400 + 3600);
+    p.bond = 100;
+    for (int i = 0; i < 25; i++) p.caress();
+    PartyMon other; other.dex = 1; other.level = 20; other.stateVersion = 1;
+    other.ageMinutes = 19UL * MINUTES_PER_LEVEL;
+    other.fullness = other.joy = other.energy = other.hygiene = 100;
+    p.switchTo(other);
+    p.caress();
+    ck(p.bond == 1, "actions at maximum bond do not spend another creature's allowance");
+  }
+
+  {
+    Pet p; p.begin(); p.dbgHatchAs(25, false);
+    p.dbgSetSeen(22500UL * 86400 + 3600);
+    p.bond = 0;
+    p.fullness = p.joy = p.energy = p.hygiene = 100;
+    for (int i = 0; i < 19; i++) p.caress();
+    p.trainStrength(80);
+    ck(p.bond == 24, "a large action cannot exceed the 20-point allowance");
+  }
+
+#ifndef TAMA_NATIVE_TEST
+  {
+    Pet p; p.begin(); p.dbgHatchAs(25, false);
+    const uint32_t day = 23000;
+    p.dbgSetSeen(day * 86400 + 3600);
+    p.bond = 0;
+    p.caress();
+    p.saveNow();
+    p.dbgSetSeen((day + 1) * 86400 + 3600);
+    p.bond = 0;
+    for (int i = 0; i < 20; i++) {
+      nvsFailWritesAfter(1);
+      p.caress();
+      nvsResumeWrites();
+    }
+    Pet reloaded; reloaded.begin();
+    ck(reloaded.bond == 24,
+       "the new day's full action allowance reached the pet checkpoint");
+    reloaded.caress();
+    const uint8_t afterCare = reloaded.bond;
+    reloaded.caress();
+    ck(reloaded.bond == afterCare,
+       "a stale player checkpoint cannot refill the pet's saved allowance");
+  }
+#endif
+
   printf("%s\n", bad?"FAILURES":"all good");
   return bad?1:0;
 }

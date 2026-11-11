@@ -42,10 +42,8 @@ static void loadBlob(Preferences &p, const char *key, void *dst, size_t n) {
 
 // --- the creature ----------------------------------------------------------
 static constexpr uint32_t PET_CORE_MAGIC = 0x31504B54UL;  // "TKP1"
-// v2 appended the pending party handover; see PET_TAIL_* below. v1 records
-// still read -- they simply have no tail, which is exactly "nothing waiting for
-// a party slot", the right default.
-static constexpr uint16_t PET_CORE_VERSION = 2;
+// v2 appended the pending party handover; v3 adds the action-bond day.
+static constexpr uint16_t PET_CORE_VERSION = 3;
 // Generous enough to read a record from a later build; see ckptRead().
 static constexpr size_t PET_CORE_CAP = 192;
 
@@ -120,7 +118,9 @@ static constexpr size_t PET_TAIL_RSVD = PET_FIXED + 1;      // u8  reserved, 2-b
 static constexpr size_t PET_TAIL_MONLEN = PET_FIXED + 2;    // u16 stored sizeof(PartyMon)
 static constexpr size_t PET_TAIL_MON = PET_FIXED + 4;       // the record itself
 static constexpr size_t PET_BODY = PET_TAIL_MON + sizeof(PartyMon);
-static_assert(PET_BODY + CKPT_CRC <= PET_CORE_CAP, "raise PET_CORE_CAP");
+static constexpr uint32_t PET_BOND_MAGIC = 0x59414442UL;    // "BDAY"
+static constexpr size_t PET_BOND_BYTES = 8;                 // marker and day
+static_assert(PET_BODY + PET_BOND_BYTES + CKPT_CRC <= PET_CORE_CAP, "raise PET_CORE_CAP");
 
 // Takes a validated blob and copies whatever body prefix the stored record and
 // this build have in common. Anything this build has that the record did not
@@ -348,6 +348,8 @@ void Pet::begin() {
   memset(badgesHardX, 0, sizeof(badgesHardX));
   memset(dexReg, 0, sizeof(dexReg));
   memset(dexShinyReg, 0, sizeof(dexShinyReg));
+  bondToday = 0;
+  bondDay = 0;
   for (int i = 0; i < REGION_COUNT; i++) eggByRegion[i] = 0;
   if (!prefs.getBool("init", false)) {
     prefs.putBool("init", true);
@@ -355,6 +357,8 @@ void Pet::begin() {
   } else {
     load();
   }
+  // Without a clock the allowance is per boot.
+  if (bondDay == 0) bondToday = 0;
   lastTick = millis();
 }
 
@@ -387,6 +391,7 @@ void Pet::newEgg() {
   mistakeCooldown = 0;
   sleeping = false;
   frozen = false;
+  farewellDone = false;
   save();
 }
 
@@ -606,8 +611,8 @@ void Pet::reviveFrom(const PartyMon &m) {
   mistakeCooldown = 0;
   sleeping = false;
   bond = 0;
-  bondToday = 0;
-  berryKnown = false;
+  berryKnown = m.berryFound();
+  farewellDone = m.farewellDone();
   weight = 0;
   fullness = joy = energy = 80;
   hygiene = 100;
@@ -648,7 +653,7 @@ PartyMon Pet::toPartyMon() const {
   m.poops = poops;
   m.weight = weight;
   m.bond = bond;
-  m.berryKnown = berryKnown ? 1 : 0;
+  m.berryKnown = (berryKnown ? PM_BERRY : 0) | (farewellDone ? PM_FAREWELL : 0);
   m.careMistakes = careMistakes;
   m.evoDeclinedLv = evoDeclinedLv;
   m.lastLearnLevel = lastLearnLevel;
@@ -673,10 +678,13 @@ void Pet::switchTo(const PartyMon &m) {
   trAtk = m.trAtk; trDef = m.trDef; trSpe = m.trSpe;
   for (int i = 0; i < MOVE_SLOTS; i++) moves[i] = m.moves[i];
   medals = m.medals;
+  farewellDone = m.farewellDone();   // a spent farewell stays spent
   mistakeCooldown = 0;
   sleeping = false;
   sleepAuto = SLEEP_NONE;
-  bondToday = 0;
+  // bondToday is NOT cleared: the daily bond allowance is shared by every
+  // creature, so swapping cannot refill it (it used to: A -> B -> A was a fresh
+  // 20 for A, as often as you liked).
   learnQCount = 0;
   frozen = false;          // the whole point: it ages and levels again
   if (m.hasCareState()) {
@@ -688,7 +696,7 @@ void Pet::switchTo(const PartyMon &m) {
     poops = m.poops;
     weight = m.weight;
     bond = m.bond;
-    berryKnown = m.berryKnown != 0;
+    berryKnown = m.berryFound();
     careMistakes = m.careMistakes;
     evoDeclinedLv = m.evoDeclinedLv;
     lastLearnLevel = m.lastLearnLevel;
@@ -725,6 +733,8 @@ void Pet::snapshotForParty() {
   // calling the two halves by hand.
   if (retireIsEarly()) return;
   endedMon = toPartyMon();
+  if (ceremony == CER_FAREWELL && lastEnd == CER_FAREWELL)
+    endedMon.berryKnown |= PM_FAREWELL;
   endedKind = ceremony;
   // Deliberately NOT saved here. update() calls this and then newEgg(), whose
   // save() writes the handover into the same checkpoint blob as the new egg --
@@ -997,7 +1007,6 @@ void Pet::registerCare() {
     lastMilestone = 0;
   }
   lastCareDay = d;
-  bondToday = 0;
   if (streak > bestStreak) bestStreak = streak;
   bond = clamp100(bond + 4);
   uint16_t ms = (streak >= 100) ? 100 : (streak >= 30) ? 30
@@ -1011,8 +1020,13 @@ void Pet::registerCare() {
 }
 
 void Pet::addBond(uint8_t amt) {
-  if (bondToday >= 20) return;  // tope diario: el vinculo no se farmea
-  bond = clamp100(bond + amt);
+  const uint32_t d = today();
+  if (d != bondDay) { bondDay = d; bondToday = 0; }
+  registerCare();
+  if (bondToday >= 20 || bond >= 100) return;
+  if (amt > 20 - bondToday) amt = 20 - bondToday;
+  if (amt > 100 - bond) amt = 100 - bond;
+  bond += amt;
   bondToday += amt;
 }
 
@@ -1410,7 +1424,8 @@ uint16_t Pet::registeredCount() const {
 bool Pet::canFarewellNow() const {
   if (frozen) return false;     // a companion cannot be lost; that is the point
   return !isEgg() && !sleeping && ceremony == CER_NONE &&
-         DEX_TBL[speciesId].evolvesTo == 0 && ageMinutes >= FAREWELL_AGE_MIN;
+         DEX_TBL[speciesId].evolvesTo == 0 && ageMinutes >= FAREWELL_AGE_MIN &&
+         !farewellDone;           // a life is said goodbye to once
 }
 
 // abandono total durante 1h: lista para escaparse. La dispara el usuario con el
@@ -1438,7 +1453,10 @@ bool Pet::canRetireNow() const {
 // penalty rather than applying it to a creature that never got retired.
 void Pet::startRetire() {
   if (!canRetireNow()) return;
-  retirePending = !canFarewellNow();
+  const bool earned = canFarewellNow();
+  // Early = gives the creature up and costs the next one a day. A creature whose
+  // farewell is already spent is neither: it is banked again, for free.
+  retirePending = !earned && !farewellDone;
   save();
   startFarewell();
   // An early retire is NOT the good ending and must not pay like one.
@@ -1448,8 +1466,9 @@ void Pet::startRetire() {
   // retire, check the egg, retire again, with nothing accumulating to regret.
   // Neutral instead, exactly like a release. The ceremony on screen is still the
   // farewell -- this was a choice the player made, not a neglected creature
-  // walking out -- but the reward is not.
-  if (retirePending) {
+  // walking out -- but the reward is not. The same goes for a creature whose
+  // farewell was already spent: banking it again is free, blessing an egg is not.
+  if (!earned) {
     lastEnd = CER_RELEASE;
     save();
   }
@@ -1494,8 +1513,8 @@ void Pet::hatch() {
   goodTicks = 0;
   calmTicks = 0;
   berryKnown = false;
+  farewellDone = false;
   bond = 0;          // vinculo, medallas y nombre son del individuo
-  bondToday = 0;
   medals = 0;
   newMedal = 0;
   nick[0] = 0;
@@ -1824,8 +1843,10 @@ void Pet::caress() {
   if (isEgg() || sleeping) return;
   joy = clamp100(joy + 5);
   heartUntil = millis() + HEART_MS;
+  const uint8_t oldBond = bond, oldCount = bondToday;
+  const uint32_t oldDay = bondDay;
   addBond(1);
-  registerCare();
+  if (bond != oldBond || bondToday != oldCount || bondDay != oldDay) save();
 }
 
 void Pet::eggTap() {
@@ -1857,7 +1878,8 @@ bool Pet::saveCoreSnapshot() {
   snapshot.trAtk = trAtk; snapshot.trDef = trDef; snapshot.trSpe = trSpe;
   memcpy(snapshot.moves, moves, sizeof(moves));
   snapshot.lastLearnLevel = lastLearnLevel;
-  snapshot.berryKnown = berryKnown; snapshot.shiny = shiny;
+  snapshot.berryKnown = (berryKnown ? PM_BERRY : 0) | (farewellDone ? PM_FAREWELL : 0);
+  snapshot.shiny = shiny;
   snapshot.eggShiny = eggShiny; snapshot.starterPick = starterPick;
   snapshot.evoPen = evoPen; snapshot.sleepAuto = sleepAuto;
   snapshot.retirePending = retirePending; snapshot.eggTaps = eggTaps;
@@ -1870,11 +1892,14 @@ bool Pet::saveCoreSnapshot() {
   // The pending handover rides along, so the new egg and the creature it
   // replaced commit in the same write.
   buf[PET_TAIL_KIND] = endedKind;
-  buf[PET_TAIL_RSVD] = 0;
+  // The count and its day must commit in the same checkpoint.
+  buf[PET_TAIL_RSVD] = bondToday;
   ckptWr16(buf + PET_TAIL_MONLEN, (uint16_t)sizeof(PartyMon));
   memcpy(buf + PET_TAIL_MON, &endedMon, sizeof(PartyMon));
+  ckptWr32(buf + PET_BODY, PET_BOND_MAGIC);
+  ckptWr32(buf + PET_BODY + 4, bondDay);
 
-  uint16_t total = ckptSeal(buf, PET_BODY, PET_CORE_MAGIC, PET_CORE_VERSION, nextGen);
+  uint16_t total = ckptSeal(buf, PET_BODY + PET_BOND_BYTES, PET_CORE_MAGIC, PET_CORE_VERSION, nextGen);
   const char *key = ckptSlot(nextGen, "petA", "petB");
   const size_t writtenBytes = prefs.putBytes(key, buf, total);
   if (writtenBytes != total) {
@@ -1906,6 +1931,8 @@ bool Pet::loadCoreSnapshot() {
   const size_t body = n - CKPT_CRC;
   endedKind = CER_NONE;
   endedMon = PartyMon();
+  bondToday = 0;
+  bondDay = 0;
   if (body >= PET_TAIL_MON) {
     size_t monLen = ckptRd16(buf + PET_TAIL_MONLEN);
     if (monLen && PET_TAIL_MON + monLen <= body) {
@@ -1921,6 +1948,12 @@ bool Pet::loadCoreSnapshot() {
         endedKind = kind;
       else
         endedMon = PartyMon();
+      const size_t bondOffset = PET_TAIL_MON + monLen;
+      if (body >= bondOffset + PET_BOND_BYTES &&
+          ckptRd32(buf + bondOffset) == PET_BOND_MAGIC) {
+        bondToday = buf[PET_TAIL_RSVD];
+        bondDay = ckptRd32(buf + bondOffset + 4);
+      }
     }
   }
 
@@ -1938,7 +1971,9 @@ bool Pet::loadCoreSnapshot() {
   trAtk = snapshot.trAtk; trDef = snapshot.trDef; trSpe = snapshot.trSpe;
   memcpy(moves, snapshot.moves, sizeof(moves));
   lastLearnLevel = snapshot.lastLearnLevel;
-  berryKnown = snapshot.berryKnown != 0; shiny = snapshot.shiny != 0;
+  berryKnown = (snapshot.berryKnown & PM_BERRY) != 0;
+  farewellDone = (snapshot.berryKnown & PM_FAREWELL) != 0;
+  shiny = snapshot.shiny != 0;
   eggShiny = snapshot.eggShiny != 0; starterPick = snapshot.starterPick != 0;
   evoPen = snapshot.evoPen; sleepAuto = snapshot.sleepAuto;
   retirePending = snapshot.retirePending != 0; eggTaps = snapshot.eggTaps;

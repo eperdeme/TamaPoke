@@ -25,6 +25,11 @@
 // well, so swapping it in as the focused creature resumes exactly where it left
 // off instead of handing back a blanked-out copy. Freezing is now a property of
 // where the record lives, not of the record itself.
+// Flags packed into PartyMon::berryKnown (see there).
+#define PM_BERRY    0x01   // found its favourite berry
+#define PM_FAREWELL 0x02   // its life is spent: it said its farewell, or was
+                           // caught already past the farewell age
+
 struct PartyMon {
   int16_t dex = 0;      // Pokedex number, 0 = empty slot
   uint16_t level = 1;   // cached from ageMinutes so lists need not recompute it
@@ -50,6 +55,11 @@ struct PartyMon {
   uint8_t stateVersion = 0;
   uint8_t fullness = 80, joy = 80, energy = 80, hygiene = 100;
   uint8_t poops = 0, weight = 0, bond = 0;
+  // berryKnown is a byte of FLAGS, not a bool: bit 0 is the berry, bit 1
+  // PM_FAREWELL. Records written before the flag existed hold 0 or 1 here, so
+  // they read as "has not said its farewell" with no change to the layout --
+  // and any reader that only ever asked `!= 0` about the berry must now ask
+  // berryFound() instead, or a farewelled creature would claim its berry.
   uint8_t berryKnown = 0, careMistakes = 0;
   uint8_t evoDeclinedLv = 0, lastLearnLevel = 0;
   // The real age. `level` stays as its cached mirror so every list, the battle
@@ -58,6 +68,8 @@ struct PartyMon {
 
   bool empty() const { return dex < 1; }
   bool hasCareState() const { return stateVersion >= 1; }
+  bool berryFound() const { return (berryKnown & PM_BERRY) != 0; }
+  bool farewellDone() const { return (berryKnown & PM_FAREWELL) != 0; }
 };
 
 class BoxRecords {

@@ -246,6 +246,34 @@ int main(){
     focusRecover();
   }
 
+  // --- a farewell is said once. A capture already past the farewell age has
+  // its farewell spent; made active it lives on, but never offers one.
+  {
+    extern int16_t wildDex; extern uint8_t wildLvl;
+    PartyMon wildToPartyMon();
+    wildDex = 6;                                   // CHARIZARD, final form
+    wildLvl = (uint8_t)(FAREWELL_AGE_MIN / MINUTES_PER_LEVEL + 8);
+    PartyMon old = wildToPartyMon();
+    ck(old.farewellDone(), "a capture past the farewell age has its farewell spent");
+    ck(!old.berryFound(), "and the flag does not read as a found berry");
+    wildLvl = (uint8_t)(FAREWELL_AGE_MIN / MINUTES_PER_LEVEL);
+    ck(!wildToPartyMon().farewellDone(), "a capture below the threshold still has its farewell ahead");
+    wildLvl++;
+    ck(wildToPartyMon().farewellDone(), "a capture at the threshold has its farewell spent");
+    pet.dbgHatchAs(4, false);
+    pet.fullness = pet.joy = pet.energy = pet.hygiene = 100;
+    party.replaceAt(4, old);
+    focusSwap(4);
+    pet.fullness = pet.joy = pet.energy = pet.hygiene = 100; pet.sleeping = false;
+    ck(pet.speciesId == 6 && pet.farewellDone, "made active, it keeps the flag");
+    ck(!pet.canFarewellNow() && !pet.wantFarewellButton(),
+       "so it is not offered a farewell, for all its age");
+    ck(pet.retireIsFree(), "but retiring it again costs nothing");
+    focusSwap(4);                                  // and back: the flag goes with it
+    ck(party.slots[4].dex == 6 && party.slots[4].farewellDone(),
+       "banked again, the flag is still on its record");
+  }
+
   printf(bad?"FAILED %d\n":"OK\n", bad);
   return bad?1:0;
 }
