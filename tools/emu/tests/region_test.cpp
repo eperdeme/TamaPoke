@@ -135,6 +135,41 @@ int main(){
     printf("      (%d switches, %d kept their tier)\n", checked, kept);
   }
 
+  // A pre-upgrade egg may have cached a Kanto starter as a common. Its rarity
+  // changed, but the other region's remembered candidate did not.
+  {
+    Pet p; seed(p);
+    p.setRegion(1);
+    p.newEgg();
+    p.chooseStarter(161);
+    p.eggByRegion[0] = 1;
+    p.saveNow();
+    Pet q; q.begin();
+    q.setRegion(0);
+    const int16_t kanto = q.eggPeek();
+    ck(q.eggRarity() == R_COMUN && kanto != 1,
+       "an old common egg cannot become rare through a cached Kanto starter");
+    q.setRegion(1);
+    q.setRegion(0);
+    ck(q.eggPeek() == kanto, "the corrected common candidate stays remembered");
+  }
+  {
+    Pet p; seed(p);
+    p.setRegion(0);
+    p.newEgg();
+    p.chooseStarter(1);
+    p.eggByRegion[1] = 161;
+    p.saveNow();
+    Pet q; q.begin();
+    q.setRegion(1);
+    const int16_t johto = q.eggPeek();
+    ck(q.eggRarity() == R_RARO && johto != 161,
+       "an old starter egg cannot become common through a cached candidate");
+    q.setRegion(0);
+    q.setRegion(1);
+    ck(q.eggPeek() == johto, "the corrected rare candidate stays remembered");
+  }
+
   // --- RULE 2: each region is remembered, so flipping is not a re-roll
   {
     Pet p; seed(p);

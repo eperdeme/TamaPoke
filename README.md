@@ -3,7 +3,7 @@
 [![Flash in browser](https://img.shields.io/badge/flash-in%20browser-FF6B00?logo=googlechrome&logoColor=white)](https://eperdeme.github.io/TamaPoke/web/)
 [![MakerWorld](https://img.shields.io/badge/MakerWorld-3D%20case-00AE42?logo=bambulab&logoColor=white)](https://makerworld.com/es/models/2937822-tamapoke-a-pokemon-pokeball-tamagotchi)
 ![Board](https://img.shields.io/badge/board-ESP32--S3%20round%20AMOLED-E7352C?logo=espressif&logoColor=white)
-![Firmware](https://img.shields.io/badge/firmware-v4.2.2-8A2BE2)
+![Firmware](https://img.shields.io/badge/firmware-v4.3.0-8A2BE2)
 ![Code](https://img.shields.io/badge/code-MIT-blue)
 ![Languages](https://img.shields.io/badge/languages-6-FFCB05)
 [![Stars](https://img.shields.io/github/stars/DylanPDao/TamaPoke?style=flat&logo=github&color=yellow)](https://github.com/DylanPDao/TamaPoke/stargazers)
@@ -203,17 +203,22 @@ While **awake**, per minute:
   button beats both: a creature you sent to bed stays there.
 
 ### Eggs & who you get (spawn odds)
-- **First ever pet:** you pick a starter — **Bulbasaur / Charmander / Squirtle**.
+- **First ever pet:** you pick one of your chosen region's three starters —
+  **Bulbasaur / Charmander / Squirtle** in Kanto.
 - Hatch the egg: tap it **3×** (or wait — it hatches on its own).
-- Every later egg rolls a **rarity tier** (over the ~79 base forms that come from eggs):
+- Every later egg rolls a **rarity tier**. The counts below are Kanto's;
+  other regions have their own pools:
 
-| Tier | Base chance | After a proper goodbye | # species |
+| Tier | Base chance | After a proper goodbye | Kanto species |
 |---|---|---|---|
 | ✨ Legendary | ~3 %\* | ~10 % | 5 |
-| 🔵 Rare | ~27 % | ~45 % | 27 |
-| ⚪ Common | the rest | the rest | 47 |
+| 🔵 Rare | ~27 % | ~45 % | 23 |
+| ⚪ Common | the rest | the rest | 41 |
 
   \* Legendaries only start appearing once you've **registered ≥ 25** Pokémon.
+- Kanto's three starters are rare in later eggs and wild encounters, like the
+  other regions' starters; wild catches use the rare capture chance. A waiting
+  egg's old region choices are rerolled once if their tier no longer matches.
 - A daily **streak** and high **bond** push rare/legendary odds higher.
 - A clean **goodbye blesses** the next egg; a **run-away curses** it (forces Common).
 - Within a tier it favors species whose **evolution line you haven't finished** (so
@@ -898,9 +903,10 @@ The life cycle lasts **3 days** of play. Three endings (all leave a new egg):
 bars at zero for 1 h). Each bred species is recorded in the **bred Pokédex**
 (normal and shiny separately).
 
-The egg rolls rarity over the ~79 base forms (47 common / 27 rare / 5 legendary),
-**biased towards the lines you're missing** (all 1025 are completable), blessed by
-a farewell and punished by a runaway. Legendaries only with 25+ registered.
+The egg rolls rarity over the chosen region's base forms (Kanto has 41 common /
+23 rare / 5 legendary), **biased towards the lines you're missing** (all 1025
+are completable), blessed by a farewell and punished by a runaway. Legendaries
+only with 25+ registered.
 **Shiny** 1/48 (better with streak/bond/farewell).
 
 **Languages:** the UI ships in 6 languages — English (default), Spanish, French,

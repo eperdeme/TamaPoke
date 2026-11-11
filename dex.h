@@ -61,13 +61,13 @@ struct DexEntry {
 
 static const DexEntry DEX_TBL[DEX_COUNT + 1] = {
   { "?", 0, 0, 0, 0x2946, 50, 50, 50, 50, 50, 50, 0 },  // 0: sin usar
-  { "BULBASAUR", 2, 16, R_COMUN, 0x3C49, 45, 49, 49, 45, 65, 65, 2, T_GRASS, T_POISON },  // 1 grass/poison
+  { "BULBASAUR", 2, 16, R_RARO, 0x3C49, 45, 49, 49, 45, 65, 65, 2, T_GRASS, T_POISON },  // 1 grass/poison
   { "IVYSAUR", 3, 32, R_EVO, 0x3C49, 60, 62, 63, 60, 80, 80, 2, T_GRASS, T_POISON },  // 2 grass/poison
   { "VENUSAUR", 0, 0, R_EVO, 0x3C49, 80, 82, 83, 80, 100, 100, 2, T_GRASS, T_POISON },  // 3 grass/poison
-  { "CHARMANDER", 5, 16, R_COMUN, 0xEA87, 39, 52, 43, 65, 60, 50, 3, T_FIRE, T_NONE },  // 4 fire
+  { "CHARMANDER", 5, 16, R_RARO, 0xEA87, 39, 52, 43, 65, 60, 50, 3, T_FIRE, T_NONE },  // 4 fire
   { "CHARMELEON", 6, 36, R_EVO, 0xEA87, 58, 64, 58, 80, 80, 65, 3, T_FIRE, T_NONE },  // 5 fire
   { "CHARIZARD", 0, 0, R_EVO, 0xEA87, 78, 84, 78, 100, 109, 85, 3, T_FIRE, T_FLYING },  // 6 fire/flying
-  { "SQUIRTLE", 8, 16, R_COMUN, 0x4C98, 44, 48, 65, 43, 50, 64, 1, T_WATER, T_NONE },  // 7 water
+  { "SQUIRTLE", 8, 16, R_RARO, 0x4C98, 44, 48, 65, 43, 50, 64, 1, T_WATER, T_NONE },  // 7 water
   { "WARTORTLE", 9, 36, R_EVO, 0x4C98, 59, 63, 80, 58, 65, 80, 1, T_WATER, T_NONE },  // 8 water
   { "BLASTOISE", 0, 0, R_EVO, 0x4C98, 79, 83, 100, 78, 85, 105, 1, T_WATER, T_NONE },  // 9 water
   { "CATERPIE", 11, 7, R_COMUN, 0x7CC4, 45, 30, 35, 45, 20, 20, 2, T_BUG, T_NONE },  // 10 bug

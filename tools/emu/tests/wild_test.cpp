@@ -149,6 +149,29 @@ int main(){
   ck(wildTierForRoll(30)==R_COMUN && wildTierForRoll(255)==R_COMUN,
      "and everything above is common");
 
+  {
+    bool rareSeen[3] = {}, commonSeen[3] = {}, rareCatch = true;
+    for (uint32_t roll = 0; roll < REGIONS[0].hi - REGIONS[0].lo + 1U; roll++) {
+      int16_t rare = wildPickSpecies(0, R_RARO, roll);
+      int16_t common = wildPickSpecies(0, R_COMUN, roll);
+      for (uint8_t i = 0; i < 3; i++) {
+        int16_t starter = REGIONS[0].starters[i];
+        rareSeen[i] |= rare == starter;
+        commonSeen[i] |= common == starter;
+      }
+    }
+    for (uint8_t i = 0; i < 3; i++)
+      rareCatch &= wildCaptureChance(DEX_TBL[REGIONS[0].starters[i]].rarity, 100, 100, false, 100) ==
+                   wildCaptureChance(R_RARO, 100, 100, false, 100);
+    ck(rareSeen[0] && rareSeen[1] && rareSeen[2],
+       "all three Kanto starters appear in the rare wild pool");
+    ck(!commonSeen[0] && !commonSeen[1] && !commonSeen[2],
+       "none of the Kanto starters appears in the common wild pool");
+    ck(rareCatch && wildCaptureChance(R_RARO, 100, 100, false, 100) <
+                    wildCaptureChance(R_COMUN, 100, 100, false, 100),
+       "Kanto starters use the harder rare capture chance");
+  }
+
   // Nothing art-less may ever be met: a caught creature is kept forever, so one
   // that can only draw as a dex number would be a permanent defect. 600 rolls
   // across every tier, which is enough to reach the art-less bands in Unova.

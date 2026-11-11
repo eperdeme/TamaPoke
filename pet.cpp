@@ -964,7 +964,10 @@ void Pet::setRegion(uint8_t r) {
   if (isEgg() && eggTarget >= 1) {
     if (old < REGION_COUNT) eggByRegion[old] = eggTarget;
     int16_t known = eggByRegion[r];
-    eggTarget = known >= 1 ? known : rollInRegion(r, eggRarity());
+    const uint8_t tier = eggRarity();
+    // A cached candidate can change tiers when the dex data is updated.
+    eggTarget = known >= 1 && known <= DEX_COUNT && DEX_TBL[known].rarity == tier
+                  ? known : rollInRegion(r, tier);
     eggByRegion[r] = eggTarget;
   }
   save();
