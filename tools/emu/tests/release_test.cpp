@@ -44,7 +44,7 @@ extern uint32_t confirmUntil;
 extern uint8_t dimStage;
 extern bool holdFired;
 extern Pet pet;
-extern bool partyOpen, boxOpen, movePickOpen, releaseConfirm;
+extern bool partyOpen, boxOpen, movePickOpen, releaseConfirm, medalsOpen;
 extern uint8_t partyDetail, boxSwapFrom;
 extern uint16_t boxDetail, boxSel;
 extern uint8_t boxPage, boxSort;
@@ -98,7 +98,7 @@ static void clearAll(){
   for(int i=0;i<PARTY_SLOTS;i++) party.releaseAt(i);
   for(auto &m : party.box) m = PartyMon();
   party.boxSave();
-  partyOpen=boxOpen=movePickOpen=releaseConfirm=false;
+  partyOpen=boxOpen=movePickOpen=releaseConfirm=medalsOpen=false;
   partyPick=handoverStored=boxJumpOpen=false;
   boxPage=boxSort=0;
   partyDetail=boxDetail=boxSwapFrom=boxSel=0;
@@ -383,6 +383,13 @@ int main(){
     hold(SLOT_X(0), SLOT_Y(0), 3400);       // dead centre of party slot 0
     ck(confirmUntil==0, "holding a party slot does NOT open the release dialog");
     ck(partyDetail==0 || !holdFired, "and it was a hold, not a tap that opened a sheet");
+
+    partyOpen=false;
+    medalsOpen=true;
+    ck(!strcmp(SCREEN_NAME[uiCurrentScreen()],"medals"), "the medals screen is up");
+    confirmUntil=0; holdFired=false;
+    hold(233,200,3400);
+    ck(confirmUntil==0, "holding the medals screen does NOT offer to release the pet");
 
     clearAll();
     tap(440,440);

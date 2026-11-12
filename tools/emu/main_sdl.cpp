@@ -113,7 +113,7 @@ void startTrainerBattle(uint8_t idx, bool hard);
 uint8_t currentExploreRegion();
 bool startWildBattle(uint8_t region, bool hard);
 void onTap(int16_t x, int16_t y);   // the first-boot shots tap their way in
-extern bool exploreOpen, gymOpen, playerOpen;
+extern bool exploreOpen, gymOpen, playerOpen, medalsOpen;
 extern bool galleryDirty;
 extern uint8_t galleryRegion;
 extern uint8_t gymRegion;
@@ -132,7 +132,7 @@ uint8_t squadCap(uint8_t, bool);
 #include "link.h"
 extern Link lan;
 void startLinkBattle();
-extern uint8_t playerPage;
+extern uint8_t playerPage, medalsPage;
 extern bool gymHard, pickOpen;
 extern uint8_t partyDetail;
 extern bool boxOpen; extern uint8_t boxSwapFrom;
@@ -141,6 +141,7 @@ extern uint8_t pickTrainer, pickPage;
 void pickDefault(uint8_t cap);
 extern bool pickHard;
 void startSpeedGame();
+void startMemoGame();
 void setup();
 void loop();
 void render();
@@ -204,7 +205,10 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
   menuOpen = partyOpen = partyPick = trainOpen = movePickOpen = false;
   if (!strcmp(screen, "battle"))      { cardOpen = true; cardPage = 1; }
   else if (!strcmp(screen, "profile")){ cardOpen = true; cardPage = 0; }
-  else if (!strcmp(screen, "medals")) { cardOpen = true; cardPage = 3; }
+  else if (!strcmp(screen, "today"))  { medalsOpen = true; medalsPage = 0; }
+  else if (!strcmp(screen, "medals") || !strcmp(screen, "medals2")) {
+    pet.medals = 0x5B; pet.totalMedals = 12; medalsOpen = true; medalsPage = 1;
+  }
   else if (!strcmp(screen, "progress")){cardOpen = true; cardPage = 4; }
   else if (!strcmp(screen, "gallery")) {
     // The grid is static and guarded by galleryDirty, so setting galleryOpen
@@ -328,6 +332,7 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
   }
   else if (!strcmp(screen, "gymshard")) { gymOpen = true; gymHard = true; pet.badgesHard = 0x03; }
   else if (!strcmp(screen, "speed")) { startSpeedGame(); }
+  else if (!strcmp(screen, "quiz")) { startMemoGame(); }
   else if (!strcmp(screen, "avatars")) {
     pet.renameTrainer("DYLAN");
     playerOpen = true;
@@ -339,7 +344,6 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
     pet.badgesX[0] = 0x3F; pet.badgesHardX[0] = 0x05;   // Johto
     playerOpen = true; playerPage = 1;
   }
-  else if (!strcmp(screen, "medals2")) { pet.medals = 0x5B; pet.totalMedals = 12; playerOpen = true; playerPage = 1; }
   else if (!strcmp(screen, "gymfight")) { startTrainerBattle(0, false); }
   else if (!strcmp(screen, "learn")) {
     // fill the four slots, then cross a gate so the offer has to be answered
@@ -360,6 +364,11 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
       party.replaceAt(i, m);
     }
     if (!strcmp(screen, "partyfull")) partyPick = true;
+  }
+  else if (strcmp(screen, "main") && strcmp(screen, "region") &&
+           strcmp(screen, "starter") && strcmp(screen, "starterj") && strcmp(screen, "egg")) {
+    fprintf(stderr, "unknown screenshot: %s\n", screen);
+    return 1;
   }
   render();
   writePPM(out);

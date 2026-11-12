@@ -29,12 +29,13 @@ void boxTap(int16_t, int16_t);
 extern bool boxJumpOpen;
 int uiTileIndex(); void uiTileGo(int i);
 uint8_t uiCurrentScreen(); uint8_t uiRimPages(); uint8_t uiRimPage();
+extern const char *const SCREEN_NAME[];
 extern Pet pet;
 extern bool cardOpen, galleryOpen, clockOpen, kbOpen, menuOpen, partyOpen, partyPick;
-extern bool trainOpen, movePickOpen, battleOpen, gymOpen, playerOpen, boxOpen, pickOpen;
+extern bool trainOpen, movePickOpen, battleOpen, gymOpen, playerOpen, medalsOpen, boxOpen, pickOpen;
 extern bool exploreOpen;
 extern bool btlWild;
-extern uint8_t cardPage, gymPage, playerPage, movePickPage, boxPage, pickPage, partyDetail;
+extern uint8_t medalsPage, cardPage, gymPage, playerPage, movePickPage, boxPage, pickPage, partyDetail;
 extern uint8_t galleryPage; extern bool galleryDirty; extern uint8_t galleryDetail;
 extern uint8_t galleryRegion;
 extern uint8_t gymRegion;
@@ -61,7 +62,7 @@ static int bad=0;
 static void clearAll(){
   gymPick=galleryPick=false;
   cardOpen=galleryOpen=clockOpen=kbOpen=menuOpen=partyOpen=partyPick=false;
-  trainOpen=movePickOpen=battleOpen=gymOpen=playerOpen=boxOpen=pickOpen=false;
+  trainOpen=movePickOpen=battleOpen=gymOpen=playerOpen=medalsOpen=boxOpen=pickOpen=false;
   exploreOpen=false;
   bagOpen=false;
   partyDetail=0; boxSel=boxSwapFrom=0; boxJumpOpen=false;
@@ -99,6 +100,7 @@ int main(){
   clearAll(); cardOpen=true;                      check("card",     &cardOpen,     &cardPage);
   clearAll(); gymOpen=true; gymPick=false;        check("gyms",     &gymOpen,      &gymPage);
   clearAll(); playerOpen=true;                    check("player",   &playerOpen,   &playerPage);
+  clearAll(); medalsOpen=true;                    check("medals",   &medalsOpen,   &medalsPage);
   clearAll(); partyOpen=true; boxOpen=true;       check("box",      &boxOpen,      &boxPage);
   {
     const uint8_t last = uiRimPages() - 1;
@@ -228,18 +230,46 @@ int main(){
     if (dup) { printf("FAIL  tiles      two tiles show the same screen\n"); bad++; }
     else printf("PASS  %-10s all %d tiles are distinct screens\n", "tiles", n);
 
-    // and DOWN is back: from any tile it returns to the pet
-    uiTileGo(0);
-    onSwipeV(1);
-    if (uiCurrentScreen() != scr[home]) {
-      // scr[] was captured left-to-right from tile 0, so the pet is at `home`
-      printf("FAIL  tiles      swipe down from a tile does not return home\n"); bad++;
-    } else printf("PASS  %-10s swipe down returns to the pet\n", "tiles");
+    // scr[] was captured left-to-right, so the pet is at `home`.
+    int badBack = 0;
+    for (int i = 0; i <= right; i++) {
+      uiTileGo(i);
+      onSwipeV(1);
+      if (uiCurrentScreen() != scr[home]) badBack++;
+    }
+    if (badBack) { printf("FAIL  tiles      %d tiles do not return home on down\n", badBack); bad++; }
+    else printf("PASS  %-10s swipe down returns home from every tile\n", "tiles");
   }
 
   // Opening either screen must land on the REGION CHOOSER, not on whichever
   // region happened to be set last. Without it the Johto and Hoenn content is
   // built, reachable only by an invisible gesture, and so looks absent.
+  // The left side, in order: the team beside the pet, then the creature's own
+  // screen (opening on TODAY's checklist, the rim turning to its medals), then
+  // the trainer card at the end.
+  {
+    clearAll();
+    onSwipe(1);
+    const bool p1 = partyOpen;
+    onSwipe(1);
+    const bool p2 = medalsOpen && medalsPage == 0;
+    onRim(1);
+    const bool p2b = medalsOpen && medalsPage == 1;
+    onSwipe(1);
+    const bool p3 = playerOpen;
+    if (!p1 || !p2 || !p2b || !p3) {
+      printf("FAIL  medals     left side is not PARTY, MEDALS (today, then medals), PLAYER (%d%d%d%d)\n", p1, p2, p2b, p3); bad++;
+    } else printf("PASS  %-10s left side is PARTY, MEDALS (today first, rim to medals), PLAYER\n", "medals");
+    onSwipe(-1);
+    if (!medalsOpen || medalsPage != 0) {
+      printf("FAIL  medals     reopening did not return to today\n"); bad++;
+    } else printf("PASS  %-10s reopening starts on today\n", "medals");
+    onTap(233, 233);
+    if (medalsOpen || strcmp(SCREEN_NAME[uiCurrentScreen()], "main")) {
+      printf("FAIL  medals     tapping did not return to the pet\n"); bad++;
+    } else printf("PASS  %-10s tapping returns to the pet\n", "medals");
+  }
+
   {
     clearAll();
     onSwipe(-1);                       // the first world-facing stop is Explore

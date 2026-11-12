@@ -126,6 +126,10 @@ until you actually raise it.
 |---|---|---|
 | <img src="docs/screens/player.png" width="240"> | <img src="docs/screens/player2.png" width="240"> | <img src="docs/screens/box.png" width="240"> |
 
+| Today's goals | Creature medals | Type quiz |
+|---|---|---|
+| <img src="docs/screens/today.png" width="240"> | <img src="docs/screens/medals.png" width="240"> | <img src="docs/screens/quiz.png" width="240"> |
+
 ## Status
 
 Running on hardware. Implemented: 1025 species + shinies animated from microSD, full
@@ -479,11 +483,12 @@ stat is described by its overall quality instead, which is the honest reading of
 flat spread.
 
 ### Today
-The player card's last page is a **five-line checklist**: cared for today, well
+The **MEDALS** tile opens on a five-line checklist: cared for today, well
 fed, clean, happy, rested. Every line is **computed** from what the save already
 holds — nothing extra is written, there is no reward to claim, and it resets
 itself with the day because the streak and the stat bars already do. It is there
-to answer "what does it need right now", not to be another currency.
+to answer "what does it need right now", not to be another currency. Turn the
+rim to see the active creature's medals.
 
 ### Battle stats & IVs
 Every pet rolls four **IVs** (individual values, 0–31) at hatch — ATK / DEF / SPD /
@@ -729,7 +734,7 @@ direction means exactly one thing everywhere:
 
 | Gesture | Means |
 |---|---|
-| **Horizontal swipe** | move along the **tile axis**: `PLAYER · PARTY · [PET] · EXPLORE · GYM · POKÉDEX`. It **bumps** at both ends and never closes anything. The six dots show position; the pet screen also names the neighboring `PARTY` and `EXPLORE` destinations. |
+| **Horizontal swipe** | move along the **tile axis**: `PLAYER · MEDALS · PARTY · [PET] · EXPLORE · GYM · POKÉDEX`. It **bumps** at both ends and never closes anything. The seven dots show position; the pet screen also names the neighboring `PARTY` and `EXPLORE` destinations. |
 | **Swipe up** | go **deeper** — from the pet, its stat card (4 pages) |
 | **Swipe down** | go **back**, one level, from anywhere |
 | **Drag the rim** | **page** whatever is in front of you. The arc at 2–5 o'clock is the scrollbar; it shows position *and* extent, which a row of dots cannot. |
@@ -895,7 +900,7 @@ and burns off with training.
   cared-for hour (all four needs at least 50), up to 10 passive points per day
   shared across the game. Powered-off time and frozen companions do not earn it.
 - **Medals** for the individual (level, berry, streak, bond, final form, fit) +
-  a global counter. Medals page of the stat card.
+  a global counter, on the MEDALS tile beside the party.
 - **Name**: touch keyboard; the nickname rules the header and the card.
 
 High streak and bond **improve the egg roll** (rarity and shiny): caring well

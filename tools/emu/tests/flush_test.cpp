@@ -21,7 +21,7 @@ extern const char *const SCREEN_NAME[];
 extern Arduino_Canvas *gfx;
 extern Pet pet;
 extern bool cardOpen, galleryOpen, clockOpen, kbOpen, menuOpen, partyOpen, partyPick;
-extern bool trainOpen, movePickOpen, battleOpen, gymOpen, playerOpen;
+extern bool trainOpen, movePickOpen, battleOpen, gymOpen, playerOpen, medalsOpen;
 extern bool exploreOpen;
 extern uint8_t cardPage;
 extern uint8_t partyDetail, boxDetail;
@@ -32,7 +32,7 @@ extern bool bagOpen;
 // because a screen shipped frozen -- and every one of them advances real state
 // from its render path, so a missing flush there is worse than a still picture.
 extern bool gameOpen, sackOpen, spdOpen, memoOpen;
-extern uint8_t clockPage, playerPage;
+extern uint8_t clockPage, playerPage, medalsPage;
 void startGame(); void startSack(); void startSpeedGame(); void startMemoGame();
 extern Party party;
 void startBattle(int16_t dex, uint8_t lvl);
@@ -41,12 +41,12 @@ extern uint32_t sdTransferAt;
 static int bad = 0;
 static void clearAll(){
   cardOpen=galleryOpen=clockOpen=kbOpen=menuOpen=partyOpen=partyPick=false;
-  trainOpen=movePickOpen=battleOpen=gymOpen=playerOpen=false;
+  trainOpen=movePickOpen=battleOpen=gymOpen=playerOpen=medalsOpen=false;
   exploreOpen=false;
   boxOpen=releaseConfirm=false;
   bagOpen=false;
   gameOpen=sackOpen=spdOpen=memoOpen=false;
-  clockPage=0; playerPage=0;
+  clockPage=0; playerPage=0; medalsPage=0;
   partyDetail=boxDetail=0;
 }
 static void check(const char *name){
@@ -89,11 +89,15 @@ int main(){
   // reset live -- a page that never flushed would look like a frozen device
   // exactly where somebody is trying to change a setting.
   clearAll(); clockOpen=true; clockPage=1; check("settings");
-  // Every player page, including the medals and TODAY's checklist. Derived from
-  // PLAYER_PAGES rather than a literal, so a ladder added later brings its page.
-  for (uint8_t p = 0; p < GYM_REGIONS + 2; p++) {
+  // Every player page, one per ladder, so a ladder added later brings its page.
+  for (uint8_t p = 0; p < GYM_REGIONS; p++) {
     clearAll(); playerOpen=true; playerPage=p;
     char n[16]; snprintf(n,sizeof(n),"player%u",p); check(n);
+  }
+  // The creature screen: TODAY's checklist and the medals.
+  for (uint8_t p = 0; p < 2; p++) {
+    clearAll(); medalsOpen=true; medalsPage=p;
+    char n[16]; snprintf(n,sizeof(n),"medals%u",p); check(n);
   }
   // THE FOUR MINIGAMES, started properly rather than by setting a flag: each has
   // a live branch and a results branch, and only a real start puts it in the live
@@ -134,6 +138,7 @@ int main(){
   clearAll(); exploreOpen=true;     crumbIs("explore");
   clearAll(); gymOpen=true;         crumbIs("gym");
   clearAll(); playerOpen=true;      crumbIs("player");
+  clearAll(); medalsOpen=true;      crumbIs("medals");
   clearAll(); movePickOpen=true;    crumbIs("movepick");
   clearAll(); clockOpen=true;       crumbIs("clock");
   clearAll(); cardOpen=true;        crumbIs("card");
