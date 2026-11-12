@@ -44,7 +44,7 @@ extern uint32_t confirmUntil;
 extern uint8_t dimStage;
 extern bool holdFired;
 extern Pet pet;
-extern bool partyOpen, boxOpen, movePickOpen, releaseConfirm, medalsOpen;
+extern bool partyOpen, boxOpen, movePickOpen, releaseConfirm, medalsOpen, evoPickOpen;
 extern uint8_t partyDetail, boxSwapFrom;
 extern uint16_t boxDetail, boxSel;
 extern uint8_t boxPage, boxSort;
@@ -98,7 +98,7 @@ static void clearAll(){
   for(int i=0;i<PARTY_SLOTS;i++) party.releaseAt(i);
   for(auto &m : party.box) m = PartyMon();
   party.boxSave();
-  partyOpen=boxOpen=movePickOpen=releaseConfirm=medalsOpen=false;
+  partyOpen=boxOpen=movePickOpen=releaseConfirm=medalsOpen=evoPickOpen=false;
   partyPick=handoverStored=boxJumpOpen=false;
   boxPage=boxSort=0;
   partyDetail=boxDetail=boxSwapFrom=boxSel=0;
@@ -390,6 +390,13 @@ int main(){
     confirmUntil=0; holdFired=false;
     hold(233,200,3400);
     ck(confirmUntil==0, "holding the medals screen does NOT offer to release the pet");
+
+    partyOpen=false;
+    evoPickOpen=true;
+    ck(!strcmp(SCREEN_NAME[uiCurrentScreen()],"evopick"), "the evolution choice screen is up");
+    confirmUntil=0; holdFired=false;
+    hold(233,200,3400);
+    ck(confirmUntil==0, "holding the evolution choice screen does NOT offer to release the pet");
 
     clearAll();
     tap(440,440);

@@ -173,6 +173,27 @@ int main(){
     for (int16_t d = 1; d <= DEX_COUNT; d++)
       if (DEX_TBL[d].evolvesTo >= 1 && DEX_TBL[d].evolvesTo <= DEX_COUNT)
         isTarget[DEX_TBL[d].evolvesTo] = true;
+    for (uint8_t b = 0; b < EVO_BRANCH_COUNT; b++) {
+      const EvoBranch &branch = EVO_BRANCHES[b];
+      if (branch.from < 1 || branch.from > DEX_COUNT || branch.count < 2 ||
+          branch.count > EVO_BRANCH_MAX ||
+          branch.to[0] != DEX_TBL[branch.from].evolvesTo) {
+        printf("      invalid branch entry %u\n", b);
+        isTarget[0] = true;
+        continue;
+      }
+      for (uint8_t i = 0; i < branch.count; i++) {
+        const int16_t target = branch.to[i];
+        if (target < 1 || target > DEX_COUNT) {
+          isTarget[0] = true;
+          continue;
+        }
+        isTarget[target] = true;
+        for (uint8_t j = 0; j < i; j++) {
+          if (branch.to[j] == target) isTarget[0] = true;
+        }
+      }
+    }
 
     int hatchable = 0;
     for (int16_t d = 1; d <= DEX_COUNT; d++)
@@ -184,26 +205,16 @@ int main(){
     ck(hatchable == 0, "no evolution target also hatches straight from an egg");
 
     // and the reverse: R_EVO means "only ever reached by evolving", so a
-    // species nothing evolves into would be unreachable entirely. EEVEE's
-    // three branches are the exception -- pet.cpp reaches 134-136 by special
-    // case, which no table scan can see.
+    // species nothing evolves into would be unreachable entirely.
     int stranded = 0;
     for (int16_t d = 1; d <= DEX_COUNT; d++) {
       if (DEX_TBL[d].rarity != R_EVO || isTarget[d]) continue;
-      // EEVEE's branch: DexEntry holds one evolvesTo, so the other seven are
-      // nobody's target in the table and would read as unreachable. They are
-      // reached by eeveeOptions(), off the SAME generated EEVEE_EVOS list that
-      // marked them evolution-only -- so ask that list rather than a hardcoded
-      // 134..136, which is what let five of them quietly hatch from eggs.
-      bool isEevee = false;
-      for (int e = 0; e < EEVEE_EVO_COUNT; e++)
-        if (EEVEE_EVOS[e] == d) isEevee = true;
-      if (isEevee) continue;
       printf("      %s (%d) can be neither hatched nor evolved into\n",
              DEX_TBL[d].name, d);
       stranded++;
     }
-    ck(stranded == 0, "and every evolution-only species is reachable by evolving");
+    ck(stranded == 0 && !isTarget[0],
+       "all branching targets are valid, unique, evolution-only and reachable");
   }
 
   printf("%s\n", bad?"FAILURES":"all good");

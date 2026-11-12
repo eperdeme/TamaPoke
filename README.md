@@ -251,12 +251,15 @@ brings ELECTIVIRE, MAGMORTAR and RHYPERIOR waiting on exactly the same thing.
 - **Never automatic** — a button appears and **you tap to witness it** (with a
   flicker between the old and new form). Each **slip-up delays it by 1 level**.
 - You can **decline** ("keep form"); it re-offers at the next level.
-- *Eevee* branches toward whichever of its **eight** evolutions you're still
-  missing — Vaporeon, Jolteon, Flareon, Espeon, Umbreon, Leafeon, Glaceon and
-  Sylveon. None of the eight hatches from an egg any more: the only way to a
-  Sylveon is to raise an Eevee. A branch is offered only if that region's
-  sprite pack is on the card, so evolving can never hand you a creature the
-  device cannot draw.
+- When a species has multiple forms it can evolve into, you **choose the form**
+  rather than getting a random one. This includes Eevee's eight branches:
+  Vaporeon, Jolteon, Flareon, Espeon, Umbreon, Leafeon, Glaceon and Sylveon.
+  Branch targets are evolution-only, so they cannot hatch from eggs. A form is
+  offered only if its sprite art exists and its region pack is on the card.
+
+| Choose an evolution |
+|---|
+| <img src="docs/screens/evopick.png" width="240"> |
 
 ### Your party
 - A **farewell** or a **release** doesn't end the relationship any more — the creature

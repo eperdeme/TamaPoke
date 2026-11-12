@@ -148,6 +148,7 @@ void render();
 extern Arduino_Canvas *gfx;
 extern Pet pet;
 extern bool cardOpen, galleryOpen, clockOpen, kbOpen, menuOpen, partyOpen, partyPick, trainOpen, movePickOpen;
+extern bool evoPickOpen;
 extern uint8_t cardPage;
 
 #define PANEL 466
@@ -228,6 +229,12 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
   else if (!strcmp(screen, "train"))   trainOpen = true;
   else if (!strcmp(screen, "moves"))   { cardOpen = true; cardPage = 2; }
   else if (!strcmp(screen, "movepick")) { movePickOpen = true; }
+  else if (!strcmp(screen, "evopick")) {
+    pet.dbgHatchAs(133, false);
+    pet.ageMinutes = 40UL * MINUTES_PER_LEVEL;
+    pet.fullness = pet.joy = pet.energy = pet.hygiene = 100;
+    evoPickOpen = true;
+  }
   else if (!strcmp(screen, "battle2")) { startBattle(9, 50); }
   else if (!strcmp(screen, "wild")) { startWildBattle(currentExploreRegion(), false); }
   else if (!strcmp(screen, "btlmenu")) { startTrainerBattle(3, false); }

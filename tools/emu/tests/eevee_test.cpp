@@ -86,6 +86,34 @@ int main(){
     ck(!everWrong, "40 evolutions with only Kanto installed all stay in Kanto");
   }
 
+  // Non-Eevee branches use the same filtered options and explicit selection.
+  {
+    gRegionArt = 0xFFFF;
+    Pet q; q.begin();
+    int16_t options[EVO_BRANCH_MAX];
+    uint8_t n = q.evoOptions(281, options);   // KIRLIA
+    bool seesBoth = n == 2 && options[0] == 282 && options[1] == 475;
+    ck(seesBoth, "KIRLIA offers GARDEVOIR and GALLADE through the shared helper");
+    gRegionArt = 1u << 0;
+    ck(q.evoOptions(281, options) == 0,
+       "KIRLIA cannot evolve into a form whose region pack is missing");
+    gRegionArt = 0xFFFF;
+    q.dbgHatchAs(281, false);
+    q.ageMinutes = (uint32_t)40 * MINUTES_PER_LEVEL;
+    q.fullness = q.joy = q.energy = q.hygiene = 100;
+    ck(!q.evolveTo(6), "evolveTo refuses an unrelated species");
+    ck(q.evolveTo(475) && q.speciesId == 475,
+       "evolveTo evolves to the exact selected branch target");
+
+    auto registerDex = [&q](int16_t dex) {
+      q.dexReg[(dex - 1) >> 3] |= (uint8_t)(1u << ((dex - 1) & 7));
+    };
+    registerDex(265); registerDex(266); registerDex(267); registerDex(268);
+    ck(q.lineHasUnregistered(265), "a missing second-branch descendant keeps WURMPLE's line unfinished");
+    registerDex(269);
+    ck(!q.lineHasUnregistered(265), "the line completes when both WURMPLE branches are registered");
+  }
+
   // negative check: that guard must be able to FAIL, so prove the same code
   // reaches a later region once its pack is there
   {

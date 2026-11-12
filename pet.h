@@ -476,6 +476,7 @@ public:
   }
   bool canEvolveNow() const;  // condiciones de evolucion cumplidas (lista)
   void evolve();              // dispara la transformacion (la llama un toque del usuario)
+  bool evolveTo(int16_t target);
   bool canFarewellNow() const;  // forma final + 7 dias: lista para despedirse (boton)
   // Total neglect RIGHT NOW. THE single answer: tick() counts against it and
   // canRunawayNow() re-checks it, because neglectTicks is frozen (neither
@@ -563,6 +564,7 @@ public:
   // just removed from the gym rosters, and here it would be permanent. `out`
   // must hold EEVEE_EVO_COUNT; returns how many were written.
   uint8_t eeveeOptions(int16_t *out) const;
+  uint8_t evoOptions(int16_t species, int16_t *out) const;
   uint8_t lowestStat() const { return min(min(fullness, joy), min(energy, hygiene)); }
   PetMood mood() const;
   // progreso de la ceremonia de despedida/escapada, 0..1 (para animarla)
@@ -635,6 +637,7 @@ public:
   void saveNow();
 
 private:
+  void applyEvolution(int16_t next);
   Preferences prefs;
   // Scratch pets used for opponents share the player's NVS namespace. Only a
   // Pet explicitly opened with begin() owns that persistent state.

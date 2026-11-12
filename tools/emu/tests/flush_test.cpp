@@ -22,6 +22,7 @@ extern Arduino_Canvas *gfx;
 extern Pet pet;
 extern bool cardOpen, galleryOpen, clockOpen, kbOpen, menuOpen, partyOpen, partyPick;
 extern bool trainOpen, movePickOpen, battleOpen, gymOpen, playerOpen, medalsOpen;
+extern bool evoPickOpen;
 extern bool exploreOpen;
 extern uint8_t cardPage;
 extern uint8_t partyDetail, boxDetail;
@@ -42,6 +43,7 @@ static int bad = 0;
 static void clearAll(){
   cardOpen=galleryOpen=clockOpen=kbOpen=menuOpen=partyOpen=partyPick=false;
   trainOpen=movePickOpen=battleOpen=gymOpen=playerOpen=medalsOpen=false;
+  evoPickOpen=false;
   exploreOpen=false;
   boxOpen=releaseConfirm=false;
   bagOpen=false;
@@ -78,6 +80,9 @@ int main(){
   clearAll(); check("main");
   clearAll(); trainOpen=true;    check("train");
   clearAll(); movePickOpen=true; check("movepick");
+  clearAll(); pet.dbgHatchAs(280, false); pet.speciesId=281;
+  while (pet.hasLearnOffer()) pet.declineLearn();
+  evoPickOpen=true; check("evopick");
   clearAll(); exploreOpen=true;  check("explore");
   clearAll(); gymOpen=true;      check("gyms");
   clearAll(); playerOpen=true;   check("player");
@@ -140,6 +145,9 @@ int main(){
   clearAll(); playerOpen=true;      crumbIs("player");
   clearAll(); medalsOpen=true;      crumbIs("medals");
   clearAll(); movePickOpen=true;    crumbIs("movepick");
+  clearAll(); pet.dbgHatchAs(280, false); pet.speciesId=281;
+  while (pet.hasLearnOffer()) pet.declineLearn();
+  evoPickOpen=true; crumbIs("evopick");
   clearAll(); clockOpen=true;       crumbIs("clock");
   clearAll(); cardOpen=true;        crumbIs("card");
   clearAll(); bagOpen=true;         crumbIs("bag");

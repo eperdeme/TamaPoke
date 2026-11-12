@@ -14,6 +14,7 @@
     "capture_test": "1000 real wild capture UI/loop placements with semantic record checks and fork/exec cold reboots",
     "console_test": "Synthetic serial input and restart interception in the real sketch",
     "explore_test": "Real Explore UI with synthetic touch, sprites and framebuffer",
+    "evopick_test": "Branching evolution picker and exact selected-form behavior",
     "flush_test": "Host frameReady and synthetic renderer/loop controls",
     "focus_test": "Real focus UI plus injected NVS failures and synthetic touch",
     "hit_test": "Synthetic geometry, framebuffer and touch hit-area probes",

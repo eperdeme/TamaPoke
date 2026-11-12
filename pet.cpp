@@ -793,32 +793,55 @@ void Pet::calmBondTick() {
 }
 
 // quedan miembros sin registrar en la linea evolutiva de esta base?
-bool Pet::lineHasUnregistered(int16_t base) const {
-  int16_t cur = base;
-  for (int guard = 0; cur >= 1 && cur <= DEX_COUNT && guard < 6; guard++) {
-    if (!isRegistered(cur)) return true;
-    if (cur == DEX_EEVEE) {
-      int16_t opts[EEVEE_EVO_COUNT];
-      uint8_t n = eeveeOptions(opts);
-      for (uint8_t i = 0; i < n; i++)
-        if (!isRegistered(opts[i])) return true;
-      return false;
-    }
-    cur = DEX_TBL[cur].evolvesTo;
+static bool lineHasUnregisteredFrom(const Pet &pet, int16_t species, uint8_t depth) {
+  if (species < 1 || species > DEX_COUNT || depth >= 6) return false;
+  if (!pet.isRegistered(species)) return true;
+
+  int16_t options[EVO_BRANCH_MAX];
+  uint8_t n = pet.evoOptions(species, options);
+  if (n > 1) {
+    for (uint8_t i = 0; i < n; i++)
+      if (lineHasUnregisteredFrom(pet, options[i], depth + 1)) return true;
+    return false;
   }
-  return false;
+  return n == 1 && lineHasUnregisteredFrom(pet, options[0], depth + 1);
+}
+
+bool Pet::lineHasUnregistered(int16_t base) const {
+  return lineHasUnregisteredFrom(*this, base, 0);
 }
 
 uint8_t Pet::eeveeOptions(int16_t *out) const {
-  uint8_t n = 0;
-  for (uint8_t i = 0; i < EEVEE_EVO_COUNT; i++) {
-    int16_t b = EEVEE_EVOS[i];
-    if (b < 1 || b > DEX_COUNT) continue;
-    if (!speciesHasArt(b)) continue;                     // no art anywhere
-    if (!regionAvailable(regionOfDex(b))) continue;      // pack not on the card
-    out[n++] = b;
+  return evoOptions(DEX_EEVEE, out);
+}
+
+uint8_t Pet::evoOptions(int16_t species, int16_t *out) const {
+  if (!out || species < 1 || species > DEX_COUNT) return 0;
+
+  const int16_t *targets = nullptr;
+  uint8_t targetCount = 0;
+  for (uint8_t i = 0; i < EVO_BRANCH_COUNT; i++) {
+    if (EVO_BRANCHES[i].from == species) {
+      targets = EVO_BRANCHES[i].to;
+      targetCount = EVO_BRANCHES[i].count;
+      break;
+    }
   }
-  return n;
+
+  const int16_t singleTarget = (int16_t)DEX_TBL[species].evolvesTo;
+  if (!targets) {
+    if (!singleTarget) return 0;
+    targets = &singleTarget;
+    targetCount = 1;
+  }
+
+  uint8_t count = 0;
+  for (uint8_t i = 0; i < targetCount && count < EVO_BRANCH_MAX; i++) {
+    int16_t target = targets[i];
+    if (target >= 1 && target <= DEX_COUNT && speciesShowable(target))
+      out[count++] = target;
+  }
+  return count;
 }
 
 uint8_t Pet::eggRarity() const {
@@ -1562,34 +1585,38 @@ bool Pet::canEvolveNow() const {
 // actually be shown? For EEVEE that is the filtered branch; for everything else
 // it is the single target in the table.
 bool Pet::evoTargetShowable() const {
-  if (speciesId == DEX_EEVEE) {
-    int16_t opts[EEVEE_EVO_COUNT];
-    return eeveeOptions(opts) > 0;
-  }
-  return speciesShowable(DEX_TBL[speciesId].evolvesTo);
+  int16_t options[EVO_BRANCH_MAX];
+  return evoOptions(speciesId, options) > 0;
 }
 
 void Pet::evolve() {
   if (!canEvolveNow()) return;
-  const DexEntry &d = DEX_TBL[speciesId];
+  int16_t options[EVO_BRANCH_MAX];
+  uint8_t n = evoOptions(speciesId, options);
+  if (!n) return;
+  int16_t fresh[EVO_BRANCH_MAX];
+  uint8_t freshCount = 0;
+  for (uint8_t i = 0; i < n; i++)
+    if (!isRegistered(options[i])) fresh[freshCount++] = options[i];
+  int16_t next = freshCount ? fresh[random(freshCount)] : options[random(n)];
   prevSpeciesId = speciesId;
-  int16_t next = d.evolvesTo;
-  if (speciesId == DEX_EEVEE) {
-    // Eevee's branch: all eight, preferring one still missing from the Pokedex,
-    // which is what makes raising Eevees a collection goal rather than a
-    // coin flip. Only ones this player can actually be shown -- see
-    // eeveeOptions(). If none qualify the table's own 134 stands, so a card with
-    // no packs at all still evolves rather than freezing.
-    int16_t opts[EEVEE_EVO_COUNT];
-    uint8_t n = eeveeOptions(opts);
-    if (n) {
-      int16_t fresh[EEVEE_EVO_COUNT];
-      uint8_t m = 0;
-      for (uint8_t i = 0; i < n; i++)
-        if (!isRegistered(opts[i])) fresh[m++] = opts[i];
-      next = m ? fresh[random(m)] : opts[random(n)];
-    }
+  applyEvolution(next);
+}
+
+bool Pet::evolveTo(int16_t target) {
+  if (!canEvolveNow()) return false;
+  int16_t options[EVO_BRANCH_MAX];
+  uint8_t n = evoOptions(speciesId, options);
+  for (uint8_t i = 0; i < n; i++) {
+    if (options[i] != target) continue;
+    prevSpeciesId = speciesId;
+    applyEvolution(target);
+    return true;
   }
+  return false;
+}
+
+void Pet::applyEvolution(int16_t next) {
   speciesId = next;
   registerSpecies(speciesId);
   checkLearnGates();   // the new form may gate a move at this very level

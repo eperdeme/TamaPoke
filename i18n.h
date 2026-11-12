@@ -174,6 +174,7 @@ enum StrId : uint8_t {
   S_BOX_PUT,        // party detail sheet: move this creature into the box
   // shown while a sprite pack streams in over USB
   S_XFER, S_XFER_FMT, S_XFER_HINT,
+  S_EVO_PICK,       // choose which form this creature evolves into
   STR_COUNT
 };
 

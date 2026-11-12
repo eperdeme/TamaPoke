@@ -255,9 +255,14 @@ bool movePickOpen = false;
 uint8_t movePickSlot = 0;   // which of the 4 slots is being replaced
 uint8_t movePickParty = 0;  // 0 = the live pet, else the party slot + 1
 uint8_t movePickPage = 0;
+bool evoPickOpen = false;
+uint8_t evoPickPage = 0;
 #define MOVE_ROW_Y(i) (96 + (i) * 58)
 #define MOVE_PICK_PER_PAGE 5
 #define MOVE_PICK_Y(i) (76 + (i) * 58)
+#define EVO_PICK_PER_PAGE 3
+#define EVO_PICK_ROW_H UI_TAP_FINGER
+#define EVO_PICK_Y(i) (82 + (i) * (EVO_PICK_ROW_H + 4))
 // level-up learn prompt: modal, and deliberately without a timeout -- it
 // decides what the creature is for the rest of its life, and once banked into
 // the party, forever.
@@ -274,7 +279,7 @@ enum : uint8_t {
   SCR_STARTER = 0, SCR_REGION, SCR_GALLERY, SCR_DEXPICK, SCR_MOVEPICK, SCR_BOX,
   SCR_PARTY, SCR_KEYBOARD, SCR_CARD, SCR_PLAYER, SCR_CLOCK, SCR_GYM, SCR_GYMPICK,
   SCR_EXPLORE, SCR_LAN, SCR_PICK, SCR_BATTLE, SCR_WIN, SCR_LEARN, SCR_TRAIN, SCR_MENU,
-  SCR_BAGSCR, SCR_GAME, SCR_MAIN, SCR_TRANSFER, SCR_MEDALS, SCR_COUNT
+  SCR_BAGSCR, SCR_GAME, SCR_MAIN, SCR_TRANSFER, SCR_MEDALS, SCR_EVOPICK, SCR_COUNT
 };
 extern const char *const SCREEN_NAME[SCR_COUNT];   // const is internal linkage in C++
 
@@ -298,6 +303,9 @@ void uiDrawRimBar();
 void uiChrome();
 uint8_t learnableList(uint8_t *out, uint8_t max);
 uint8_t pickCandidates();
+void renderEvoPick();
+void evoPickTap(int16_t x, int16_t y);
+bool evoPickRowRect(uint8_t row, int *x, int *y, int *w, int *h);
 // Declared here because renderMonSheet() and the sheet's tap handlers use both
 // ~4000 lines above where they are defined. The emulator generates a proto.h and
 // would compile it either way; arduino-cli would not, and that has shipped once.
@@ -358,7 +366,7 @@ const char *const SCREEN_NAME[SCR_COUNT] = {
   "starter", "region", "gallery", "dexpick", "movepick", "box",
   "party", "keyboard", "card", "player", "clock", "gym", "gympick",
   "explore", "lan", "pick", "battle", "win", "learn", "train", "menu",
-  "bag", "minigame", "main", "transfer", "medals"
+  "bag", "minigame", "main", "transfer", "medals", "evopick"
 };
 
 // Badge art for a region, or nullptr when that region has none yet.
@@ -1856,6 +1864,7 @@ void onSwipeV(int dir) {
   if (lanOpen)      { if (back) { lanLeave(); lanOpen = false; } return; }
   if (trainOpen)    { if (back) trainOpen = false; return; }
   if (bagOpen)      { if (back) bagOpen = false; return; }
+  if (evoPickOpen)  { if (back) evoPickOpen = false; return; }
   if (movePickOpen) { if (back) movePickOpen = false; return; }
   if (boxOpen) {
     if (back) {
@@ -2351,6 +2360,7 @@ void onSwipe(int dir) {
   if (pickOpen) { pickOpen = false; return; }
   if (trainOpen) { trainOpen = false; return; }
   if (bagOpen) { bagOpen = false; return; }
+  if (evoPickOpen) return;
   if (movePickOpen) { movePickOpen = false; return; }
   if (boxOpen) {
     if (boxJumpOpen) { boxJumpOpen = false; return; }
@@ -2382,6 +2392,10 @@ void onTap(int16_t x, int16_t y) {
         break;
       }
     }
+    return;
+  }
+  if (evoPickOpen) {
+    evoPickTap(x, y);
     return;
   }
   if (battleOpen) {
@@ -2655,7 +2669,17 @@ void onTap(int16_t x, int16_t y) {
     bool b1 = inX && y >= c1t && y <= c1b;   // accion
     bool b2 = inX && y >= c2t && y <= c2b;   // mantener / quedaros
     if (choiceKind == 1) {                 // evolucion
-      if (b1) { int16_t old = pet.speciesId; pet.evolve(); evoPmd.load(old, pet.shiny); }
+      if (b1) {
+        int16_t options[EVO_BRANCH_MAX];
+        if (pet.evoOptions(pet.speciesId, options) > 1) {
+          evoPickOpen = true;
+          evoPickPage = 0;
+        } else {
+          int16_t old = pet.speciesId;
+          pet.evolve();
+          evoPmd.load(old, pet.shiny);
+        }
+      }
       else if (b2) pet.declineEvolve();
     } else if (choiceKind == 3) {          // retirada a peticion
       if (b1) pet.startRetire();
@@ -2899,6 +2923,7 @@ RTC_NOINIT_ATTR uint32_t gCrumbHeap;
 uint8_t uiCurrentScreen() {
   if (transferMode()) return SCR_TRANSFER;
   if (pet.awaitingStarter()) return starterRegionDone ? SCR_STARTER : SCR_REGION;
+  if (evoPickOpen) return SCR_EVOPICK;
   if (galleryOpen) return galleryPick ? SCR_DEXPICK : SCR_GALLERY;
   if (movePickOpen) return SCR_MOVEPICK;
   if (partyOpen) return boxOpen ? SCR_BOX : SCR_PARTY;
@@ -3030,6 +3055,13 @@ static uint8_t *uiRimTarget(uint8_t *pages) {
       uint8_t k = pickCandidates();
       p = &pickPage;
       n = k ? (uint8_t)((k + PICK_PER_PAGE - 1) / PICK_PER_PAGE) : 1;
+      break;
+    }
+    case SCR_EVOPICK: {
+      int16_t options[EVO_BRANCH_MAX];
+      uint8_t k = pet.evoOptions(pet.speciesId, options);
+      p = &evoPickPage;
+      n = k ? (uint8_t)((k + EVO_PICK_PER_PAGE - 1) / EVO_PICK_PER_PAGE) : 1;
       break;
     }
     default: break;
@@ -3280,6 +3312,10 @@ void render() {
   if (pet.awaitingStarter()) {  // primera partida: region y luego inicial
     if (!starterRegionDone) renderRegionPick(RPICK_FOR_START);
     else renderStarterSelect();
+    return;
+  }
+  if (evoPickOpen) {
+    renderEvoPick();
     return;
   }
   if (galleryOpen) {
@@ -4477,6 +4513,83 @@ void renderMovePick() {
   gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 402);
   gfx->print(T(S_BACK));
   gfx->flush();
+}
+
+void renderEvoPick() {
+  gfx->fillScreen(RGB565_BLACK);
+  gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - (int)strlen(T(S_EVO_PICK)) * 6, 48);
+  gfx->print(T(S_EVO_PICK));
+
+  int16_t options[EVO_BRANCH_MAX];
+  uint8_t count = pet.evoOptions(pet.speciesId, options);
+  uint8_t pages = count ? (count + EVO_PICK_PER_PAGE - 1) / EVO_PICK_PER_PAGE : 1;
+  if (evoPickPage >= pages) evoPickPage = 0;
+  for (uint8_t i = 0; i < EVO_PICK_PER_PAGE; i++) {
+    uint8_t index = evoPickPage * EVO_PICK_PER_PAGE + i;
+    if (index >= count) break;
+    const DexEntry &entry = DEX_TBL[options[index]];
+    int x, y, w, h;
+    evoPickRowRect(i, &x, &y, &w, &h);
+    gfx->fillRoundRect(x, y, w, h, 18, entry.accent);
+    gfx->drawRoundRect(x, y, w, h, 18, UI_INK);
+    const uint16_t color = entry.accent;
+    const int luminance = ((color >> 11) & 31) * 24 +
+                          ((color >> 5) & 63) * 24 + (color & 31) * 8;
+    const uint16_t text = luminance > 1400 ? UI_INK : UI_WHITE;
+    gfx->setTextColor(text);
+    gfx->setTextSize(2);
+    gfx->setCursor(CX - (int)strlen(entry.name) * 6, y + (h - 16) / 2);
+    gfx->print(entry.name);
+    if (!pet.isRegistered(options[index])) gfx->fillCircle(x + 22, y + h / 2, 6, text);
+  }
+  for (uint8_t i = 0; i < pages && pages > 1; i++) {
+    const int x = CX - (pages - 1) * 13 + i * 26;
+    if (i == evoPickPage) gfx->fillCircle(x, 382, 5, UI_INK);
+    else gfx->drawCircle(x, 382, 4, UI_INK);
+  }
+  gfx->setTextColor(UI_INK_SOFT);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - (int)strlen(T(S_BACK)) * 6, 406);
+  gfx->print(T(S_BACK));
+  uiChrome();
+  gfx->flush();
+}
+
+bool evoPickRowRect(uint8_t row, int *x, int *y, int *w, int *h) {
+  if (row >= EVO_PICK_PER_PAGE) return false;
+  const int rowY = EVO_PICK_Y(row);
+  const int half = uiSafeHalfWidthFor(rowY, rowY + EVO_PICK_ROW_H) - 6;
+  if (x) *x = CX - half;
+  if (y) *y = rowY;
+  if (w) *w = half * 2;
+  if (h) *h = EVO_PICK_ROW_H;
+  return true;
+}
+
+void evoPickTap(int16_t x, int16_t y) {
+  int16_t options[EVO_BRANCH_MAX];
+  uint8_t count = pet.evoOptions(pet.speciesId, options);
+  for (uint8_t i = 0; i < EVO_PICK_PER_PAGE; i++) {
+    uint8_t index = evoPickPage * EVO_PICK_PER_PAGE + i;
+    if (index >= count) break;
+    int rowX, rowY, rowW, rowH;
+    evoPickRowRect(i, &rowX, &rowY, &rowW, &rowH);
+    if (x < rowX || x > rowX + rowW || y < rowY || y > rowY + rowH) continue;
+    const int16_t oldSpecies = pet.speciesId;
+    if (pet.evolveTo(options[index])) {
+      evoPickOpen = false;
+      evoPmd.load(oldSpecies, pet.shiny);
+      sfxPlay(SFX_TAP);
+    } else {
+      sfxPlay(SFX_DENY);
+    }
+    return;
+  }
+  evoPickOpen = false;
+  sfxPlay(SFX_TAP);
 }
 
 // ---------- battle ----------

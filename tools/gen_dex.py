@@ -7,7 +7,10 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from dex_data import DEX, TYPE_ACCENTS, CLASSIC, RARE, LEGENDARY, REGIONS, EEVEE_BRANCHES
+from dex_data import (
+    DEX, TYPE_ACCENTS, CLASSIC, RARE, LEGENDARY, REGIONS,
+    EEVEE_BRANCHES, EVO_BRANCHES,
+)
 from dex_stats import BASE_STATS
 from dex_types import TYPES, TYPE_ORDER, CHART
 
@@ -51,6 +54,27 @@ def main():
     out.append("#define EEVEE_EVO_COUNT %d\n" % len(EEVEE_BRANCHES))
     out.append("static const int16_t EEVEE_EVOS[EEVEE_EVO_COUNT] = { %s };\n\n"
                % ', '.join(str(x) for x in EEVEE_BRANCHES))
+    branch_max = max(len(targets) for targets in EVO_BRANCHES.values())
+    for base, targets in EVO_BRANCHES.items():
+        assert 1 <= base <= len(DEX), f"branch source {base} is outside the dex"
+        assert targets and len(targets) == len(set(targets)), f"invalid targets for branch {base}"
+        assert targets[0] == DEX[base - 1][4], (
+            f"branch {base}: first target {targets[0]} != evolvesTo {DEX[base - 1][4]}"
+        )
+        assert all(1 <= target <= len(DEX) for target in targets), (
+            f"branch {base} has an out-of-range target"
+        )
+    out.append("// All species with multiple possible evolutions, including Eevee.\n"
+               "// The first target matches DEX_TBL[from].evolvesTo.\n")
+    out.append("#define EVO_BRANCH_MAX %d\n" % branch_max)
+    out.append("struct EvoBranch { int16_t from; uint8_t count; int16_t to[EVO_BRANCH_MAX]; };\n")
+    out.append("#define EVO_BRANCH_COUNT %d\n" % len(EVO_BRANCHES))
+    out.append("static const EvoBranch EVO_BRANCHES[EVO_BRANCH_COUNT] = {\n")
+    for base in sorted(EVO_BRANCHES):
+        targets = EVO_BRANCHES[base]
+        out.append("  { %d, %d, { %s } },\n" %
+                   (base, len(targets), ', '.join(str(target) for target in targets)))
+    out.append("};\n\n")
     out.append("// The 18 current types. See tools/dex_types.py for why this game uses the\n"
                "// modern chart rather than the Gen 1 one.\n"
                "enum PkType : uint8_t {\n  ")
@@ -90,12 +114,11 @@ def main():
         "  uint8_t type1, type2;  // current typing; type2 = T_NONE if single-typed\n"
         "};\n\n")
     # formas base = las que no son evolucion de nadie (las ramas de Eevee si lo son)
-    # Anything that is somebody's evolution target is evolution-ONLY and never
-    # hatches. Eevee's branches have to be added by hand because DexEntry holds a
-    # single evolvesTo -- this used to read `| {135, 136}`, which is why Espeon,
-    # Umbreon, Leafeon, Glaceon and Sylveon were treated as base forms and came
-    # out of eggs. The list lives in dex_data.py so the firmware shares it.
-    evolved = {d[4] for d in DEX if d[4]} | set(EEVEE_BRANCHES)
+    # Anything that is somebody's evolution target is evolution-only and never
+    # hatches. The branch table is also emitted for the firmware, so branches
+    # cannot be reachable by evolution but hatchable by rarity.
+    evolved = ({d[4] for d in DEX if d[4]} |
+               {target for targets in EVO_BRANCHES.values() for target in targets})
     rarities = []
     out.append("static const DexEntry DEX_TBL[DEX_COUNT + 1] = {\n")
     out.append('  { "?", 0, 0, 0, 0x2946, 50, 50, 50, 50, 50, 50, 0 },  // 0: sin usar\n')
