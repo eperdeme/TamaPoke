@@ -5,7 +5,7 @@
 ![Board](https://img.shields.io/badge/board-ESP32--S3%20round%20AMOLED-E7352C?logo=espressif&logoColor=white)
 ![Firmware](https://img.shields.io/badge/firmware-v4.3.0-8A2BE2)
 ![Code](https://img.shields.io/badge/code-MIT-blue)
-![Languages](https://img.shields.io/badge/languages-6-FFCB05)
+![Languages](https://img.shields.io/badge/languages-7-FFCB05)
 [![Stars](https://img.shields.io/github/stars/DylanPDao/TamaPoke?style=flat&logo=github&color=yellow)](https://github.com/DylanPDao/TamaPoke/stargazers)
 
 A gen-1-Pokémon-inspired tamagotchi for the
@@ -140,7 +140,7 @@ training), retention hooks (streak / bond / medals / name), biome + real-time
 backgrounds, **four minigames**, animated bath, RTC with offline
 progression, battery (AXP2101) and PWR button, anti-burn-in dimming with a
 **brightness setting**, **synthesised per-species chirps**,
-**sound (ES8311)**, **6 UI languages (English default)**, **starter choice on
+**sound (ES8311)**, **7 UI languages (English default)**, **starter choice on
 first run**, and a one-click **web installer**.
 
 All nine regions are in the dex, and all nine have a gym ladder and a sprite pack.
@@ -922,8 +922,8 @@ are completable), blessed by a farewell and punished by a runaway. Legendaries
 only with 25+ registered.
 **Shiny** 1/48 (better with streak/bond/farewell).
 
-**Languages:** the UI ships in 6 languages — English (default), Spanish, French,
-German, Italian, Portuguese — switchable from the settings screen (swipe down).
+**Languages:** the UI ships in 7 languages — English (default), Spanish, French,
+German, Italian, Portuguese, Dutch — switchable from the settings screen (swipe down).
 Move names on cards, pickers and battle buttons follow that choice, as does the
 battle narration that names the move being used.
 
@@ -941,8 +941,8 @@ beach, forest, volcano, mountain, snow). Sleeping forces night.
 - `sdmon.h` / `sdmon.cpp` — TPK1 (animated) and TPK2 (PMD) sprites + thumbnails, and file reception over USB (PUT/LS)
 - `rtcbat.h` / `rtcbat.cpp` — PCF85063 RTC + AXP2101 PMU (battery, brightness, PWR button)
 - `audio.h` / `audio.cpp` — ES8311 + I2S + Game-Boy-style tone synth (non-blocking task)
-- `i18n.h` / `i18n.cpp` — the 6-language string tables
-- `move_names.h` — GENERATED (`gen_moves.py`): move display names in all 6 languages
+- `i18n.h` / `i18n.cpp` — the 7-language string tables
+- `move_names.h` — GENERATED (`gen_moves.py`): move display names in all 7 languages
 - `dex.h` — GENERATED (`gen_dex.py`): the species table, `DEX_COUNT` 1025
 - `species.h` — GENERATED (`sprites.py`): fallback sprites, UI icons, colours
 - `pin_config.h` — the board's official pins

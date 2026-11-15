@@ -67,8 +67,8 @@ def main():
         missing = sorted(set(move_keys) - set(MOVE_NAMES))
         extra = sorted(set(MOVE_NAMES) - set(move_keys))
         sys.exit('move-name keys differ: missing=%s extra=%s' % (missing, extra))
-    if len(MOVE_NAME_LANGS) != 6:
-        sys.exit('move names must have the six firmware languages')
+    if len(MOVE_NAME_LANGS) != 7:
+        sys.exit('move names must have the seven firmware languages')
     for key in move_keys:
         row = MOVE_NAMES[key]
         if len(row) != len(MOVE_NAME_LANGS):
