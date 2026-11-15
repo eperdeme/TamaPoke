@@ -19,7 +19,7 @@ void sfxPlay(uint8_t) {}
 #include <cstring>
 int main(){
   const StrId ids[] = { S_VIN, S_STAT_ATK, S_STAT_DEF, S_STAT_SPE, S_STAT_VIT, S_STAT_WGT };
-  const char *ln[] = {"ES","EN","FR","DE","IT","PT"};
+  const char *ln[] = {"ES","EN","FR","DE","IT","PT","NL"};
   int worst = 0;
   for (int l=0;l<LANG_COUNT;l++){ setLang((Lang)l);
     for (auto id : ids){ int w = 70 + (int)strlen(T(id))*12;

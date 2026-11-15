@@ -24,7 +24,7 @@ void sfxPlay(uint8_t) {}
 #include <cstring>
 
 // STRINGS is file-static, so go through the same accessor the firmware uses.
-static const char *LANG[] = { "ES", "EN", "FR", "DE", "IT", "PT" };
+static const char *LANG[] = { "ES", "EN", "FR", "DE", "IT", "PT", "NL" };
 
 int main() {
   int bad = 0;
@@ -51,7 +51,7 @@ int main() {
     if (l != LANG_EN && !translated) { printf("%s move table silently fell back to English\n", LANG[l]); bad++; }
   }
   static const char *EMBER[LANG_COUNT] = {
-    "ASCUAS", "EMBER", "FLAMMECHE", "GLUT", "BRACIERE", "BRASA"
+    "ASCUAS", "EMBER", "FLAMMECHE", "GLUT", "BRACIERE", "BRASA", "GLOEDVONK"
   };
   for (int l = 0; l < LANG_COUNT; l++) {
     setLang((Lang)l);

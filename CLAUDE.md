@@ -13,7 +13,7 @@ Personal, non-commercial fan project. Code MIT; sprites CC BY-NC (PMD SpriteColl
 | `species.h` / `dex.h` | The 151: names, typings, evolution chains, base stats, rarity tiers, favourite berry |
 | `types.h` | Type-effectiveness helpers over the generated 18x18 chart in `dex.h` |
 | `party.cpp/.h` | The 6 retired pets banked by farewell/release (not runaway) |
-| `i18n.cpp/.h` | 6-language string table (ES/EN/FR/DE/IT/PT) |
+| `i18n.cpp/.h` | 7-language string table (ES/EN/FR/DE/IT/PT/NL) |
 | `audio.cpp/.h` | ES8311 codec over I2S |
 | `rtcbat.cpp/.h` | PCF85063 RTC + AXP2101 battery/PMU/PWR button |
 | `sdmon.cpp/.h` | SD sprite streaming + USB `PUT` file transfer |
@@ -215,12 +215,12 @@ Wrong partition scheme (no FAT) or PSRAM off = it builds and then fails on hardw
 ## Hard rules
 
 **No accents, ñ, or non-ASCII in any firmware string.** The bitmap font has no glyphs
-for them. This applies to *all six* languages — French, German, Portuguese and Spanish
+for them. This applies to *all seven* languages — French, German, Portuguese, Dutch and Spanish
 strings in `i18n.cpp` are deliberately written unaccented ("Esta", "bano", "Pokedex").
 Adding a proper "é" silently renders as garbage on the panel.
 
 **Adding a UI string is a two-file, order-sensitive edit.** Append the `StrId` to the
-enum in `i18n.h`, then add the translation at the *same index* in all 6 rows of
+enum in `i18n.h`, then add the translation at the *same index* in all 7 rows of
 `STRINGS[LANG_COUNT][STR_COUNT]` in `i18n.cpp`. The table is positional — a missing
 entry in one language shifts every string after it in that language.
 
@@ -579,7 +579,7 @@ to zero below 5 points. All three minigames now bank what was earned on exit.
 **Two tests exist because screenshots could not catch these:**
 `shotMode` reads `gfx->buffer()` directly and never consults `frameReady`, so a
 missing flush is invisible to every capture. One test opens all 13 screens and
-asserts each flushes; another checks the 6 x N i18n table for nulls and
+asserts each flushes; another checks the 7 x N i18n table for nulls and
 non-ASCII. Both live in the scratchpad, NOT the repo -- see below.
 
 ### Landed 2026-08-18 (v2.6, merged, installer rebuilt)
@@ -1192,7 +1192,7 @@ What changed for 386 species:
 - **Eight places use the literal `151` instead of `DEX_COUNT`** -- `pet.cpp`
   lines ~243, 256, 283, 295, 572, 592 and `pet.h` `isRegistered`/
   `isShinyRegistered`. These are the ones that will bite.
-- `"POKEDEX %u/151"` is hardcoded in all six languages.
+- `"POKEDEX %u/151"` is hardcoded in all seven languages.
 - Sprites on the SD go 40 MB -> ~135 MB. Fine on a card.
 - ~~The blocker is the web installer~~ **solved, and not by making the load
   optional.** The bundle is ONE FILE PER REGION (`web/sprites-<region>.pak`,
