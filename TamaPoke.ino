@@ -964,6 +964,7 @@ static bool starterRegionDone = false;
 volatile bool gTouchIrq = false;
 void IRAM_ATTR touchIsr() { gTouchIrq = true; }
 uint32_t lastRender = 0;
+bool gFirstFrame = true;
 // proteccion del AMOLED: atenuado por inactividad
 uint32_t lastInteract = 0;
 uint8_t dimStage = 0;        // 0 despierto, 1 atenuado (90s), 2 casi apagado (5min)
@@ -1096,13 +1097,17 @@ void setup() {
   // QSPI a 80MHz (por defecto 40): el flush del framebuffer es el cuello de
   // botella del fps (~56ms a 40MHz). Si el panel mostrara basura, bajar a 40M.
   if (!gfx->begin(80000000)) Serial.println("gfx->begin() fallo");
-  // The player's own level, not a literal 180: booting to full brightness and
-  // then dropping to a dim setting a frame later is a flash in the eye every
-  // time the device starts. usbPresent() is not readable yet -- the PMU is set
-  // up further down -- so this takes the battery figure and the first
-  // updateBrightness() corrects it if the cable is in.
-  gBrightNow = brightBase(gBrightLevel, false);
-  panel->setBrightness(gBrightNow);
+  // Keep the panel dark with a cleared black framebuffer until loop() renders
+  // the first real frame. PSRAM holds uninitialized data on boot, and setup()
+  // still has touch retries, SD mount, and RTC catch-up to run; lighting the
+  // panel here flashes garbage before the first frame appears. Setting
+  // gBrightNow = 0 ensures updateBrightness() applies the player's saved level
+  // right after the first frame is flushed.
+  gfx->fillScreen(RGB565_BLACK);
+  gfx->flush();
+  gBrightNow = 0;
+  panel->setBrightness(0);
+  gFirstFrame = true;
 
   touch.setPins(TP_RESET, TP_INT);
   bool touchOk = false;
@@ -1203,7 +1208,14 @@ void ensureMon() {
 }
 
 void loop() {
-  if (focusBlocked) { focusRecover(); render(); delay(20); return; }
+  if (focusBlocked) {
+    focusRecover();
+    render();
+    gFirstFrame = false;
+    updateBrightness(millis());
+    delay(20);
+    return;
+  }
   uint32_t now = millis();
   pet.update(now);
 
@@ -1296,6 +1308,14 @@ void loop() {
     if (batLowWarning()) flushBeforePowerLoss("battery low");
   }
 
+  // On the first pass after boot, flush the first real frame while the panel
+  // is still dark so updateBrightness() lights straight onto rendered content.
+  if (gFirstFrame) {
+    gFirstFrame = false;
+    lastRender = now;
+    render();
+  }
+
   updateBrightness(now);
 
   // vuelca el autoguardado periodico SOLO con la pantalla atenuada/apagada o
@@ -1319,10 +1339,11 @@ void loop() {
   static uint32_t lastHealth = 0;
   if (now - lastHealth > 300000) {
     lastHealth = now;
-    Serial.printf("HEALTH up=%lus heap=%u min=%u save=%s collection=%s\n",
+    Serial.printf("HEALTH up=%lus heap=%u min=%u save=%s collection=%s pmu_err=%u\n",
                   (unsigned long)(now / 1000), ESP.getFreeHeap(),
                   ESP.getMinFreeHeap(), pet.saveHealthy() ? "ok" : "BROKEN",
-                  party.saveHealthy() ? "ok" : "BROKEN");
+                  party.saveHealthy() ? "ok" : "BROKEN",
+                  (unsigned)pmuReadErrors());
     // NVS headroom rides the same heartbeat as the heap, and for the same
     // reason: the value on its own says little, the trend over a soak says
     // everything. See nvsinfo.cpp for what running out costs.
@@ -1363,7 +1384,11 @@ void updateBrightness(uint32_t now) {
   if (pet.evolving() || pet.ceremony || pet.eating() || pet.showHeart()) {
     lastInteract = now;
   }
-  uint32_t idle = now - lastInteract;
+  // `now` was captured at the top of loop(), before handleTouch() stamped
+  // lastInteract with a fresh millis() after the CST9217 I2C read. Unsigned
+  // subtraction wrapped a few negative ms into ~4.29e9 -> dimStage 2
+  // (brightness 8) on every press and release. Clamp negative deltas to 0.
+  uint32_t idle = (int32_t)(now - lastInteract) > 0 ? (now - lastInteract) : 0;
   dimStage = (idle > 300000) ? 2 : (idle > 90000) ? 1 : 0;
   const uint8_t base = brightBase(gBrightLevel, usbPresent());
   uint8_t target = pet.sleeping ? 25 : base;
@@ -1717,9 +1742,11 @@ void handleSerial() {
     // The same two lines the periodic heartbeat prints. Typed on a board is when
     // you actually want them, and a console HEALTH that reported LESS than the
     // automatic one is § "A rule enforced in one path but not in its twin".
-    Serial.printf("save=%s collection=%s pending=%d\n", pet.saveHealthy() ? "ok" : "BROKEN",
+    Serial.printf("save=%s collection=%s pending=%d pmu_err=%u\n",
+                  pet.saveHealthy() ? "ok" : "BROKEN",
                   party.saveHealthy() ? "ok" : "BROKEN",
-                  pet.savePending() ? 1 : 0);
+                  pet.savePending() ? 1 : 0,
+                  (unsigned)pmuReadErrors());
     nvsReport("health");
     gNvsLow = nvsLowOnSpace();
     Serial.println("DONE");

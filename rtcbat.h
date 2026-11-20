@@ -29,3 +29,4 @@ bool pwrLongPressed();
 // The gauge has dropped past its low-battery warning level. Same purpose: flush
 // before a brownout rather than after it.
 bool batLowWarning();
+uint32_t pmuReadErrors();  // IRQ status reads that failed on I2C (HEALTH pmu_err=)

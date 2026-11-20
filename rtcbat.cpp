@@ -116,10 +116,25 @@ void pwrSetup() {
 // enabled and is not any more -- an unacknowledged long-press or low-battery bit
 // would stay latched forever and every later read would see it again.
 static bool sawShort = false, sawLong = false, sawLowBat = false;
+static uint32_t pmuErrs = 0;
+
+uint32_t pmuReadErrors() { return pmuErrs; }
 
 void pwrPoll() {
   if (!pmuOk) return;
-  pmu.getIrqStatus();
+  // A failed I2C read is NOT an interrupt. XPowersLib's getIrqStatus() stores
+  // readRegister()'s int directly into a uint8_t array, and readRegister()
+  // returns -1 when the I2C transaction fails -- landing as 0xFF (every IRQ
+  // bit set, including PWR short press, long press, and low-battery warnings).
+  // One glitch on the shared touch/PMU bus would toggle screenOff and trigger
+  // a spurious power-loss flush. No real register latches all 8 bits at once,
+  // so 0xFF in any of the three status bytes is treated as a failed read:
+  // nothing is latched or cleared, and the next poll retries cleanly.
+  uint32_t st = (uint32_t)pmu.getIrqStatus();
+  if ((st & 0xFF) == 0xFF || ((st >> 8) & 0xFF) == 0xFF || ((st >> 16) & 0xFF) == 0xFF) {
+    pmuErrs++;
+    return;
+  }
   if (pmu.isPekeyShortPressIrq()) sawShort = true;
   if (pmu.isPekeyLongPressIrq()) sawLong = true;
   if (pmu.isDropWarningLevel1Irq() || pmu.isDropWarningLevel2Irq()) sawLowBat = true;

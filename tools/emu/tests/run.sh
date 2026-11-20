@@ -106,7 +106,7 @@ CORE=("$ROOT/gbsynth.cpp" "$ROOT/pet.cpp" "$ROOT/i18n.cpp" "$ROOT/party.cpp" "$R
 FLAGS=(-std=c++17 -O1 -w -I"$EMU" -I"$ROOT" -DSPRITE_DIR="\"$SPRITE_DIR\"")
 
 # these drive setup()/loop()/render(), so they need the sketch itself
-needs_sketch() { case "$1" in touch_test|flush_test|joy_test|anim_test|swipe_test|lan_test|console_test|capture_test|hit_test|starter_test|release_test|focus_test|explore_test|evopick_test|view_test|transfer_test) return 0;; *) return 1;; esac; }
+needs_sketch() { case "$1" in touch_test|flush_test|joy_test|anim_test|swipe_test|lan_test|console_test|capture_test|hit_test|starter_test|release_test|focus_test|explore_test|evopick_test|view_test|transfer_test|dim_test) return 0;; *) return 1;; esac; }
 
 # and these are standalone: gbsynth.cpp has no Arduino dependency at all, which
 # is the point of it -- linking the game core in would only demand stubs for
@@ -116,6 +116,10 @@ standalone() { case "$1" in audio_test|synth_test|palette_test|cry_test|crc32_te
 # sprite_test drives PmdMon straight off the sprite directory, so it needs the
 # host's SD stubs but none of the sketch
 needs_host() { case "$1" in sprite_test) return 0;; *) return 1;; esac; }
+
+# pmu_test compiles the REAL rtcbat.cpp against stand-ins for XPowersLib and
+# SensorLib that reproduce failed I2C register reads (tools/emu/pmu/)
+needs_pmu() { case "$1" in pmu_test) return 0;; *) return 1;; esac; }
 
 cpu_count=2
 if command -v sysctl >/dev/null; then
@@ -173,6 +177,11 @@ run_one() {
   needs_host "$name" && objs+=("${HOST_O[@]}")
   suite_flags=("${FLAGS[@]}")
   suite_sources=("$src")
+  if needs_pmu "$name"; then
+    objs=()
+    suite_sources+=("$ROOT/rtcbat.cpp")
+    suite_flags+=(-I"$EMU/pmu")
+  fi
   case "$name" in
     audio_test) suite_flags+=(-I"$HERE/audio_stubs" -pthread);;
     workflow_test)
