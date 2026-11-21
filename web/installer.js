@@ -1,6 +1,6 @@
 import {
   verifyBackup, describeBackup, sendBackup, saveSummary, backupFileName,
-} from './savefile.js?v=15ed53ffdb34a7d9';
+} from './savefile.js?v=a74403c4d34e585d';
 import { parsePak, verifyPak, packIsCurrent, probeSum, installFile } from './packs.js?v=2d4d719f12e1ccb6';
 
 const byId = (id) => document.getElementById(id);
