@@ -282,6 +282,13 @@ const fullEntries = [
     ckThrows(() => verifyBackup(backupText(backupBlob([...fullEntries, unknown], version))), 'unknown',
        `v${version} retains strict namespaced game-key validation`);
   }
+  const gameSettings = [
+    { space: 0, key: 'lvspd', kind: 1, value: new Uint8Array([20]) },
+    { space: 0, key: 'fwlv', kind: 1, value: new Uint8Array([60]) },
+    { space: 0, key: 'eggnew', kind: 1, value: new Uint8Array([0]) },
+  ];
+  ck(verifyBackup(backupText(backupBlob([...fullEntries, ...gameSettings], 3))).fields === fullEntries.length + 3,
+     'v3 accepts the GAME settings keys (lvspd, fwlv, eggnew)');
 }
 
 // ---- truncation: the case that used to pass

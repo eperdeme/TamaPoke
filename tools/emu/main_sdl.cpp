@@ -225,6 +225,10 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
     for (int d = 1; d <= 200; d++) pet.dbgHatchAs(d, false);
   }
   else if (!strcmp(screen, "clock"))   clockOpen = true;
+  else if (!strcmp(screen, "game")) {
+    extern uint8_t clockPage;
+    clockOpen = true; clockPage = 2; levelSpeedSet(20); farewellLevelSet(60);
+  }
   else if (!strcmp(screen, "menu"))    menuOpen = true;
   else if (!strcmp(screen, "train"))   trainOpen = true;
   else if (!strcmp(screen, "moves"))   { cardOpen = true; cardPage = 2; }

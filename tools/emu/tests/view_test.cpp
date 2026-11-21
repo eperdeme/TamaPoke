@@ -16,7 +16,9 @@
 #include "pet.h"
 #include "party.h"
 #include "dex.h"
+#include "i18n.h"
 #include <cstdio>
+#include <cmath>
 #include <cstring>
 #include <set>
 #include <vector>
@@ -71,7 +73,8 @@ void galleryTap(int16_t x, int16_t y);
 // cannot be included.
 uint8_t galleryFilterCount();
 uint8_t boxSortCount();
-enum : uint8_t { GFILT_ALL = 0, GFILT_RAISED, GFILT_CAUGHT, GFILT_SHINY };
+bool galleryMember(int16_t dex);
+enum : uint8_t { GFILT_ALL = 0, GFILT_HATCHED, GFILT_CAUGHT, GFILT_SHINY };
 enum : uint8_t { BSORT_SLOT = 0, BSORT_DEX, BSORT_LEVEL };
 
 static int bad=0;
@@ -130,29 +133,33 @@ int main(){
   }
   ck(!pet.isRegistered(131), "a box-only creature is genuinely NOT in the dex");
 
+  // CHARIZARD hatched (egg); MEW hand-registered and shiny (origin unknown);
+  // LAPRAS caught and sitting in the box, never raised.
+  pet.noteCaught(131, false);
   galleryFilter = GFILT_ALL;
   ck(galleryCount() == 151, "ALL shows the whole region");
   ck(galleryPages() == 10, "across ten pages of sixteen");
   ck(galleryAt(0) == 1 && galleryAt(150) == 151,
      "and the grid runs from the first species to the last");
   ck(galleryAt(151) == 0, "with nothing past the end");
+  ck(galleryMember(6) && galleryMember(151) && galleryMember(131),
+     "ALL holds the hatched, the hand-registered and the caught one");
 
-  galleryFilter = GFILT_RAISED;
-  {
-    const uint16_t n = galleryCount();
-    ck(n >= 1, "RAISED shows what has actually been raised");
-    ck(galleryPass(6) && galleryPass(151), "including the live creature and MEW");
-    ck(!galleryPass(131), "but NOT the one that only ever sat in the box");
-  }
+  galleryFilter = GFILT_HATCHED;
+  ck(galleryCount() == 151 && galleryPages() == 10, "HATCHED shows the full region classic-style");
+  ck(galleryMember(6) && !galleryMember(151) && !galleryMember(131),
+     "HATCHED colours only the egg's CHARIZARD");
 
   galleryFilter = GFILT_CAUGHT;
-  ck(galleryPass(131), "CAUGHT does show the box-only creature");
-  ck(galleryPass(6), "and the live one");
-  ck(!galleryPass(151), "but not MEW, which is in the dex and not in your hands");
+  ck(galleryCount() == 151 && galleryPages() == 10, "CAUGHT shows the full region classic-style");
+  ck(galleryMember(131) && !galleryMember(6) && !galleryMember(151),
+     "CAUGHT colours only the box LAPRAS");
 
   galleryFilter = GFILT_SHINY;
-  ck(galleryCount() == 1 && galleryAt(0) == 151, "SHINY shows only shiny records");
+  ck(galleryCount() == 1 && galleryAt(0) == 151, "SHINY stays compact and shows only shiny records");
   ck(galleryPages() == 1, "on a single page");
+  ck(galleryMember(151) && !galleryMember(6) && !galleryMember(131),
+     "and includes only the shiny MEW");
 
   // THE MISMATCH CHECK. Every filter, and for each one the set the grid would
   // draw must be exactly the set the filter admits -- no cell drawn that the tap
@@ -167,6 +174,44 @@ int main(){
              f, (unsigned)drawn.size(), (unsigned)want.size());
     ck(drawn == want, m);
     ck(drawn.size() == galleryCount(), "and the count agrees with the grid");
+  }
+
+  // THE FOUR VIEW BUTTONS under the title: ALL / HATCHED / CAUGHT / SHINY.
+  // Sized to their labels, so check ALL SEVEN languages fit inside the round panel.
+  {
+    void galleryViewRect(uint8_t i, int *x, int *w);
+    bool fits = true;
+    for (int l = 0; l < LANG_COUNT; l++) {
+      setLang((Lang)l);
+      int x0, w0, x3, w3; galleryViewRect(0, &x0, &w0); galleryViewRect(3, &x3, &w3);
+      const int half = (int)sqrtf(231.f * 231.f - (233.f - 61.f) * (233.f - 61.f));
+      if (x0 < 233 - half || x3 + w3 > 233 + half) {
+        fits = false;
+        printf("      lang %d: %d..%d (allowed %d..%d)\n", l, x0, x3 + w3, 233 - half, 233 + half);
+      }
+    }
+    setLang(LANG_EN);
+    ck(fits, "the four view buttons fit the round panel in all seven languages");
+  }
+  {
+    extern bool galleryOpen, galleryPick, galleryDirty;
+    void onTap(int16_t x, int16_t y);
+    int8_t galleryViewAt(int16_t x, int16_t y);
+    galleryOpen = true; galleryPick = false; galleryDetail = 0; galleryDirty = true;
+    galleryFilter = GFILT_ALL;
+    render();
+    const char *nm[4] = { "ALL", "HATCHED", "CAUGHT", "SHINY" };
+    for (int b = 3; b >= 0; b--) {
+      int cx = -1;
+      for (int x = 0; x < 466 && cx < 0; x++) if (galleryViewAt(x, 71) == b) cx = x + 28;
+      onTap(cx, 71);
+      render();
+      char m[80]; snprintf(m, sizeof(m), "the %s button picks its view", nm[b]);
+      ck(cx > 0 && galleryFilter == b && galleryOpen, m);
+    }
+    ck(galleryViewAt(233, 40) < 0, "the title above them is not a button (it still exits)");
+    galleryOpen = false;
+    galleryFilter = GFILT_ALL;
   }
 
   // An EMPTY result still has a page, or the screen draws nothing at all and
@@ -657,6 +702,42 @@ int main(){
     tapOpt(quizAns);
     ck(memoOver && memoBest == 1, "the same deadline is enforced across the wrap");
     leaveMemo();
+    emuSetClockPaused(false);
+  }
+
+  // --- the GAME settings page: four buttons a row, stopping at the ends ---
+  {
+    extern bool clockOpen; extern uint8_t clockPage;
+    void onTap(int16_t x, int16_t y);
+    uint8_t uiCurrentScreen();
+    extern const char *const SCREEN_NAME[];
+    int uiGameRowY(int r); int uiGameBtnX(int step); int uiGameEggY();
+    while (pet.hasLearnOffer()) pet.declineLearn();
+    clockOpen = true; clockPage = 2;
+    levelSpeedSet(60); farewellLevelSet(73); eggPreferNewSet(true);
+    render();
+    ck(!strcmp(SCREEN_NAME[uiCurrentScreen()], "clock"), "the settings screen is up on its third page");
+    onTap(uiGameBtnX(-1), uiGameRowY(0));
+    ck(gLevelMins == 59, "< lowers the minutes per level by one");
+    onTap(uiGameBtnX(-10), uiGameRowY(0));
+    ck(gLevelMins == 49, "<< by ten");
+    onTap(uiGameBtnX(10), uiGameRowY(0)); onTap(uiGameBtnX(10), uiGameRowY(0));
+    ck(gLevelMins == 60, ">> stops at 60 instead of wrapping");
+    onTap(uiGameBtnX(1), uiGameRowY(0));
+    ck(gLevelMins == 60, "and > at 60 does nothing");
+    onTap(uiGameBtnX(-10), uiGameRowY(1)); onTap(uiGameBtnX(-10), uiGameRowY(1));
+    onTap(uiGameBtnX(-10), uiGameRowY(1));
+    ck(gFarewellLevel == 50, "the farewell level goes down by ten and stops at 50");
+    onTap(uiGameBtnX(1), uiGameRowY(1));
+    ck(gFarewellLevel == 51, "and up by one");
+    onTap(233, uiGameEggY());
+    ck(!gEggPreferNew, "the egg button turns prefer-new off");
+    render();
+    onTap(233, uiGameEggY());
+    ck(gEggPreferNew, "and back on");
+    render();
+    clockOpen = false; clockPage = 0;
+    levelSpeedSet(60); farewellLevelSet(73); eggPreferNewSet(true);
   }
 
   printf("%s\n", bad?"FAILURES":"all good");

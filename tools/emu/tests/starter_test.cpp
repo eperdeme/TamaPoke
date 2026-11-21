@@ -12,6 +12,7 @@
 #include "pet.h"
 #include "party.h"
 #include <cstdio>
+#include <set>
 #include <cstring>
 uint32_t g_seed=29; FakeSerial Serial; FakeESP ESP; FakeWire Wire;
 volatile int g_touchX=0,g_touchY=0; volatile bool g_touchDown=false;
@@ -22,6 +23,7 @@ void setup(); void render(); void onTap(int16_t x, int16_t y);
 int16_t starterOf(uint8_t region, uint8_t i);
 uint8_t starterCountShown(uint8_t region);
 extern Pet pet;
+extern bool starterRegionDone;
 
 static int bad=0;
 static void ck(bool ok,const char*w){printf("%s  %s\n",ok?"PASS":"FAIL",w); if(!ok)bad++;}
@@ -88,6 +90,54 @@ int main(){
     Pet again; again.begin();
     ck(again.region == 1, "the region choice is saved");
     ck(!again.awaitingStarter(), "and the first boot does not run a second time");
+  }
+
+  // --- the starter screen's random button: one of THAT region's three, and the
+  // region chosen for later eggs is left alone
+  {
+    std::set<int16_t> seen;
+    bool inRegion = true, regionKept = true;
+    for (int k = 0; k < 100; k++) {
+      nvs().clear();
+      gRegionArt = 0xFFFF;                      // every pack on the card
+      pet.begin();                              // a fresh save: asks for a starter
+      starterRegionDone = true;
+      pet.setRegion(2);                         // HOENN
+      render();
+      onTap(233, 350 + 24);
+      if (pet.awaitingStarter()) { inRegion = false; break; }
+      const int16_t d = pet.eggPeek();
+      inRegion &= d == starterOf(2, 0) || d == starterOf(2, 1) || d == starterOf(2, 2);
+      regionKept &= pet.region == 2;
+      seen.insert(d);
+    }
+    ck(inRegion && seen.size() == 3, "the starter screen's random button picks one of that region's three");
+    ck(regionKept, "and leaves the region chosen for later eggs alone");
+  }
+
+  // --- the region screen's random button: one of all the regions' starters,
+  // and with no region chosen, later eggs come from all of them
+  {
+    std::set<int16_t> canon, seen;
+    for (uint8_t r = 0; r < REGION_COUNT; r++)
+      if (r != REGION_ALL) for (uint8_t i = 0; i < 3; i++) canon.insert(starterOf(r, i));
+    bool allCanon = true, regionAll = true, skipped = true;
+    for (int k = 0; k < 300; k++) {
+      nvs().clear();
+      gRegionArt = 0xFFFF;
+      pet.begin();
+      starterRegionDone = false;                // back on the region screen
+      render();
+      onTap(233, 336 + 22);
+      skipped &= starterRegionDone;
+      if (pet.awaitingStarter()) { allCanon = false; break; }
+      allCanon &= canon.count(pet.eggPeek()) == 1;
+      regionAll &= pet.region == REGION_ALL;
+      seen.insert(pet.eggPeek());
+    }
+    ck(allCanon && skipped, "the region screen's random button picks a starter and skips the starter screen");
+    ck(seen.size() == canon.size(), "and every one of the 27 starters can come out");
+    ck(regionAll, "and the eggs after it come from all regions");
   }
 
   // --- a tap that misses every row must do nothing rather than pick row 0.

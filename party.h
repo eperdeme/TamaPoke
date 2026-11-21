@@ -1,4 +1,5 @@
 #pragma once
+#include <stddef.h>
 #include <Arduino.h>
 #include <Preferences.h>
 #include <new>
@@ -29,6 +30,14 @@
 #define PM_BERRY    0x01   // found its favourite berry
 #define PM_FAREWELL 0x02   // its life is spent: it said its farewell, or was
                            // caught already past the farewell age
+// Where a creature came from. Stored as a byte + its bitwise complement in
+// PartyMon's old alignment padding (bytes 42..43); anything else (an older
+// build's uninitialised padding) reads as ORIGIN_UNKNOWN.
+#define ORIGIN_UNKNOWN  0
+#define ORIGIN_EGG      1     // hatched from one of the player's eggs (or evolved from one)
+#define ORIGIN_WILD     2     // caught in the wild (or evolved from a capture)
+#define ORIGIN_SIG_EGG  0x48  // 'H'
+#define ORIGIN_SIG_WILD 0x43  // 'C'
 
 struct PartyMon {
   int16_t dex = 0;      // Pokedex number, 0 = empty slot
@@ -62,15 +71,47 @@ struct PartyMon {
   // berryFound() instead, or a farewelled creature would claim its berry.
   uint8_t berryKnown = 0, careMistakes = 0;
   uint8_t evoDeclinedLv = 0, lastLearnLevel = 0;
-  // The real age. `level` stays as its cached mirror so every list, the battle
+  // ---- origin, in what USED TO BE alignment padding (bytes 42..43) ----------
+  // Two-byte signature (origin + ~origin) so older records' stray padding reads
+  // safely as ORIGIN_UNKNOWN without changing PartyMon's stride.
+  uint8_t origin = 0, originChk = 0;
+  // The game age. `level` stays as its cached mirror so every list, the battle
   // squad builder and the box screen keep reading one byte instead of dividing.
   uint32_t ageMinutes = 0;
+  // ---- real age, appended for the level speed setting (stateVersion 2) ------
+  // ageMinutes is GAME time: the level speed setting makes it run faster, and
+  // level, evolution and the farewell all hang off it. This is the REAL time
+  // the creature has been alive and active -- what the card shows as its age.
+  // Like ageMinutes it stops while stored. 0 on a record older than this field
+  // means "unknown", which is why it is only trusted at stateVersion >= 2.
+  uint32_t realAgeMin = 0;
 
   bool empty() const { return dex < 1; }
   bool hasCareState() const { return stateVersion >= 1; }
+  bool hasRealAge() const { return stateVersion >= 2; }
   bool berryFound() const { return (berryKnown & PM_BERRY) != 0; }
   bool farewellDone() const { return (berryKnown & PM_FAREWELL) != 0; }
+  uint8_t originKind() const {
+    if (originChk != (uint8_t)~origin) return ORIGIN_UNKNOWN;
+    if (origin == ORIGIN_SIG_EGG) return ORIGIN_EGG;
+    if (origin == ORIGIN_SIG_WILD) return ORIGIN_WILD;
+    return ORIGIN_UNKNOWN;
+  }
+  void setOrigin(uint8_t k) {
+    origin = k == ORIGIN_EGG ? ORIGIN_SIG_EGG : k == ORIGIN_WILD ? ORIGIN_SIG_WILD : 0;
+    originChk = origin ? (uint8_t)~origin : 0;
+  }
+  bool hatched() const { return originKind() == ORIGIN_EGG; }
 };
+// Every store of these records carries its stride and reads a shorter one by
+// the prefix rule, so appending realAgeMin is safe -- moving an existing field is not.
+static_assert(offsetof(PartyMon, origin) == 42 &&
+              offsetof(PartyMon, originChk) == 43 &&
+              offsetof(PartyMon, ageMinutes) == 44 &&
+              offsetof(PartyMon, realAgeMin) == 48 &&
+              sizeof(PartyMon) == 52,
+              "PartyMon layout changed -- fields may only be appended");
+#define PARTYMON_STATE_VERSION 2
 
 class BoxRecords {
 public:

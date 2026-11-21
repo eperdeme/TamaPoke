@@ -123,12 +123,12 @@ static bool sameMon(const PartyMon &left, const PartyMon &right) {
                   left.ivHp, left.trAtk, left.trDef, left.trSpe, left.shiny, left.stateVersion,
                   left.fullness, left.joy, left.energy, left.hygiene, left.poops, left.weight,
                   left.bond, left.berryKnown, left.careMistakes, left.evoDeclinedLv,
-                  left.lastLearnLevel, left.ageMinutes) ==
+                  left.lastLearnLevel, left.origin, left.originChk, left.ageMinutes, left.realAgeMin) ==
          std::tie(right.dex, right.level, right.medals, right.ivAtk, right.ivDef, right.ivSpe,
                   right.ivHp, right.trAtk, right.trDef, right.trSpe, right.shiny, right.stateVersion,
                   right.fullness, right.joy, right.energy, right.hygiene, right.poops, right.weight,
                   right.bond, right.berryKnown, right.careMistakes, right.evoDeclinedLv,
-                  right.lastLearnLevel, right.ageMinutes) &&
+                  right.lastLearnLevel, right.origin, right.originChk, right.ageMinutes, right.realAgeMin) &&
          !memcmp(left.nick, right.nick, sizeof(left.nick)) &&
          !memcmp(left.moves, right.moves, sizeof(left.moves));
 }
