@@ -175,6 +175,12 @@ enum StrId : uint8_t {
   // shown while a sprite pack streams in over USB
   S_XFER, S_XFER_FMT, S_XFER_HINT,
   S_EVO_PICK,       // choose which form this creature evolves into
+  S_LEVEL_SPEED_FMT, // GAME page: label of the minutes-per-level row
+  S_STARTER_RANDOM, // starter/region screen: a random starter
+  S_FAREWELL_LVL,   // GAME page: label of the farewell level row
+  S_LIFE_FMT,       // GAME page: "one life: %s" (a duration)
+  S_GAME_TITLE,     // GAME page: its title
+  S_EGG_NEW,        // GAME page: label of the "eggs prefer new lines" toggle
   STR_COUNT
 };
 

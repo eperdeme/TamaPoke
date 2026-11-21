@@ -260,6 +260,15 @@ int main(){
     ck(!wildToPartyMon().farewellDone(), "a capture below the threshold still has its farewell ahead");
     wildLvl++;
     ck(wildToPartyMon().farewellDone(), "a capture at the threshold has its farewell spent");
+    // Custom farewell level: lowering prevents catching past it for an instant farewell,
+    // raising allows catching below the new threshold to still earn one.
+    farewellLevelSet(50);
+    wildLvl = 60;
+    ck(wildToPartyMon().farewellDone(), "lowering farewell level marks captures at/above it as farewell-done");
+    farewellLevelSet(90);
+    wildLvl = 75;
+    ck(!wildToPartyMon().farewellDone(), "raising farewell level lets captures below it still earn a farewell");
+    farewellLevelSet(FAREWELL_LVL_DEFAULT);
     pet.dbgHatchAs(4, false);
     pet.fullness = pet.joy = pet.energy = pet.hygiene = 100;
     party.replaceAt(4, old);

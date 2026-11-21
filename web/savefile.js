@@ -139,7 +139,8 @@ export function verifyBackup(text) {
 const GAME_FIELDS = new Map([
   ['init', 3], ['petA', 7], ['petB', 7], ['plyA', 7], ['plyB', 7],
   ['pbA', 7], ['pbB', 7], ['fxA', 7], ['fxB', 7], ['bag', 7],
-  ['lang', 1], ['snd', 3], ['vol', 1], ['brt', 1], ['colv', 1],
+  ['lang', 1], ['snd', 3], ['vol', 1], ['brt', 1],
+  ['lvspd', 1], ['fwlv', 1], ['eggnew', 1], ['colv', 1],
 ]);
 // Old keys are retained by firmware upgrades and are backed up when present.
 for (const key of ['full', 'joy', 'ene', 'hyg', 'poop', 'wgt', 'crack', 'mist', 'lend',

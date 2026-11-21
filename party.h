@@ -1,4 +1,5 @@
 #pragma once
+#include <stddef.h>
 #include <Arduino.h>
 #include <Preferences.h>
 #include <new>
@@ -62,15 +63,30 @@ struct PartyMon {
   // berryFound() instead, or a farewelled creature would claim its berry.
   uint8_t berryKnown = 0, careMistakes = 0;
   uint8_t evoDeclinedLv = 0, lastLearnLevel = 0;
-  // The real age. `level` stays as its cached mirror so every list, the battle
+  // The game age. `level` stays as its cached mirror so every list, the battle
   // squad builder and the box screen keep reading one byte instead of dividing.
   uint32_t ageMinutes = 0;
+  // ---- real age, appended for the level speed setting (stateVersion 2) ------
+  // ageMinutes is GAME time: the level speed setting makes it run faster, and
+  // level, evolution and the farewell all hang off it. This is the REAL time
+  // the creature has been alive and active -- what the card shows as its age.
+  // Like ageMinutes it stops while stored. 0 on a record older than this field
+  // means "unknown", which is why it is only trusted at stateVersion >= 2.
+  uint32_t realAgeMin = 0;
 
   bool empty() const { return dex < 1; }
   bool hasCareState() const { return stateVersion >= 1; }
+  bool hasRealAge() const { return stateVersion >= 2; }
   bool berryFound() const { return (berryKnown & PM_BERRY) != 0; }
   bool farewellDone() const { return (berryKnown & PM_FAREWELL) != 0; }
 };
+// Every store of these records carries its stride and reads a shorter one by
+// the prefix rule, so appending realAgeMin is safe -- moving an existing field is not.
+static_assert(offsetof(PartyMon, ageMinutes) == 44 &&
+              offsetof(PartyMon, realAgeMin) == 48 &&
+              sizeof(PartyMon) == 52,
+              "PartyMon layout changed -- fields may only be appended");
+#define PARTYMON_STATE_VERSION 2
 
 class BoxRecords {
 public:

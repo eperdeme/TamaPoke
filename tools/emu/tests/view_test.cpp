@@ -659,6 +659,40 @@ int main(){
     leaveMemo();
   }
 
+  // --- the GAME settings page: four buttons a row, stopping at the ends ---
+  {
+    extern bool clockOpen; extern uint8_t clockPage;
+    void onTap(int16_t x, int16_t y);
+    uint8_t uiCurrentScreen();
+    extern const char *const SCREEN_NAME[];
+    int uiGameRowY(int r); int uiGameBtnX(int step); int uiGameEggY();
+    clockOpen = true; clockPage = 2;
+    levelSpeedSet(60); farewellLevelSet(73); eggPreferNewSet(true);
+    render();
+    ck(!strcmp(SCREEN_NAME[uiCurrentScreen()], "clock"), "the settings screen is up on its third page");
+    onTap(uiGameBtnX(-1), uiGameRowY(0));
+    ck(gLevelMins == 59, "< lowers the minutes per level by one");
+    onTap(uiGameBtnX(-10), uiGameRowY(0));
+    ck(gLevelMins == 49, "<< by ten");
+    onTap(uiGameBtnX(10), uiGameRowY(0)); onTap(uiGameBtnX(10), uiGameRowY(0));
+    ck(gLevelMins == 60, ">> stops at 60 instead of wrapping");
+    onTap(uiGameBtnX(1), uiGameRowY(0));
+    ck(gLevelMins == 60, "and > at 60 does nothing");
+    onTap(uiGameBtnX(-10), uiGameRowY(1)); onTap(uiGameBtnX(-10), uiGameRowY(1));
+    onTap(uiGameBtnX(-10), uiGameRowY(1));
+    ck(gFarewellLevel == 50, "the farewell level goes down by ten and stops at 50");
+    onTap(uiGameBtnX(1), uiGameRowY(1));
+    ck(gFarewellLevel == 51, "and up by one");
+    onTap(233, uiGameEggY());
+    ck(!gEggPreferNew, "the egg button turns prefer-new off");
+    render();
+    onTap(233, uiGameEggY());
+    ck(gEggPreferNew, "and back on");
+    render();
+    clockOpen = false; clockPage = 0;
+    levelSpeedSet(60); farewellLevelSet(73); eggPreferNewSet(true);
+  }
+
   printf("%s\n", bad?"FAILURES":"all good");
   return bad?1:0;
 }
