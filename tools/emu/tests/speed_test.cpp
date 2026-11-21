@@ -40,6 +40,7 @@ static void run(Clocked &c, int realMinutes) {
 static void hatched(Clocked &c, int16_t dex) {
   c.p.begin();
   if (c.p.awaitingStarter()) c.p.chooseStarter(4);
+  c.p.frozen = false;
   c.p.dbgHatchAs(dex, false);
   while (c.p.hasLearnOffer()) c.p.declineLearn();
   c.p.ageMinutes = 0;

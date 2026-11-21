@@ -702,6 +702,7 @@ int main(){
     tapOpt(quizAns);
     ck(memoOver && memoBest == 1, "the same deadline is enforced across the wrap");
     leaveMemo();
+    emuSetClockPaused(false);
   }
 
   // --- the GAME settings page: four buttons a row, stopping at the ends ---
@@ -711,6 +712,7 @@ int main(){
     uint8_t uiCurrentScreen();
     extern const char *const SCREEN_NAME[];
     int uiGameRowY(int r); int uiGameBtnX(int step); int uiGameEggY();
+    while (pet.hasLearnOffer()) pet.declineLearn();
     clockOpen = true; clockPage = 2;
     levelSpeedSet(60); farewellLevelSet(73); eggPreferNewSet(true);
     render();
