@@ -105,12 +105,29 @@ uint8_t galleryPage = 0;    // GAL_PAGES paginas de GAL_PER_PAGE
 // ever fires for the LIVE creature -- on hatch, on a focus swap, on revive -- so
 // a wild capture that went straight into the box has never touched dexReg. The
 // dex knows what you have RAISED; the party and box know what you HAVE.
-enum : uint8_t { GFILT_ALL = 0, GFILT_RAISED, GFILT_CAUGHT, GFILT_SHINY, GFILT_COUNT };
+// Separated Pokedex views: ALL (everything raised, hatched or caught), HATCHED
+// (your eggs and what they became), CAUGHT (wild captures and what they became),
+// and SHINY (shinies from any source). ALL / HATCHED / CAUGHT show the full
+// region with silhouettes for missing entries; SHINY filters to shinies only.
+enum : uint8_t { GFILT_ALL = 0, GFILT_HATCHED, GFILT_CAUGHT, GFILT_SHINY, GFILT_COUNT };
 uint8_t galleryFilter = GFILT_ALL;
+static inline uint8_t gvWhich() {
+  return galleryFilter == GFILT_HATCHED ? DEXV_HATCHED
+       : galleryFilter == GFILT_CAUGHT  ? DEXV_CAUGHT
+                                        : DEXV_COMPLETE;
+}
+static inline bool gvShiny() { return galleryFilter == GFILT_SHINY; }
+bool galleryMember(int16_t dex) { return pet.inDex(gvWhich(), gvShiny(), dex); }
 // Published so view_test can walk every filter without keeping its own copy of
 // how many there are -- a test that restates a count silently stops covering the
 // mode somebody adds next.
 uint8_t galleryFilterCount() { return GFILT_COUNT; }
+#define GAL_VIEWS GFILT_COUNT
+#define GAL_VBTN_Y 61
+#define GAL_VBTN_H 21
+#define GAL_VBTN_GAP 4
+void galleryViewRect(uint8_t i, int *x, int *w);
+int8_t galleryViewAt(int16_t x, int16_t y);
 int16_t galleryDetail = 0;  // dex en vista detalle, 0 = rejilla
 
 bool screenOff = false;       // pulsacion corta del boton PWR
@@ -345,11 +362,14 @@ int16_t randomStarter();
 // PAGES now depends on them -- and both are non-static so a test can drive the
 // firmware's own answer instead of recomputing it.
 bool galleryPass(int16_t dex);
+bool galleryMember(int16_t dex);
 uint16_t galleryCount();
 int16_t galleryAt(uint16_t visual);
 uint8_t galleryPages();
 const char *galleryFilterName();
 void galleryClampPage();
+void galleryViewRect(uint8_t i, int *x, int *w);
+int8_t galleryViewAt(int16_t x, int16_t y);
 // The type quiz. render() and onTap() reach these ~2000 lines above where they
 // are defined, and arduino-cli does not always auto-prototype.
 void startMemoGame();
@@ -3525,7 +3545,8 @@ void render() {
       gfx->print(rar);
     }
     char reg[24];
-    snprintf(reg, sizeof(reg), T(S_POKEDEX_FMT), pet.registeredCount(), DEX_COUNT);
+    snprintf(reg, sizeof(reg), T(S_POKEDEX_FMT),
+             pet.dexCountIn(DEXV_COMPLETE, false, 1, DEX_COUNT), DEX_COUNT);
     gfx->fillRect(0, 312, 466, 154, gNight ? UI_BG_NIGHT : UI_BG_DAY);
     gfx->setTextColor(inkColor());
     gfx->setTextSize(2);
@@ -5181,25 +5202,28 @@ static void wildGrantDrops() {
 // twin, and "which slot does a creature take" is exactly that shape.
 static bool wildStoreCaught() {
   PartyMon m = wildToPartyMon();
-  // NOT registered in the Pokedex here. Registration means "you raised this",
-  // and switchTo() does it when the creature actually becomes the one you are
-  // raising -- so catching one and leaving it in the box does not fill the dex.
+  // NOT registered as raised here: switchTo() does that when the creature
+  // actually becomes active. Once durable storage succeeds, noteCaught() records
+  // it in the CAUGHT Pokedex (and CAUGHT SHINY if shiny).
   if (!party.writable()) return false;
-  if (party.firstFree() >= 0) return party.add(m);
-  if (party.boxFirstFree() >= 0) return party.boxAdd(m);
-  // Both full: hand it to the chooser the endings already own. endedKind is
-  // only ever tested against CER_NONE by that flow, so this is the intended
-  // handover and not a borrowed meaning. Through setEnded() so it is written to
-  // the pet checkpoint as well -- a creature you just caught and have not yet
-  // found a slot for must not evaporate on a power cut either.
-  if (pet.endedKind != CER_NONE) return false;
-  const uint32_t gen = pet.petGeneration();
-  pet.setEnded(m, CER_RELEASE);
-  if (pet.petGeneration() == gen) {
-    pet.endedMon = PartyMon();
-    pet.endedKind = CER_NONE;
-    return false;
+  bool stored = false;
+  if (party.firstFree() >= 0) stored = party.add(m);
+  else if (party.boxFirstFree() >= 0) stored = party.boxAdd(m);
+  else {
+    // Both full: hand it to the chooser the endings already own.
+    if (pet.endedKind != CER_NONE) return false;
+    const uint32_t gen = pet.petGeneration();
+    pet.setEnded(m, CER_RELEASE);
+    if (pet.petGeneration() == gen) {
+      pet.endedMon = PartyMon();
+      pet.endedKind = CER_NONE;
+      return false;
+    }
+    stored = true;
   }
+  if (!stored) return false;
+  pet.noteCaught(m.dex, m.shiny != 0);
+  pet.saveNow();
   return true;
 }
 
@@ -6040,7 +6064,8 @@ static void renderPlayerBadges() {
   snprintf(l, sizeof(l), T(S_STREAK_FMT), pet.streak, pet.bestStreak);
   gfx->setCursor(CX - (int)strlen(l) * 6, 286);
   gfx->print(l);
-  snprintf(l, sizeof(l), T(S_POKEDEX_FMT), pet.registeredCount(), DEX_COUNT);
+  snprintf(l, sizeof(l), T(S_POKEDEX_FMT),
+           pet.dexCountIn(DEXV_COMPLETE, false, 1, DEX_COUNT), DEX_COUNT);
   gfx->setCursor(CX - (int)strlen(l) * 6, 312);
   gfx->print(l);
   snprintf(l, sizeof(l), T(S_PARTY_FMT), party.count());
@@ -7107,7 +7132,8 @@ static void renderRegionPick(uint8_t mode) {
   char ttl[40];
   if (mode == RPICK_FOR_START) snprintf(ttl, sizeof(ttl), "%s", T(S_CHOOSE_REGION));
   else if (forGyms) snprintf(ttl, sizeof(ttl), "%s", T(S_GYMS));
-  else snprintf(ttl, sizeof(ttl), T(S_POKEDEX_FMT), pet.registeredCount(), DEX_COUNT);
+  else snprintf(ttl, sizeof(ttl), T(S_POKEDEX_FMT),
+                pet.dexCountIn(DEXV_COMPLETE, false, 1, DEX_COUNT), DEX_COUNT);
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(2);
   gfx->setCursor(CX - (int)strlen(ttl) * 6, 48);
@@ -7150,7 +7176,7 @@ static void renderRegionPick(uint8_t mode) {
       snprintf(sub, sizeof(sub), T(S_BADGES_FMT), pet.badgeCountIn(i, gymHard));
     else if (mode == RPICK_FOR_DEX)
       snprintf(sub, sizeof(sub), "%u/%u",
-               pet.registeredCountIn(REGIONS[i].lo, REGIONS[i].hi),
+               pet.dexCountIn(DEXV_COMPLETE, false, REGIONS[i].lo, REGIONS[i].hi),
                (unsigned)(REGIONS[i].hi - REGIONS[i].lo + 1));
     if (sub[0]) {
       gfx->setTextColor(UI_INK_SOFT);
@@ -7387,7 +7413,8 @@ static void menuRowLabel(int i, char *out, size_t n) {
   switch (i) {
     case 0: snprintf(out, n, "%s", T(S_STATS)); break;
     case 1: snprintf(out, n, "%s", T(S_BAG)); break;
-    case 2: snprintf(out, n, T(S_POKEDEX_FMT), pet.registeredCount(), DEX_COUNT); break;
+    case 2: snprintf(out, n, T(S_POKEDEX_FMT),
+                     pet.dexCountIn(DEXV_COMPLETE, false, 1, DEX_COUNT), DEX_COUNT); break;
     case 3: snprintf(out, n, "%s", T(S_SETTINGS)); break;
     case 4: snprintf(out, n, "%s", T(S_RETIRE)); break;
     default: snprintf(out, n, "%s", T(S_CLOSE)); break;
@@ -7760,6 +7787,7 @@ PartyMon wildToPartyMon() {
   // Caught already at/past the active farewell level: nobody raised it there,
   // so its farewell -- and the blessed egg that comes with it -- is not on offer.
   if (wildLvl >= gFarewellLevel) m.berryKnown |= PM_FAREWELL;
+  m.setOrigin(ORIGIN_WILD);     // a capture, and so is everything it evolves into
   return m;
 }
 
@@ -8261,24 +8289,13 @@ void drawThumb(const uint8_t *b, int x, int y, int s, bool sil) {
 // longer contiguous, so the cell arithmetic that used to be repeated in both
 // places would put a tap on a different creature than the one drawn.
 
-// Is this species in the player's hands RIGHT NOW -- the live creature, a party
-// slot, or a box slot?
-static bool dexHeldNow(int16_t dex) {
-  if (!pet.isEgg() && pet.speciesId == dex) return true;
-  for (int i = 0; i < PARTY_SLOTS; i++)
-    if (party.slots[i].dex == dex) return true;
-  for (const PartyMon &m : party.box)
-    if (m.dex == dex) return true;
-  return false;
-}
-
+// ALL, HATCHED and CAUGHT draw the whole region classic-style (members in colour,
+// missing entries as silhouettes) so gaps in the hatched/caught dex are visible.
+// SHINY stays compact so shinies don't hide across 65 pages of silhouettes.
 bool galleryPass(int16_t dex) {
-  switch (galleryFilter) {
-    case GFILT_RAISED: return pet.isRegistered(dex);
-    case GFILT_CAUGHT: return dexHeldNow(dex);
-    case GFILT_SHINY:  return pet.isShinyRegistered(dex);
-    default: return true;
-  }
+  if (galleryFilter == GFILT_SHINY) return pet.inDex(DEXV_COMPLETE, true, dex);
+  (void)dex;
+  return true;
 }
 
 uint16_t galleryCount() {
@@ -8307,13 +8324,34 @@ uint8_t galleryPages() {
   return p ? p : 1;
 }
 
+static const StrId GAL_VIEW_LABEL[GAL_VIEWS] = {
+  S_FILT_ALL, S_FILT_HATCHED, S_FILT_CAUGHT, S_FILT_SHINY
+};
+
 const char *galleryFilterName() {
-  switch (galleryFilter) {
-    case GFILT_RAISED: return T(S_FILT_RAISED);
-    case GFILT_CAUGHT: return T(S_FILT_CAUGHT);
-    case GFILT_SHINY:  return T(S_FILT_SHINY);
-    default: return T(S_FILT_ALL);
+  return T(GAL_VIEW_LABEL[galleryFilter % GAL_VIEWS]);
+}
+
+static int galleryViewW(uint8_t i) {
+  const int w = (int)strlen(T(GAL_VIEW_LABEL[i % GAL_VIEWS])) * 6 + 10;
+  return w < 56 ? 56 : w;
+}
+
+void galleryViewRect(uint8_t i, int *x, int *w) {
+  int total = (GAL_VIEWS - 1) * GAL_VBTN_GAP;
+  for (uint8_t k = 0; k < GAL_VIEWS; k++) total += galleryViewW(k);
+  int at = CX - total / 2;
+  for (uint8_t k = 0; k < i; k++) at += galleryViewW(k) + GAL_VBTN_GAP;
+  *x = at; *w = galleryViewW(i);
+}
+
+int8_t galleryViewAt(int16_t x, int16_t y) {
+  if (y < GAL_VBTN_Y - 2 || y > GAL_VBTN_Y + GAL_VBTN_H + 1) return -1;
+  for (uint8_t i = 0; i < GAL_VIEWS; i++) {
+    int bx, bw; galleryViewRect(i, &bx, &bw);
+    if (x >= bx - 2 && x < bx + bw + 2) return (int8_t)i;
   }
+  return -1;
 }
 
 // Cycling the filter can leave the page past the end of a shorter result, and a
@@ -8329,10 +8367,11 @@ void renderGallery() {
     gfx->fillScreen(RGB565_BLACK);
     gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
     const DexEntry &d = DEX_TBL[galleryDetail];
-    bool reg = pet.isRegistered(galleryDetail);
+    bool reg = galleryMember(galleryDetail);
+    bool sh = reg && pet.inDex(gvWhich(), true, galleryDetail);
     char head[24];
     snprintf(head, sizeof(head), "N.%03d %s%s", galleryDetail,
-             pet.isShinyRegistered(galleryDetail) ? "*" : "", reg ? d.name : "???");
+             sh ? "*" : "", reg ? d.name : "???");
     gfx->setTextColor(reg ? d.accent : UI_INK);
     int glen = strlen(head);
     int gts = (glen <= 13) ? 3 : 2;  // auto-encoge nombres largos (no caben a t3)
@@ -8360,27 +8399,27 @@ void renderGallery() {
 
   gfx->fillScreen(RGB565_BLACK);
   gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
-  // the region's own name and its own tally: "how much of Johto have I seen"
-  // is the question you are actually asking here
+  // the region's own name and its own tally for the active Pokedex view
   char head[32];
   const RegionInfo &grg = REGIONS[galleryRegion % GAL_REGIONS];
   snprintf(head, sizeof(head), "%s %u/%u", grg.name,
-           pet.registeredCountIn(grg.lo, grg.hi), (unsigned)GAL_SPAN);
+           pet.dexCountIn(gvWhich(), gvShiny(), grg.lo, grg.hi), (unsigned)GAL_SPAN);
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(3);
   gfx->setCursor(CX - strlen(head) * 9, 36);
   gfx->print(head);
-  // The filter, under the tally and tappable -- it has to be VISIBLE, or a filter
-  // left on reads as a Pokedex that lost half its entries. Says what it is
-  // showing and how many, since "ALL 151" and "SHINY 3" answer different
-  // questions and the count is the interesting half.
-  {
-    char fl[32];
-    snprintf(fl, sizeof(fl), "%s %u", galleryFilterName(), (unsigned)galleryCount());
-    gfx->setTextColor(galleryFilter == GFILT_ALL ? UI_INK_SOFT : UI_BAR_WARN);
+  // Four view buttons under the tally: ALL / HATCHED / CAUGHT / SHINY.
+  // The chosen one is filled so a view left on is unmistakable.
+  for (uint8_t i = 0; i < GAL_VIEWS; i++) {
+    int bx, bw; galleryViewRect(i, &bx, &bw);
+    const bool on = galleryFilter == i;
+    gfx->fillRoundRect(bx, GAL_VBTN_Y, bw, GAL_VBTN_H, 6, on ? UI_INK : UI_WHITE);
+    gfx->drawRoundRect(bx, GAL_VBTN_Y, bw, GAL_VBTN_H, 6, UI_INK);
+    const char *l = T(GAL_VIEW_LABEL[i]);
+    gfx->setTextColor(on ? UI_WHITE : UI_INK);
     gfx->setTextSize(1);
-    gfx->setCursor(CX - (int)strlen(fl) * 3, 66);
-    gfx->print(fl);
+    gfx->setCursor(bx + bw / 2 - (int)strlen(l) * 3, GAL_VBTN_Y + GAL_VBTN_H / 2 - 4);
+    gfx->print(l);
   }
 
   if (galleryCount() == 0) {
@@ -8399,8 +8438,9 @@ void renderGallery() {
       int x = GAL_X + c * GAL_CELL, y = GAL_Y + r * GAL_CELL;
       const uint8_t *t = thumbs.get(dex);
       if (t) {
-        drawThumb(t, x, y, 2, !pet.isRegistered(dex));
-        if (pet.isShinyRegistered(dex)) {
+        const bool member = galleryMember(dex);
+        drawThumb(t, x, y, 2, !member);
+        if (member && pet.inDex(gvWhich(), true, dex)) {
           gfx->setTextColor(UI_BAR_WARN);
           gfx->setTextSize(2);
           gfx->setCursor(x + 62, y + 4);
@@ -8436,17 +8476,17 @@ void galleryTap(int16_t x, int16_t y) {
     galleryDirty = true;
     return;
   }
-  // The filter strip, BEFORE the exit band. It sits at y 66 inside what used to
-  // be "tap the header to leave", so the two are split by height: the title band
-  // still exits, the strip under it cycles.
-  if (y >= 58 && y < 80) {
-    galleryFilter = (uint8_t)((galleryFilter + 1) % GFILT_COUNT);
+  // The view buttons, BEFORE the exit band: the title above them still exits.
+  const int8_t v = galleryViewAt(x, y);
+  if (v >= 0) {
+    galleryFilter = (uint8_t)v;
     galleryClampPage();
     galleryDirty = true;
     sfxPlay(SFX_TAP);
     return;
   }
-  if (y < 58) {  // tocar la cabecera = salir
+  if (y >= GAL_VBTN_Y && y < GAL_Y) return;   // between buttons: nothing
+  if (y < GAL_VBTN_Y) {  // tocar la cabecera = salir
     galleryOpen = false;
     galleryPmd.unload();
     return;
@@ -8458,10 +8498,11 @@ void galleryTap(int16_t x, int16_t y) {
   const int16_t dex = galleryAt((uint16_t)galleryPage * GAL_PER_PAGE + r * 4 + c);
   if (!dex) return;
   galleryDetail = dex;
-  galleryPmd.load(dex, pet.isShinyRegistered(dex));
+  const bool member = galleryMember(dex);
+  galleryPmd.load(dex, member && pet.inDex(gvWhich(), true, dex));
   // Only for an entry the player has actually filled in. Playing the cry of a
   // silhouette would hand over the one thing the "???" is withholding.
-  if (pet.isRegistered(dex)) audioCry(dex);
+  if (member) audioCry(dex);
 }
 
 void drawBattery() {

@@ -2,7 +2,7 @@
   "native": [
     "ai_test", "battle_test", "clock_test", "collection_test", "crc32_test", "cry_test",
     "dexdata_test", "eevee_test", "evo_test", "foesave_test", "gym_test",
-    "i18n_test", "label_test", "link_test", "lossy_test", "moves_test",
+    "i18n_test", "label_test", "link_test", "lossy_test", "moves_test", "origin_test",
     "palette_test", "persist_test", "region_test", "retire_test", "revive_test",
     "reward_test", "roster_test", "save_test", "sleep_test", "speed_test", "stats_test",
     "synth_test", "trainer_test", "upgrade_test", "wild_test"

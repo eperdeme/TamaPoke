@@ -181,6 +181,7 @@ enum StrId : uint8_t {
   S_LIFE_FMT,       // GAME page: "one life: %s" (a duration)
   S_GAME_TITLE,     // GAME page: its title
   S_EGG_NEW,        // GAME page: label of the "eggs prefer new lines" toggle
+  S_FILT_HATCHED,   // Pokedex view: hatched from your eggs (and their evolutions)
   STR_COUNT
 };
 

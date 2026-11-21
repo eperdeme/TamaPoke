@@ -56,11 +56,11 @@ static bool sameMon(const PartyMon &a, const PartyMon &b) {
   return std::tie(a.dex, a.level, a.medals, a.ivAtk, a.ivDef, a.ivSpe, a.ivHp,
                   a.trAtk, a.trDef, a.trSpe, a.shiny, a.stateVersion, a.fullness,
                   a.joy, a.energy, a.hygiene, a.poops, a.weight, a.bond, a.berryKnown,
-                  a.careMistakes, a.evoDeclinedLv, a.lastLearnLevel, a.ageMinutes, a.realAgeMin) ==
+                  a.careMistakes, a.evoDeclinedLv, a.lastLearnLevel, a.origin, a.originChk, a.ageMinutes, a.realAgeMin) ==
          std::tie(b.dex, b.level, b.medals, b.ivAtk, b.ivDef, b.ivSpe, b.ivHp,
                   b.trAtk, b.trDef, b.trSpe, b.shiny, b.stateVersion, b.fullness,
                   b.joy, b.energy, b.hygiene, b.poops, b.weight, b.bond, b.berryKnown,
-                  b.careMistakes, b.evoDeclinedLv, b.lastLearnLevel, b.ageMinutes, b.realAgeMin) &&
+                  b.careMistakes, b.evoDeclinedLv, b.lastLearnLevel, b.origin, b.originChk, b.ageMinutes, b.realAgeMin) &&
          std::equal(std::begin(a.nick), std::end(a.nick), std::begin(b.nick)) &&
          std::equal(std::begin(a.moves), std::end(a.moves), std::begin(b.moves));
 }
@@ -204,6 +204,7 @@ static PartyMon encounter(unsigned index) {
   mon.ageMinutes = uint32_t(mon.level - 1) * MINUTES_PER_LEVEL;
   mon.realAgeMin = 0;
   if (mon.level >= gFarewellLevel) mon.berryKnown |= PM_FAREWELL;
+  mon.setOrigin(ORIGIN_WILD);
   mon.lastLearnLevel = mon.level;
   Pet foe;
   foe.dbgHatchAs(mon.dex, mon.shiny);

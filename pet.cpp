@@ -74,18 +74,18 @@ struct PetCoreSnapshot {
   uint8_t evoPen, sleepAuto, retirePending, eggTaps;
   uint8_t careMistakes, sleeping, lastEnd, frozen, bond;
   char nick[12];
-  // v1 had one byte of tail padding here, before its trailing crc. Named rather
-  // than left implicit so the struct has no bytes the compiler chose and the
-  // append point is unambiguous: a new SCALAR goes here, taking this byte, and
-  // the record's version and PET_FIXED both move.
-  uint8_t pad0;
+  // v1 had one byte of tail padding here, before its trailing crc. It now holds
+  // originKind (ORIGIN_EGG / ORIGIN_WILD; 0 = unknown). Every record written so
+  // far zero-initialised it (`PetCoreSnapshot snapshot = {}`), so an existing
+  // save reads 0 = unknown and PET_FIXED does not move.
+  uint8_t originKind;
 };
 // EXACT, not "< 256". PET_FIXED is on-disk format -- it is what the crc covers
 // and what a v1 blob's `size` implies -- so a field added above changes what
 // every device already holds. Failing this assert is the reminder to read the
 // append-only rule at the top of this section, then move the number
 // deliberately and bump PET_CORE_VERSION.
-static_assert(offsetof(PetCoreSnapshot, pad0) == PET_FIXED - 1,
+static_assert(offsetof(PetCoreSnapshot, originKind) == PET_FIXED - 1,
               "pet checkpoint fixed layout changed");
 static_assert(sizeof(PetCoreSnapshot) >= PET_FIXED, "PET_FIXED overruns the struct");
 
@@ -187,13 +187,13 @@ static constexpr size_t PLAYER_FIXED_V1 = 42;
 static constexpr size_t PLAYER_FIXED_V2 = 44;   // v2: + memoHi at offset 42
 static constexpr size_t PLAYER_FIXED_V3 = 50;   // v3: + calmToday (44), reserved (45), calmDay (46)
 static constexpr size_t PLAYER_FIXED = 52;      // v4: + quizHi at offset 50
-static constexpr size_t PLAYER_CAP = 512;
+static constexpr size_t PLAYER_CAP = 1024;   // 512 before the four origin dexes
 static constexpr size_t PLAYER_DEX_BYTES = (DEX_COUNT + 7) / 8;
 // DERIVED from the tables, never restated: CLAUDE.md § "sizeof(PartyMon) is
 // load-bearing in four places" is what a literal here costs. Failing this is
 // the signal to raise PLAYER_CAP, not to trim the record.
 static constexpr size_t PLAYER_MAX =
-    PLAYER_FIXED + 2 * PLAYER_DEX_BYTES + 4 * (GYM_REGIONS - 1) +
+    PLAYER_FIXED + 6 * PLAYER_DEX_BYTES + 4 * (GYM_REGIONS - 1) +
     2 * REGION_COUNT + 12 /* trainerName */ + CKPT_CRC;
 static_assert(PLAYER_MAX <= PLAYER_CAP, "raise PLAYER_CAP for the player record");
 
@@ -202,7 +202,12 @@ static_assert(PLAYER_MAX <= PLAYER_CAP, "raise PLAYER_CAP for the player record"
 
 bool Pet::savePlayerSnapshot() {
   const uint32_t nextGen = playerGeneration + 1;
-  uint8_t buf[PLAYER_CAP] = {};
+  uint8_t *buf = static_cast<uint8_t *>(saveAlloc(PLAYER_CAP));
+  if (!buf) {
+    Serial.println("save: player checkpoint buffer allocation failed");
+    return false;
+  }
+  memset(buf, 0, PLAYER_CAP);
 
   ckptWr16(buf + 12, (uint16_t)sizeof(dexReg));   // u16: a dex byte count outgrew 255 long ago
   buf[14] = REGION_COUNT;
@@ -230,15 +235,22 @@ bool Pet::savePlayerSnapshot() {
   ckptWr32(buf + 46, calmDay);                    // v3
   ckptWr16(buf + 50, quizHi);                     // v4
 
-  CkptCursor cur{ buf, PLAYER_FIXED, sizeof(buf) - CKPT_CRC };
+  CkptCursor cur{ buf, PLAYER_FIXED, PLAYER_CAP - CKPT_CRC };
   cur.put(dexReg, sizeof(dexReg));
   cur.put(dexShinyReg, sizeof(dexShinyReg));
   cur.put(badgesX, sizeof(badgesX));
   cur.put(badgesHardX, sizeof(badgesHardX));
   cur.put(eggByRegion, sizeof(eggByRegion));
   cur.put(trainerName, sizeof(trainerName));
+  // Appended after every array an older build knows, in PR #7's exact order,
+  // so both older builds and PR #7 saves stay compatible.
+  cur.put(dexHatched, sizeof(dexHatched));
+  cur.put(dexShinyCaught, sizeof(dexShinyCaught));
+  cur.put(dexCaught, sizeof(dexCaught));
+  cur.put(dexHatchedShiny, sizeof(dexHatchedShiny));
   if (cur.bad) {   // PLAYER_MAX static_asserts this cannot happen; say so if it does
     Serial.println("save: player record does not fit PLAYER_CAP");
+    free(buf);
     return false;
   }
 
@@ -247,11 +259,14 @@ bool Pet::savePlayerSnapshot() {
   const size_t written = prefs.putBytes(key, buf, total);
   if (written != total) {
     Serial.printf("save: %s wrote %u/%u bytes\n", key, (unsigned)written, (unsigned)total);
+    free(buf);
     return false;
   }
   // Read back into the same buffer and re-check, exactly as the creature's does.
-  uint16_t n = ckptRead(prefs, key, PLAYER_MAGIC, buf, sizeof(buf));
-  if (n != total || ckptRd32(buf + 8) != nextGen) {
+  uint16_t n = ckptRead(prefs, key, PLAYER_MAGIC, buf, PLAYER_CAP);
+  const bool ok = n == total && ckptRd32(buf + 8) == nextGen;
+  free(buf);
+  if (!ok) {
     Serial.printf("save: %s read-back failed (%u/%u bytes)\n", key, (unsigned)n, (unsigned)total);
     return false;
   }
@@ -260,9 +275,13 @@ bool Pet::savePlayerSnapshot() {
 }
 
 bool Pet::loadPlayerSnapshot() {
-  uint8_t buf[PLAYER_CAP];
-  uint16_t n = ckptReadNewest(prefs, "plyA", "plyB", PLAYER_MAGIC, buf, sizeof(buf));
-  if (!n) return false;
+  uint8_t *buf = static_cast<uint8_t *>(saveAlloc(PLAYER_CAP));
+  if (!buf) {
+    Serial.println("save: player checkpoint read buffer allocation failed");
+    return false;
+  }
+  uint16_t n = ckptReadNewest(prefs, "plyA", "plyB", PLAYER_MAGIC, buf, PLAYER_CAP);
+  if (!n) { free(buf); return false; }
 
   const size_t dexBytes = ckptRd16(buf + 12);
   const size_t regionN = buf[14];
@@ -280,11 +299,13 @@ bool Pet::loadPlayerSnapshot() {
   size_t fixed = buf[19] ? (size_t)buf[19] : PLAYER_FIXED_V1;
   if (fixed < PLAYER_FIXED_V1 || fixed > body) {
     Serial.println("save: player checkpoint scalar block length is not believable");
+    free(buf);
     return false;
   }
   const size_t need = fixed + 2 * dexBytes + 4 * badgeN + 2 * regionN + nameN;
   if (!regionN || need > body) {
     Serial.println("save: player checkpoint dimensions do not match its length");
+    free(buf);
     return false;
   }
 
@@ -321,6 +342,13 @@ bool Pet::loadPlayerSnapshot() {
   cur.take(eggByRegion, sizeof(eggByRegion), regionN * 2);
   cur.take(trainerName, sizeof(trainerName), nameN);
   trainerName[sizeof(trainerName) - 1] = 0;
+  // Optional trailing origin bitmaps: absent in v4.3.1 and older saves, present
+  // in this build and in PR #7 saves in this exact order.
+  if (!cur.bad && cur.at + dexBytes <= body) cur.take(dexHatched, sizeof(dexHatched), dexBytes);
+  if (!cur.bad && cur.at + dexBytes <= body) cur.take(dexShinyCaught, sizeof(dexShinyCaught), dexBytes);
+  if (!cur.bad && cur.at + dexBytes <= body) cur.take(dexCaught, sizeof(dexCaught), dexBytes);
+  if (!cur.bad && cur.at + dexBytes <= body) cur.take(dexHatchedShiny, sizeof(dexHatchedShiny), dexBytes);
+  free(buf);
 
   // REGION_ALL is the LAST entry of the table and is stored RAW, so a save from
   // a build with fewer regions has a number that now means somebody else --
@@ -356,6 +384,11 @@ void Pet::begin() {
   memset(badgesHardX, 0, sizeof(badgesHardX));
   memset(dexReg, 0, sizeof(dexReg));
   memset(dexShinyReg, 0, sizeof(dexShinyReg));
+  memset(dexHatched, 0, sizeof(dexHatched));
+  memset(dexShinyCaught, 0, sizeof(dexShinyCaught));
+  memset(dexCaught, 0, sizeof(dexCaught));
+  memset(dexHatchedShiny, 0, sizeof(dexHatchedShiny));
+  originKind = ORIGIN_UNKNOWN;
   bondToday = 0;
   bondDay = 0;
   for (int i = 0; i < REGION_COUNT; i++) eggByRegion[i] = 0;
@@ -721,6 +754,7 @@ void Pet::reviveFrom(const PartyMon &m) {
   hygiene = 100;
   poops = 0;
   frozen = true;
+  originKind = m.originKind();
   strncpy(nick, m.nick, sizeof(nick) - 1);
   nick[sizeof(nick) - 1] = 0;
   registerSpecies(speciesId);
@@ -762,6 +796,7 @@ PartyMon Pet::toPartyMon() const {
   m.lastLearnLevel = lastLearnLevel;
   m.ageMinutes = ageMinutes;
   m.realAgeMin = realAgeMin;
+  m.setOrigin(originKind);
   return m;
 }
 
@@ -823,6 +858,7 @@ void Pet::switchTo(const PartyMon &m) {
   // is the game age it was given there.
   realAgeMin = m.hasRealAge() ? m.realAgeMin : ageMinutes;
   growFrac = 0;
+  originKind = m.originKind();   // a capture stays a capture, whoever raises it
   strncpy(nick, m.nick, sizeof(nick) - 1);
   nick[sizeof(nick) - 1] = 0;
   registerSpecies(speciesId);
@@ -1121,6 +1157,13 @@ void Pet::registerSpecies(int16_t dex) {
   if (dex < 1 || dex > DEX_COUNT) return;
   dexReg[(dex - 1) >> 3] |= (1 << ((dex - 1) & 7));
   if (shiny) dexShinyReg[(dex - 1) >> 3] |= (1 << ((dex - 1) & 7));
+  if (originKind == ORIGIN_EGG) {
+    setBit(dexHatched, dex);
+    if (shiny) setBit(dexHatchedShiny, dex);
+  } else if (originKind == ORIGIN_WILD) {
+    setBit(dexCaught, dex);
+    if (shiny) setBit(dexShinyCaught, dex);
+  }
 }
 
 // la racha y el vinculo mejoran el sorteo del huevo (0..~14)
@@ -1654,6 +1697,7 @@ void Pet::hatch() {
   medals = 0;
   newMedal = 0;
   nick[0] = 0;
+  originKind = ORIGIN_EGG;     // out of the player's own egg
   registerSpecies(speciesId);  // criado = registrado en la pokedex
   // Start empty: checkLearnGates() fills the level-1 moves. Seeding from TMs
   // instead would hand a newborn FIRE BLAST, which no level 1 creature knows.
@@ -2024,6 +2068,7 @@ bool Pet::saveCoreSnapshot() {
   snapshot.retirePending = retirePending; snapshot.eggTaps = eggTaps;
   snapshot.careMistakes = careMistakes; snapshot.sleeping = sleeping;
   snapshot.lastEnd = lastEnd; snapshot.frozen = frozen; snapshot.bond = bond;
+  snapshot.originKind = originKind;
   strncpy(snapshot.nick, nick, sizeof(snapshot.nick) - 1);
 
   uint8_t buf[PET_CORE_CAP] = {};
@@ -2141,6 +2186,7 @@ bool Pet::loadCoreSnapshot() {
   retirePending = snapshot.retirePending != 0; eggTaps = snapshot.eggTaps;
   careMistakes = snapshot.careMistakes; sleeping = snapshot.sleeping != 0;
   lastEnd = snapshot.lastEnd; frozen = snapshot.frozen != 0; bond = snapshot.bond;
+  originKind = snapshot.originKind <= ORIGIN_WILD ? snapshot.originKind : ORIGIN_UNKNOWN;
   memcpy(nick, snapshot.nick, sizeof(nick));
   nick[sizeof(nick) - 1] = 0;
   return true;

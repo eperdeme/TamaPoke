@@ -11,6 +11,10 @@
 #define PET_TICK_MS 60000UL
 // Minutos de juego por nivel. Con 60, CHARMANDER evoluciona a las ~16 h
 // de juego con cuidado perfecto.
+// The three Pokedex views (see Pet::inDex).
+#define DEXV_COMPLETE 0
+#define DEXV_HATCHED  1
+#define DEXV_CAUGHT   2
 // Age is ALWAYS counted in game minutes at this rate, whatever the speed setting
 // below: the setting only decides how many game minutes one real minute is worth.
 // So switching speed never moves the current level, and saves mean the same thing.
@@ -252,6 +256,17 @@ public:
   // and bits 1-151 keep exactly their old meaning.
   uint8_t dexReg[(DEX_COUNT + 7) / 8] = { 0 };       // criados
   uint8_t dexShinyReg[(DEX_COUNT + 7) / 8] = { 0 };  // criados en version shiny
+  // Separated Pokedexes by origin: COMPLETE is dexReg | dexHatched | dexCaught;
+  // HATCHED follows your eggs and their evolutions; CAUGHT follows wild captures
+  // and their evolutions. Each has a shiny twin, appended to the player record
+  // in this exact order so older and PR #7 saves stay compatible.
+  uint8_t dexHatched[(DEX_COUNT + 7) / 8] = { 0 };
+  uint8_t dexShinyCaught[(DEX_COUNT + 7) / 8] = { 0 };
+  uint8_t dexCaught[(DEX_COUNT + 7) / 8] = { 0 };
+  uint8_t dexHatchedShiny[(DEX_COUNT + 7) / 8] = { 0 };
+  // Origin of the live creature: ORIGIN_EGG / ORIGIN_WILD / ORIGIN_UNKNOWN.
+  uint8_t originKind = ORIGIN_UNKNOWN;
+  bool hatchedLine() const { return originKind == ORIGIN_EGG; }
   // racha de cuidado diario (del jugador: persiste entre crianzas)
   uint16_t streak = 0, bestStreak = 0;
   uint32_t lastCareDay = 0;
@@ -588,6 +603,36 @@ public:
   }
   bool isRegistered(int16_t dex) const {
     return dex >= 1 && dex <= DEX_COUNT && (dexReg[(dex - 1) >> 3] & (1 << ((dex - 1) & 7)));
+  }
+  static bool bitOf(const uint8_t *m, int16_t dex) {
+    return dex >= 1 && dex <= DEX_COUNT && (m[(dex - 1) >> 3] & (1 << ((dex - 1) & 7)));
+  }
+  static void setBit(uint8_t *m, int16_t dex) {
+    if (dex >= 1 && dex <= DEX_COUNT) m[(dex - 1) >> 3] |= (1 << ((dex - 1) & 7));
+  }
+  bool isHatchedRegistered(int16_t dex) const { return bitOf(dexHatched, dex); }
+  bool isCaughtRegistered(int16_t dex) const { return bitOf(dexCaught, dex); }
+  // which: DEXV_COMPLETE / DEXV_HATCHED / DEXV_CAUGHT; shiny: only shinies.
+  bool inDex(uint8_t which, bool wantShiny, int16_t dex) const {
+    switch (which) {
+      case DEXV_HATCHED: return bitOf(wantShiny ? dexHatchedShiny : dexHatched, dex);
+      case DEXV_CAUGHT:  return bitOf(wantShiny ? dexShinyCaught : dexCaught, dex);
+      default:
+        return wantShiny
+                 ? (bitOf(dexShinyReg, dex) || bitOf(dexShinyCaught, dex) || bitOf(dexHatchedShiny, dex))
+                 : (bitOf(dexReg, dex) || bitOf(dexCaught, dex) || bitOf(dexHatched, dex));
+    }
+  }
+  uint16_t dexCountIn(uint8_t which, bool wantShiny, uint16_t lo, uint16_t hi) const {
+    uint16_t n = 0;
+    for (uint16_t d = lo; d <= hi && d <= DEX_COUNT; d++) if (inDex(which, wantShiny, d)) n++;
+    return n;
+  }
+  // A wild capture: CAUGHT (and its shiny twin) at once, raised or not.
+  // Caller saves after durable party/box storage succeeds.
+  void noteCaught(int16_t dex, bool wantShiny) {
+    setBit(dexCaught, dex);
+    if (wantShiny) setBit(dexShinyCaught, dex);
   }
   bool isShinyRegistered(int16_t dex) const {
     return dex >= 1 && dex <= DEX_COUNT && (dexShinyReg[(dex - 1) >> 3] & (1 << ((dex - 1) & 7)));
