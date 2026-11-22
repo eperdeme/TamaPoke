@@ -197,11 +197,18 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
   // It started firing for every shot once dex_moves.py gained the cheap early
   // attacks, because a creature now genuinely has moves waiting.
   while (pet.hasLearnOffer()) pet.declineLearn();
+  pet.lastSeenEpoch = 1767225600 + 13 * 3600;   // 13:00 daylight for screenshots
   // "region" is step one of the first boot and "starter" is step two, so the
   // second one gets there the way a player does: by tapping a region.
   if (!strcmp(screen, "starter")) onTap(233, 108 + 30);        // KANTO
   if (!strcmp(screen, "starterj")) onTap(233, 108 + 72 + 30);  // JOHTO
   for (int i = 0; i < 2; i++) loop();          // pick up the sprite for the new species
+  if (!strcmp(screen, "main")) {   // let the hatch medal toast expire
+    emuSetTimeScale(5000);
+    uint32_t t0 = millis();
+    while (millis() - t0 < 4500) {}
+    emuSetTimeScale(1);
+  }
   cardOpen = galleryOpen = clockOpen = kbOpen = false;
   menuOpen = partyOpen = partyPick = trainOpen = movePickOpen = false;
   if (!strcmp(screen, "battle"))      { cardOpen = true; cardPage = 1; }
@@ -404,6 +411,7 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "--lvl") && i + 1 < argc) shotLvl = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--iv") && i + 1 < argc) shotIv = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--dex") && i + 1 < argc) shotDex = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--biome") && i + 1 < argc) { extern int8_t gBiomeOverride; gBiomeOverride = (int8_t)atoi(argv[++i]); }
     else if (!strcmp(argv[i], "--sprites") && i + 1 < argc) emuSetSpriteDir(argv[++i]);
     else if (!strcmp(argv[i], "--wipe")) { remove(save); }
   }
