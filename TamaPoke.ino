@@ -860,17 +860,34 @@ int uiSafeHalfWidthFor(int y0, int y1) {
   return a < b ? a : b;
 }
 
-// An arc segment: Arduino_GFX has no arc primitive, so it is stamped from
-// overlapping dots. Angles are degrees clockwise from 12 o'clock.
+// An arc segment: Arduino_GFX has no arc primitive. The band is built from
+// solid quads (two triangles per slice, edges ~3 px long) so it is one even
+// stroke, with a round cap at each end. Stamping overlapping dots instead left
+// a scalloped, patchy edge that read as "drawn in" (issue #23).
+// Angles are degrees clockwise from 12 o'clock.
 void uiArc(int cx, int cy, int r, int a0, int a1, int w, uint16_t col) {
   if (a1 < a0) { int t = a0; a0 = a1; a1 = t; }
   int rad = w / 2;
   if (rad < 1) rad = 1;
-  int n = (int)(((a1 - a0) * 0.01745f * r) / rad) + 1;   // dots must overlap
+  int ri = r - rad, ro = r + rad;
+  int n = (int)(((a1 - a0) * 0.01745329f * r) / 3.0f) + 1;   // ~3 px per slice
+  float step = (float)(a1 - a0) / (float)n;
+  int px0 = 0, py0 = 0, px1 = 0, py1 = 0;
   for (int i = 0; i <= n; i++) {
-    float ang = ((float)a0 + (float)(a1 - a0) * (float)i / (float)n - 90.0f) * 0.01745329f;
-    gfx->fillCircle(cx + (int)(cosf(ang) * r), cy + (int)(sinf(ang) * r), rad, col);
+    float ang = ((float)a0 + step * (float)i - 90.0f) * 0.01745329f;
+    float c = cosf(ang), s = sinf(ang);
+    int x0 = cx + (int)lroundf(c * ri), y0 = cy + (int)lroundf(s * ri);
+    int x1 = cx + (int)lroundf(c * ro), y1 = cy + (int)lroundf(s * ro);
+    if (i > 0) {
+      gfx->fillTriangle(px0, py0, px1, py1, x1, y1, col);
+      gfx->fillTriangle(px0, py0, x1, y1, x0, y0, col);
+    }
+    px0 = x0; py0 = y0; px1 = x1; py1 = y1;
   }
+  // round caps
+  float e0 = ((float)a0 - 90.0f) * 0.01745329f, e1 = ((float)a1 - 90.0f) * 0.01745329f;
+  gfx->fillCircle(cx + (int)lroundf(cosf(e0) * r), cy + (int)lroundf(sinf(e0) * r), rad, col);
+  gfx->fillCircle(cx + (int)lroundf(cosf(e1) * r), cy + (int)lroundf(sinf(e1) * r), rad, col);
 }
 
 // The gesture model. Its tables and handlers live down beside uiCurrentScreen(),
