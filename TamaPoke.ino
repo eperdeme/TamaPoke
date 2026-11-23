@@ -38,18 +38,94 @@
 #include "rtcbat.h"
 #include "nvsinfo.h"
 #include "i18n.h"
+#include "uifont.h"
 #include "audio.h"
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
 #define FW_VERSION "4.4.0"
 
+// Antialiased bold Fredoka UI font renderer (uifont.h, SIL OFL 1.1; adapted from
+// crenberries428/TamaPoke, MIT). Overrides write(buf, len) on Arduino_Canvas so
+// every gfx->print() / printf() at textSize >= 2 draws smooth 4-bit alpha-blended
+// glyphs inside the caller's [cursor_x, cursor_x + len * 6 * textsize_x] box.
+class UiCanvas : public Arduino_Canvas {
+public:
+  using Arduino_Canvas::Arduino_Canvas;
+
+  static int measureUi(const UiFont &f, const uint8_t *s, size_t len) {
+    int w = 0;
+    for (size_t i = 0; i < len; i++)
+      if (s[i] >= 32 && s[i] < 127) w += f.g[s[i] - 32].adv;
+    return w;
+  }
+
+  size_t write(const uint8_t *buf, size_t len) override {
+    if (!buf || !len) return 0;
+    // Stay on the 5x7 bitmap path for size-1 micro-labels or non-ASCII bytes.
+    if (textsize_x <= 1) {
+      for (size_t i = 0; i < len; i++) Arduino_Canvas::write(buf[i]);
+      return len;
+    }
+    for (size_t i = 0; i < len; i++) {
+      if (buf[i] < 32 || buf[i] >= 127) {
+        for (size_t j = 0; j < len; j++) Arduino_Canvas::write(buf[j]);
+        return len;
+      }
+    }
+    const int monoW = (int)len * 6 * textsize_x;
+    const int monoH = 7 * textsize_y;
+    // Choose the bold Fredoka size that matches textsize_x, stepping down only if
+    // a long string would overflow its allocated box or the round panel chord.
+    static const UiFont *const LADDER[] = { &UIF_TINY, &UIF_SMALL, &UIF_MID, &UIF_BIG, &UIF_HUGE };
+    int idx = (textsize_x >= 5) ? 4 : (textsize_x == 4) ? 3 : (textsize_x == 3) ? 2 : 1;
+    int cyMid = cursor_y + monoH / 2;
+    int dy = cyMid - 233;
+    int maxChord = (abs(dy) < 228) ? (int)(2.0f * sqrtf((float)(228 * 228 - dy * dy))) - 16 : 440;
+    int maxW = (len >= 11) ? (monoW + 18) : (monoW + 32);
+    if (maxW > maxChord) maxW = maxChord;
+    while (idx > 0 && measureUi(*LADDER[idx], buf, len) > maxW) idx--;
+    const UiFont &f = *LADDER[idx];
+    const int propW = measureUi(f, buf, len);
+    int x = cursor_x + (monoW - propW) / 2;
+    int baseY = cursor_y + (monoH + f.ascent) / 2;
+    uint16_t *fb = getFramebuffer();
+    const int fr = textcolor >> 11, fg = (textcolor >> 5) & 63, fb_ = textcolor & 31;
+    for (size_t k = 0; k < len; k++) {
+      const UiGlyph &g = f.g[buf[k] - 32];
+      for (int j = 0; j < g.h; j++) {
+        int py = baseY + g.yo + j;
+        if (py < 0 || py >= LCD_HEIGHT) continue;
+        for (int i = 0; i < g.w; i++) {
+          int n = j * g.w + i;
+          uint8_t a = (f.bits[g.off + (n >> 1)] >> ((n & 1) ? 0 : 4)) & 15;
+          if (!a) continue;
+          int px = x + g.xo + i;
+          if (px < 0 || px >= LCD_WIDTH) continue;
+          uint16_t &dst = fb[(size_t)py * LCD_WIDTH + px];
+          if (a == 15) dst = textcolor;
+          else {
+            uint16_t bg = dst;
+            int r = (bg >> 11) + (fr - (bg >> 11)) * a / 15;
+            int gg = ((bg >> 5) & 63) + (fg - ((bg >> 5) & 63)) * a / 15;
+            int b = (bg & 31) + (fb_ - (bg & 31)) * a / 15;
+            dst = (uint16_t)((r << 11) | (gg << 5) | b);
+          }
+        }
+      }
+      x += g.adv;
+    }
+    cursor_x += monoW;
+    return len;
+  }
+};
+
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
   LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
 Arduino_CO5300 *panel = new Arduino_CO5300(
   bus, LCD_RESET, 0 /*rotation*/, LCD_WIDTH, LCD_HEIGHT, 6, 0, 0, 0);
 // Framebuffer completo en PSRAM: dibujamos todo y hacemos flush() (sin parpadeo)
-Arduino_Canvas *gfx = new Arduino_Canvas(LCD_WIDTH, LCD_HEIGHT, panel);
+Arduino_Canvas *gfx = new UiCanvas(LCD_WIDTH, LCD_HEIGHT, panel);
 
 TouchDrvCST92xx touch;
 Pet pet;
