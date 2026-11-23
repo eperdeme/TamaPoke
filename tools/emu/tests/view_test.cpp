@@ -209,7 +209,9 @@ int main(){
       char m[80]; snprintf(m, sizeof(m), "the %s button picks its view", nm[b]);
       ck(cx > 0 && galleryFilter == b && galleryOpen, m);
     }
-    ck(galleryViewAt(233, 40) < 0, "the title above them is not a button (it still exits)");
+    onTap(233, 40);
+    ck(galleryViewAt(233, 40) < 0 && galleryOpen,
+       "the title above them is not a button and no longer exits on a mis-tap (#24)");
     galleryOpen = false;
     galleryFilter = GFILT_ALL;
   }

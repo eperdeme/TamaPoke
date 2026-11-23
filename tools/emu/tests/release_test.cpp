@@ -405,8 +405,15 @@ int main(){
        "and back on the main screen, or the check below proves nothing");
     confirmUntil=0; holdFired=false;
     hold(233,200,3400);                     // the creature itself
-    ck(confirmUntil!=0, "the hold STILL works on the main screen, where it belongs");
+    ck(confirmUntil==0, "holding the creature on the main screen no longer offers to release it (issue #24)");
     confirmUntil=0;
+
+    // A slight mis-tap in dead space must not close the box or a detail sheet (#24).
+    partyOpen=boxOpen=true;
+    boxTap(233, 40);
+    ck(boxOpen, "tapping the top dead space in the box no longer closes it (#24)");
+    boxTap(233, 402);
+    ck(!boxOpen, "tapping the bottom BACK label still closes the box");
   }
 
   printf("%s\n", bad?"FAILURES":"all good");

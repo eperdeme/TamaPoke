@@ -203,7 +203,7 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
   if (!strcmp(screen, "starter")) onTap(233, 108 + 30);        // KANTO
   if (!strcmp(screen, "starterj")) onTap(233, 108 + 72 + 30);  // JOHTO
   for (int i = 0; i < 2; i++) loop();          // pick up the sprite for the new species
-  if (!strcmp(screen, "main")) {   // let the hatch medal toast expire
+  if (!strcmp(screen, "main") || !strncmp(screen, "eat", 3)) {   // let the hatch/level medal toast expire
     emuSetTimeScale(5000);
     uint32_t t0 = millis();
     while (millis() - t0 < 4500) {}
@@ -256,6 +256,11 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
     btlFoe.hp = btlFoe.maxHp / 3;      // bar mid-drain
     btlLungeUntil[0] = millis() + 130; // you mid-lunge
     btlHitUntil[1] = millis() + 300;   // foe flinching
+  }
+  else if (!strncmp(screen, "eat", 3) && screen[3] >= '0' && screen[3] <= '3') {   // eatN_MS: item N, MS in
+    onTap(92, 352);                               // open the picker...
+    onTap(101 + (screen[3] - '0') * 66 + 30, 268); // ...and pick the item (FEED_MENU_Y=236..300)
+    usleep((screen[4] == '_' ? atoi(screen + 5) : 0) * 1000);
   }
   else if (!strcmp(screen, "explore")) exploreOpen = true;
   else if (!strcmp(screen, "gyms")) { gymOpen = true; }

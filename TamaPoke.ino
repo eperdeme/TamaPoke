@@ -38,18 +38,95 @@
 #include "rtcbat.h"
 #include "nvsinfo.h"
 #include "i18n.h"
+#include "uifont.h"
 #include "audio.h"
+#include "power.h"
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
 #define FW_VERSION "4.4.0"
+
+// Antialiased bold Fredoka UI font renderer (uifont.h, SIL OFL 1.1; adapted from
+// crenberries428/TamaPoke, MIT). Overrides write(buf, len) on Arduino_Canvas so
+// every gfx->print() / printf() at textSize >= 2 draws smooth 4-bit alpha-blended
+// glyphs inside the caller's [cursor_x, cursor_x + len * 6 * textsize_x] box.
+class UiCanvas : public Arduino_Canvas {
+public:
+  using Arduino_Canvas::Arduino_Canvas;
+
+  static int measureUi(const UiFont &f, const uint8_t *s, size_t len) {
+    int w = 0;
+    for (size_t i = 0; i < len; i++)
+      if (s[i] >= 32 && s[i] < 127) w += f.g[s[i] - 32].adv;
+    return w;
+  }
+
+  size_t write(const uint8_t *buf, size_t len) override {
+    if (!buf || !len) return 0;
+    // Stay on the 5x7 bitmap path for size-1 micro-labels or non-ASCII bytes.
+    if (textsize_x <= 1) {
+      for (size_t i = 0; i < len; i++) Arduino_Canvas::write(buf[i]);
+      return len;
+    }
+    for (size_t i = 0; i < len; i++) {
+      if (buf[i] < 32 || buf[i] >= 127) {
+        for (size_t j = 0; j < len; j++) Arduino_Canvas::write(buf[j]);
+        return len;
+      }
+    }
+    const int monoW = (int)len * 6 * textsize_x;
+    const int monoH = 7 * textsize_y;
+    // Choose the bold Fredoka size that matches textsize_x, stepping down only if
+    // a long string would overflow its allocated box or the round panel chord.
+    static const UiFont *const LADDER[] = { &UIF_TINY, &UIF_SMALL, &UIF_MID, &UIF_BIG, &UIF_HUGE };
+    int idx = (textsize_x >= 5) ? 4 : (textsize_x == 4) ? 3 : (textsize_x == 3) ? 2 : 1;
+    int cyMid = cursor_y + monoH / 2;
+    int dy = cyMid - 233;
+    int maxChord = (abs(dy) < 228) ? (int)(2.0f * sqrtf((float)(228 * 228 - dy * dy))) - 16 : 440;
+    int maxW = (len >= 11) ? (monoW + 18) : (monoW + 32);
+    if (maxW > maxChord) maxW = maxChord;
+    while (idx > 0 && measureUi(*LADDER[idx], buf, len) > maxW) idx--;
+    const UiFont &f = *LADDER[idx];
+    const int propW = measureUi(f, buf, len);
+    int x = cursor_x + (monoW - propW) / 2;
+    int baseY = cursor_y + (monoH + f.ascent) / 2;
+    uint16_t *fb = getFramebuffer();
+    const int fr = textcolor >> 11, fg = (textcolor >> 5) & 63, fb_ = textcolor & 31;
+    for (size_t k = 0; k < len; k++) {
+      const UiGlyph &g = f.g[buf[k] - 32];
+      for (int j = 0; j < g.h; j++) {
+        int py = baseY + g.yo + j;
+        if (py < 0 || py >= LCD_HEIGHT) continue;
+        for (int i = 0; i < g.w; i++) {
+          int n = j * g.w + i;
+          uint8_t a = (f.bits[g.off + (n >> 1)] >> ((n & 1) ? 0 : 4)) & 15;
+          if (!a) continue;
+          int px = x + g.xo + i;
+          if (px < 0 || px >= LCD_WIDTH) continue;
+          uint16_t &dst = fb[(size_t)py * LCD_WIDTH + px];
+          if (a == 15) dst = textcolor;
+          else {
+            uint16_t bg = dst;
+            int r = (bg >> 11) + (fr - (bg >> 11)) * a / 15;
+            int gg = ((bg >> 5) & 63) + (fg - ((bg >> 5) & 63)) * a / 15;
+            int b = (bg & 31) + (fb_ - (bg & 31)) * a / 15;
+            dst = (uint16_t)((r << 11) | (gg << 5) | b);
+          }
+        }
+      }
+      x += g.adv;
+    }
+    cursor_x += monoW;
+    return len;
+  }
+};
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
   LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
 Arduino_CO5300 *panel = new Arduino_CO5300(
   bus, LCD_RESET, 0 /*rotation*/, LCD_WIDTH, LCD_HEIGHT, 6, 0, 0, 0);
 // Framebuffer completo en PSRAM: dibujamos todo y hacemos flush() (sin parpadeo)
-Arduino_Canvas *gfx = new Arduino_Canvas(LCD_WIDTH, LCD_HEIGHT, panel);
+Arduino_Canvas *gfx = new UiCanvas(LCD_WIDTH, LCD_HEIGHT, panel);
 
 TouchDrvCST92xx touch;
 Pet pet;
@@ -860,17 +937,34 @@ int uiSafeHalfWidthFor(int y0, int y1) {
   return a < b ? a : b;
 }
 
-// An arc segment: Arduino_GFX has no arc primitive, so it is stamped from
-// overlapping dots. Angles are degrees clockwise from 12 o'clock.
+// An arc segment: Arduino_GFX has no arc primitive. The band is built from
+// solid quads (two triangles per slice, edges ~3 px long) so it is one even
+// stroke, with a round cap at each end. Stamping overlapping dots instead left
+// a scalloped, patchy edge that read as "drawn in" (issue #23).
+// Angles are degrees clockwise from 12 o'clock.
 void uiArc(int cx, int cy, int r, int a0, int a1, int w, uint16_t col) {
   if (a1 < a0) { int t = a0; a0 = a1; a1 = t; }
   int rad = w / 2;
   if (rad < 1) rad = 1;
-  int n = (int)(((a1 - a0) * 0.01745f * r) / rad) + 1;   // dots must overlap
+  int ri = r - rad, ro = r + rad;
+  int n = (int)(((a1 - a0) * 0.01745329f * r) / 3.0f) + 1;   // ~3 px per slice
+  float step = (float)(a1 - a0) / (float)n;
+  int px0 = 0, py0 = 0, px1 = 0, py1 = 0;
   for (int i = 0; i <= n; i++) {
-    float ang = ((float)a0 + (float)(a1 - a0) * (float)i / (float)n - 90.0f) * 0.01745329f;
-    gfx->fillCircle(cx + (int)(cosf(ang) * r), cy + (int)(sinf(ang) * r), rad, col);
+    float ang = ((float)a0 + step * (float)i - 90.0f) * 0.01745329f;
+    float c = cosf(ang), s = sinf(ang);
+    int x0 = cx + (int)lroundf(c * ri), y0 = cy + (int)lroundf(s * ri);
+    int x1 = cx + (int)lroundf(c * ro), y1 = cy + (int)lroundf(s * ro);
+    if (i > 0) {
+      gfx->fillTriangle(px0, py0, px1, py1, x1, y1, col);
+      gfx->fillTriangle(px0, py0, x1, y1, x0, y0, col);
+    }
+    px0 = x0; py0 = y0; px1 = x1; py1 = y1;
   }
+  // round caps
+  float e0 = ((float)a0 - 90.0f) * 0.01745329f, e1 = ((float)a1 - 90.0f) * 0.01745329f;
+  gfx->fillCircle(cx + (int)lroundf(cosf(e0) * r), cy + (int)lroundf(sinf(e0) * r), rad, col);
+  gfx->fillCircle(cx + (int)lroundf(cosf(e1) * r), cy + (int)lroundf(sinf(e1) * r), rad, col);
 }
 
 // The gesture model. Its tables and handlers live down beside uiCurrentScreen(),
@@ -918,6 +1012,10 @@ struct Btn {
 // the row stays on glass. At 80 px and 88 px apart the outermost reaches radius
 // 220 of 233 -- the row cannot grow again without losing an icon, because four
 // UI_TAP_FINGER targets need 392 px of chord and reach radius 222.
+// What the creature is eating, remembered from the food picker so the animation
+// can draw it (0 apple, 1 blueberry, 2 pear, 3 candy). Not saved.
+static uint8_t eatItem = 0;
+
 #define BTN_COUNT 4
 // Referred to by NAME, never by literal index. Removing the ball icon shifted
 // every index by one and drawButtons() still had `i != 2` meaning LIGHT -- which
@@ -1375,6 +1473,14 @@ void loop() {
 
   updateBrightness(now);
 
+  // Battery at the safe limit (no USB): save the pet and power the PMU off before the cell
+  // drops further; the RTC keeps the time. See batcurve.h.
+  if (batShouldShutdown() && !usbPresentNow()) {
+    flushBeforePowerLoss("battery cutoff");
+    panel->setBrightness(0);
+    batPowerOff();
+  }
+
   // vuelca el autoguardado periodico SOLO con la pantalla atenuada/apagada o
   // durmiendo: la escritura a NVS congela ~1s ambos cores (caché de flash off),
   // y aqui no hay animacion que se corte ni dedo esperando respuesta. Con 90s
@@ -1424,14 +1530,29 @@ void loop() {
   //
   // So the frame still happens, just far less often, and anything with motion or
   // a peer waiting on it keeps its full rate.
-  uint32_t period = (gameOpen || sackOpen || spdOpen || memoOpen) ? 85 : 100;
-  if (gBrightNow == 0 && !battleOpen && !gameOpen && !sackOpen && !spdOpen && !memoOpen)
-    period = 500;
+  PowerCtx pc = {};
+  pc.idleMs = idleSince(now, lastInteract);
+  pc.screenOff = screenOff;
+  pc.sleeping = pet.sleeping;
+  pc.gameOpen = gameOpen || sackOpen || spdOpen || memoOpen || battleOpen;
+  pc.usb = usbPresent();
+  pc.charging = batCharging();
+  pc.batPct = batPercent();
+  uint32_t period = frameIntervalMs(pc);
+  if (screenOff && !battleOpen) period = 500;   // dark panel: the frame stretches, it does not stop (see above)
+  if (period == 0) period = 500;
   // The one pause, and transferMode() already excludes the fights and minigames above.
   if (transferMode()) period = 1000;
+  batSetPollMs(powerCacheMs(pc));
   if (now - lastRender >= period) {
     lastRender = now;
     render();
+  } else if (!transferMode() && !battleOpen && lightSleepAllowed(pc) && !usbPresentNow()) {
+    // Battery only, screen dark or nearly: sleep the CPU between frames. A touch (TP_INT)
+    // or the timer wakes it. Never on USB (the serial port would vanish) or mid-transfer.
+    cpuLightSleep(POWER_SLEEP_MS);
+  } else {
+    delay(idleDelayMs(pc));
   }
 }
 
@@ -1455,6 +1576,12 @@ void updateBrightness(uint32_t now) {
   // upwards by the dim ladder's own numbers -- at level 1 the base is ~20 and
   // dimStage 1's flat 60 would make an idle screen BRIGHTER than an attended one.
   if (target > base) target = base;
+  {
+    PowerCtx bc = {};
+    bc.usb = usbPresent(); bc.charging = batCharging(); bc.batPct = batPercent();
+    if (batteryCritical(bc) && target > 60) target = 60;
+    else if (batteryLow(bc) && target > 100) target = 100;
+  }
   if (screenOff) target = 0;
   if (target != gBrightNow) {
     gBrightNow = target;
@@ -1923,12 +2050,9 @@ void handleTouch() {
     if (!holdFired && !swallowGesture && !rimActive && millis() - tStart >= 1000 &&
         abs(tXl - tX0) < 30 && abs(tYl - tY0) < 30 && boxHubHold(tX0, tY0))
       holdFired = true;
-    if (!holdFired && !swallowGesture && uiCurrentScreen() == SCR_MAIN && millis() - tStart > 3000 &&
-        abs(tXl - tX0) < 30 && abs(tYl - tY0) < 30 && inPetZone(tX0, tY0) &&
-        !pet.isEgg() && !confirmUntil && !pet.ceremony) {
-      confirmUntil = millis() + 10000;
-      holdFired = true;
-    }
+    // There used to be a 3 s hold on the creature here that opened the release
+    // dialog. It is gone (issue #24): holding a pet you are petting is too easy
+    // to do by accident, and the same action lives in MENU -> RETIRE.
   } else if (wasPressed) {  // levanta el dedo: resolver gesto
     lastInteract = millis();
     int dx = tXl - tX0, dy = tYl - tY0;
@@ -2363,9 +2487,11 @@ void partyTap(int16_t x, int16_t y) {
       sfxPlay(SFX_TAP);
       return;
     }
-    partyDetail = 0;
-    releaseConfirm = false;
-    sfxPlay(SFX_TAP);
+    if (y > 380) {                           // only the BACK band at the bottom
+      partyDetail = 0;
+      releaseConfirm = false;
+      sfxPlay(SFX_TAP);
+    }
     return;
   }
   if (!partyPick && partyHubAt(x, y)) {
@@ -2375,9 +2501,9 @@ void partyTap(int16_t x, int16_t y) {
     sfxPlay(SFX_TAP);
     return;
   }
-  // exit button, and the top band, both always work
-  if ((y >= PARTYCLOSE_Y && y <= PARTYCLOSE_Y + PARTYCLOSE_H &&
-       x >= PARTYCLOSE_X && x <= PARTYCLOSE_X + PARTYCLOSE_W) || y < 34) {
+  // exit button only (no unmarked top-edge exit trap: issue #24)
+  if (y >= PARTYCLOSE_Y && y <= PARTYCLOSE_Y + PARTYCLOSE_H &&
+      x >= PARTYCLOSE_X && x <= PARTYCLOSE_X + PARTYCLOSE_W) {
     if (partyPick) {                 // declined the swap: the pet is let go
       if (!clearHandover()) { sfxPlay(SFX_DENY); return; }
       partyPick = false;
@@ -2549,14 +2675,14 @@ void onTap(int16_t x, int16_t y) {
       sfxPlay(SFX_TAP);
       return;
     }
-    // the avatar is the only other live target; everything else backs out
+    // only the bottom BACK band closes; a miss near the avatar/name stays put (#24)
     if (playerPage == 0 && x > CX - 40 && x < CX + 40 && y > 70 && y < 146) {
       pet.avatar = (uint8_t)((pet.avatar + 1) % AVATAR_COUNT);
       pet.saveNow();
       sfxPlay(SFX_TAP);
       return;
     }
-    playerOpen = false;
+    if (y > 380) playerOpen = false;
     return;
   }
   if (medalsOpen) {   // nothing on it is live: a tap backs out, as on the card
@@ -2622,7 +2748,7 @@ void onTap(int16_t x, int16_t y) {
       pickOpen = true;
       return;
     }
-    gymOpen = false;
+    if (y > 380) gymOpen = false;   // only the bottom BACK band, not a missed row (#24)
     return;
   }
   if (pet.hasLearnOffer()) {
@@ -2711,7 +2837,7 @@ void onTap(int16_t x, int16_t y) {
       movePickOpen = false;
       return;
     }
-    movePickOpen = false;   // tap anywhere else = back to the moves page
+    if (y > 380) movePickOpen = false;   // only the bottom BACK band (#24)
     return;
   }
   if (partyOpen) {
@@ -2759,8 +2885,8 @@ void onTap(int16_t x, int16_t y) {
         movePickOpen = true;
         return;
       }
-      cardOpen = false;            // anywhere else on the page still exits
-    } else {
+      if (y > 380) cardOpen = false;   // only the bottom BACK band (#24)
+    } else if (y > 380) {
       cardOpen = false;
     }
     return;
@@ -2818,6 +2944,7 @@ void onTap(int16_t x, int16_t y) {
         x >= FEED_MENU_X && x <= FEED_MENU_X + FEED_MENU_W) {
       int item = (x - FEED_MENU_X) / (FEED_MENU_W / 4);
       if (item > 3) item = 3;
+      eatItem = (uint8_t)item;
       if (item == 3) pet.feedCandy();
       else pet.feedBerry(item);
       sfxPlay(SFX_EAT);
@@ -5019,6 +5146,7 @@ void render() {
     drawHeader(name, gNight ? UI_INK_NIGHT : d.accent, statusMsg());
     drawStreakBadge();
     drawPet();
+    drawEatFood();
     drawBath();
     drawPoops();
     // panel inferior: base limpia para barras y botones sobre el paisaje
@@ -9138,7 +9266,7 @@ void bagTap(int16_t x, int16_t y) {
     bagSay(T(S_ITEM_USED), itemEntry(k).name);
     return;
   }
-  bagOpen = false;   // anywhere else closes, like every other list screen
+  if (y > 380) bagOpen = false;   // only the bottom BACK band, not a missed row (#24)
 }
 
 // ---------- wild encounters ----------
@@ -9485,9 +9613,11 @@ void boxTap(int16_t x, int16_t y) {
       sfxPlay(SFX_TAP);
       return;
     }
-    boxDetail = 0;                          // anywhere else backs out
-    releaseConfirm = false;
-    sfxPlay(SFX_TAP);
+    if (y > 380) {                          // only the bottom BACK band (#24)
+      boxDetail = 0;
+      releaseConfirm = false;
+      sfxPlay(SFX_TAP);
+    }
     return;
   }
   // The hub cycles the order. Checked BEFORE the slots: the hub sits in the
@@ -9529,10 +9659,14 @@ void boxTap(int16_t x, int16_t y) {
     sfxPlay(SFX_TAP);
     return;
   }
-  boxOpen = false;               // anywhere else backs out
-  boxSwapFrom = 0;
-  boxDetail = 0;
-  releaseConfirm = false;
+  // Only the bottom BACK band closes: a slightly missed circle used to close
+  // the box and lose your page (issue #24). Swipe down also goes back.
+  if (y > 380) {
+    boxOpen = false;
+    boxSwapFrom = 0;
+    boxDetail = 0;
+    releaseConfirm = false;
+  }
 }
 
 // ---------- party ----------
@@ -9938,12 +10072,9 @@ void galleryTap(int16_t x, int16_t y) {
     sfxPlay(SFX_TAP);
     return;
   }
-  if (y >= GAL_VBTN_Y && y < GAL_Y) return;   // between buttons: nothing
-  if (y < GAL_VBTN_Y) {  // tocar la cabecera = salir
-    galleryOpen = false;
-    galleryPmd.unload();
-    return;
-  }
+  // Dead space does nothing. The title used to exit on tap, which a thumb aiming
+  // for the view buttons below it hit by accident (issue #24). Swipe down goes back.
+  if (y < GAL_Y) return;
   int c = (x - GAL_X) / GAL_CELL, r = (y - GAL_Y) / GAL_CELL;
   if (c < 0 || c > 3 || r < 0 || r > 3) return;
   // The SAME function the grid was drawn from, so a tap cannot land on a
@@ -10586,12 +10717,78 @@ void drawBars() {
 }
 
 void drawButtons() {
+  // Soft pastel tile per icon (indexed by BTN_*), a darker ring of the same hue
+  // and a drop shadow, so the row reads as raised buttons (from crenberries428/TamaPoke, MIT).
+  const uint16_t tint[BTN_COUNT]   = { C565(255, 230, 224), C565(255, 244, 204),
+                                       C565(220, 238, 255), C565(226, 232, 248) };
+  const uint16_t accent[BTN_COUNT] = { C565(232, 110, 96), C565(232, 180, 60),
+                                       C565(90, 160, 220), C565(110, 128, 190) };
   for (int i = 0; i < BTN_COUNT; i++) {
     bool off = uiButtonDisabled(i);   // durmiendo solo funciona LUZ
     int bx = buttons[i].cx - BTN_HALF, by = buttons[i].cy - BTN_HALF;
-    if (!pet.sleeping) gfx->fillRoundRect(bx, by, 2 * BTN_HALF, 2 * BTN_HALF, 16, UI_WHITE);
-    gfx->drawRoundRect(bx, by, 2 * BTN_HALF, 2 * BTN_HALF, 16, inkColor());
-    if (!off) drawMap(buttons[i].icon, 16, buttons[i].cx - 16, buttons[i].cy - 16, 2, false);
+    int bs = 2 * BTN_HALF;
+    if (!pet.sleeping) {
+      gfx->fillRoundRect(bx + 1, by + 4, bs, bs, 16, gNight ? C565(8, 10, 20) : C565(150, 144, 128));
+      gfx->fillRoundRect(bx, by, bs, bs, 16, tint[i]);
+      gfx->fillRoundRect(bx + 4, by + 3, bs - 8, bs / 2 - 4, 12, UI_WHITE);   // gloss
+      gfx->drawRoundRect(bx + 1, by + 1, bs - 2, bs - 2, 15, accent[i]);
+    }
+    gfx->drawRoundRect(bx, by, bs, bs, 16, inkColor());
+    if (!off) drawMap(buttons[i].icon, 16, buttons[i].cx - 24, buttons[i].cy - 24, 3, false);
+  }
+}
+
+// The food, held in front of the creature and eaten in EAT_BITES bites. Each
+// bite takes a round chunk out of the icon, the food jolts and a few crumbs
+// fly; the last bite takes what is left. Progress comes from the pet's own
+// eat timer, so the animation can never outlive or undershoot the eating mood.
+// (From crenberries428/TamaPoke, MIT.)
+#define EAT_BITES 4
+void drawEatFood() {
+  if (!pet.eating()) return;
+  static const char *const *const ICONS[4] = { SPR_ICON_FOOD, SPR_ICON_BERRY_B,
+                                               SPR_ICON_BERRY_G, SPR_ICON_CANDY };
+  const char *const *ic = ICONS[eatItem < 4 ? eatItem : 0];
+  uint32_t el = EAT_ANIM_MS - pet.eatLeftMs();
+  // bite k lands at BITE_AT[k] ms and the food jolts for 160 ms after it
+  static const uint16_t BITE_AT[EAT_BITES] = { 350, 900, 1450, 2000 };
+  // chunk taken by each bite: centre and radius, in icon pixels
+  static const int8_t BITE_X[EAT_BITES] = { 13, 3, 12, 8 };
+  static const int8_t BITE_Y[EAT_BITES] = { 5, 7, 12, 8 };
+  static const uint8_t BITE_R[EAT_BITES] = { 5, 5, 6, 10 };
+  uint8_t bites = 0;
+  int jolt = 0;
+  for (uint8_t k = 0; k < EAT_BITES; k++) {
+    if (el >= BITE_AT[k]) {
+      bites = k + 1;
+      uint32_t since = el - BITE_AT[k];
+      if (since < 160) jolt = (since < 80) ? 3 : 1;
+    }
+  }
+  if (bites >= EAT_BITES) return;   // the last bite finished it
+  int cx = pmd.loaded ? (int)beh.x : CX;
+  const int S = 4, x0 = cx - 8 * S, y0 = PET_GROUND - 88 + jolt;
+  for (int r = 0; r < 16; r++)
+    for (int c = 0; c < 16; c++) {
+      char ch = ic[r][c];
+      if (ch == '.') continue;
+      bool gone = false;
+      for (uint8_t k = 0; k < bites && !gone; k++) {
+        int dx = c - BITE_X[k], dy = r - BITE_Y[k];
+        gone = dx * dx + dy * dy <= BITE_R[k] * BITE_R[k];
+      }
+      if (!gone) gfx->fillRect(x0 + c * S, y0 + r * S, S, S, spriteColor(ch));
+    }
+  // crumbs: a short spray from the bite that just landed
+  for (uint8_t k = 0; k < bites; k++) {
+    uint32_t since = el - BITE_AT[k];
+    if (since >= 380) continue;
+    int bx = x0 + BITE_X[k] * S, by = y0 + BITE_Y[k] * S;
+    for (int i = 0; i < 3; i++) {
+      int dx = (i - 1) * (6 + (int)(since / 14)) + (BITE_X[k] > 8 ? 6 : -6);
+      int dy = -4 + (int)(since * since / 3600) - i * 3;
+      gfx->fillRect(bx + dx, by + dy, 3, 3, spriteColor(ic[8][8] == '.' ? 'w' : ic[8][8]));
+    }
   }
 }
 
