@@ -935,6 +935,10 @@ struct Btn {
 // the row stays on glass. At 80 px and 88 px apart the outermost reaches radius
 // 220 of 233 -- the row cannot grow again without losing an icon, because four
 // UI_TAP_FINGER targets need 392 px of chord and reach radius 222.
+// What the creature is eating, remembered from the food picker so the animation
+// can draw it (0 apple, 1 blueberry, 2 pear, 3 candy). Not saved.
+static uint8_t eatItem = 0;
+
 #define BTN_COUNT 4
 // Referred to by NAME, never by literal index. Removing the ball icon shifted
 // every index by one and drawButtons() still had `i != 2` meaning LIGHT -- which
@@ -2817,6 +2821,7 @@ void onTap(int16_t x, int16_t y) {
         x >= FEED_MENU_X && x <= FEED_MENU_X + FEED_MENU_W) {
       int item = (x - FEED_MENU_X) / (FEED_MENU_W / 4);
       if (item > 3) item = 3;
+      eatItem = (uint8_t)item;
       if (item == 3) pet.feedCandy();
       else pet.feedBerry(item);
       sfxPlay(SFX_EAT);
@@ -3582,6 +3587,7 @@ void render() {
     drawHeader(name, gNight ? UI_INK_NIGHT : d.accent, statusMsg());
     drawStreakBadge();
     drawPet();
+    drawEatFood();
     drawBath();
     drawPoops();
     // panel inferior: base limpia para barras y botones sobre el paisaje
@@ -9146,12 +9152,78 @@ void drawBars() {
 }
 
 void drawButtons() {
+  // Soft pastel tile per icon (indexed by BTN_*), a darker ring of the same hue
+  // and a drop shadow, so the row reads as raised buttons (from crenberries428/TamaPoke, MIT).
+  const uint16_t tint[BTN_COUNT]   = { C565(255, 230, 224), C565(255, 244, 204),
+                                       C565(220, 238, 255), C565(226, 232, 248) };
+  const uint16_t accent[BTN_COUNT] = { C565(232, 110, 96), C565(232, 180, 60),
+                                       C565(90, 160, 220), C565(110, 128, 190) };
   for (int i = 0; i < BTN_COUNT; i++) {
     bool off = uiButtonDisabled(i);   // durmiendo solo funciona LUZ
     int bx = buttons[i].cx - BTN_HALF, by = buttons[i].cy - BTN_HALF;
-    if (!pet.sleeping) gfx->fillRoundRect(bx, by, 2 * BTN_HALF, 2 * BTN_HALF, 16, UI_WHITE);
-    gfx->drawRoundRect(bx, by, 2 * BTN_HALF, 2 * BTN_HALF, 16, inkColor());
-    if (!off) drawMap(buttons[i].icon, 16, buttons[i].cx - 16, buttons[i].cy - 16, 2, false);
+    int bs = 2 * BTN_HALF;
+    if (!pet.sleeping) {
+      gfx->fillRoundRect(bx + 1, by + 4, bs, bs, 16, gNight ? C565(8, 10, 20) : C565(150, 144, 128));
+      gfx->fillRoundRect(bx, by, bs, bs, 16, tint[i]);
+      gfx->fillRoundRect(bx + 4, by + 3, bs - 8, bs / 2 - 4, 12, UI_WHITE);   // gloss
+      gfx->drawRoundRect(bx + 1, by + 1, bs - 2, bs - 2, 15, accent[i]);
+    }
+    gfx->drawRoundRect(bx, by, bs, bs, 16, inkColor());
+    if (!off) drawMap(buttons[i].icon, 16, buttons[i].cx - 24, buttons[i].cy - 24, 3, false);
+  }
+}
+
+// The food, held in front of the creature and eaten in EAT_BITES bites. Each
+// bite takes a round chunk out of the icon, the food jolts and a few crumbs
+// fly; the last bite takes what is left. Progress comes from the pet's own
+// eat timer, so the animation can never outlive or undershoot the eating mood.
+// (From crenberries428/TamaPoke, MIT.)
+#define EAT_BITES 4
+void drawEatFood() {
+  if (!pet.eating()) return;
+  static const char *const *const ICONS[4] = { SPR_ICON_FOOD, SPR_ICON_BERRY_B,
+                                               SPR_ICON_BERRY_G, SPR_ICON_CANDY };
+  const char *const *ic = ICONS[eatItem < 4 ? eatItem : 0];
+  uint32_t el = EAT_ANIM_MS - pet.eatLeftMs();
+  // bite k lands at BITE_AT[k] ms and the food jolts for 160 ms after it
+  static const uint16_t BITE_AT[EAT_BITES] = { 350, 900, 1450, 2000 };
+  // chunk taken by each bite: centre and radius, in icon pixels
+  static const int8_t BITE_X[EAT_BITES] = { 13, 3, 12, 8 };
+  static const int8_t BITE_Y[EAT_BITES] = { 5, 7, 12, 8 };
+  static const uint8_t BITE_R[EAT_BITES] = { 5, 5, 6, 10 };
+  uint8_t bites = 0;
+  int jolt = 0;
+  for (uint8_t k = 0; k < EAT_BITES; k++) {
+    if (el >= BITE_AT[k]) {
+      bites = k + 1;
+      uint32_t since = el - BITE_AT[k];
+      if (since < 160) jolt = (since < 80) ? 3 : 1;
+    }
+  }
+  if (bites >= EAT_BITES) return;   // the last bite finished it
+  int cx = pmd.loaded ? (int)beh.x : CX;
+  const int S = 4, x0 = cx - 8 * S, y0 = PET_GROUND - 88 + jolt;
+  for (int r = 0; r < 16; r++)
+    for (int c = 0; c < 16; c++) {
+      char ch = ic[r][c];
+      if (ch == '.') continue;
+      bool gone = false;
+      for (uint8_t k = 0; k < bites && !gone; k++) {
+        int dx = c - BITE_X[k], dy = r - BITE_Y[k];
+        gone = dx * dx + dy * dy <= BITE_R[k] * BITE_R[k];
+      }
+      if (!gone) gfx->fillRect(x0 + c * S, y0 + r * S, S, S, spriteColor(ch));
+    }
+  // crumbs: a short spray from the bite that just landed
+  for (uint8_t k = 0; k < bites; k++) {
+    uint32_t since = el - BITE_AT[k];
+    if (since >= 380) continue;
+    int bx = x0 + BITE_X[k] * S, by = y0 + BITE_Y[k] * S;
+    for (int i = 0; i < 3; i++) {
+      int dx = (i - 1) * (6 + (int)(since / 14)) + (BITE_X[k] > 8 ? 6 : -6);
+      int dy = -4 + (int)(since * since / 3600) - i * 3;
+      gfx->fillRect(bx + dx, by + dy, 3, 3, spriteColor(ic[8][8] == '.' ? 'w' : ic[8][8]));
+    }
   }
 }
 
