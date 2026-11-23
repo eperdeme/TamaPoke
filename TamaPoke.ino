@@ -1923,12 +1923,9 @@ void handleTouch() {
     if (!holdFired && !swallowGesture && !rimActive && millis() - tStart >= 1000 &&
         abs(tXl - tX0) < 30 && abs(tYl - tY0) < 30 && boxHubHold(tX0, tY0))
       holdFired = true;
-    if (!holdFired && !swallowGesture && uiCurrentScreen() == SCR_MAIN && millis() - tStart > 3000 &&
-        abs(tXl - tX0) < 30 && abs(tYl - tY0) < 30 && inPetZone(tX0, tY0) &&
-        !pet.isEgg() && !confirmUntil && !pet.ceremony) {
-      confirmUntil = millis() + 10000;
-      holdFired = true;
-    }
+    // There used to be a 3 s hold on the creature here that opened the release
+    // dialog. It is gone (issue #24): holding a pet you are petting is too easy
+    // to do by accident, and the same action lives in MENU -> RETIRE.
   } else if (wasPressed) {  // levanta el dedo: resolver gesto
     lastInteract = millis();
     int dx = tXl - tX0, dy = tYl - tY0;
@@ -2363,9 +2360,11 @@ void partyTap(int16_t x, int16_t y) {
       sfxPlay(SFX_TAP);
       return;
     }
-    partyDetail = 0;
-    releaseConfirm = false;
-    sfxPlay(SFX_TAP);
+    if (y > 380) {                           // only the BACK band at the bottom
+      partyDetail = 0;
+      releaseConfirm = false;
+      sfxPlay(SFX_TAP);
+    }
     return;
   }
   if (!partyPick && partyHubAt(x, y)) {
@@ -2375,9 +2374,9 @@ void partyTap(int16_t x, int16_t y) {
     sfxPlay(SFX_TAP);
     return;
   }
-  // exit button, and the top band, both always work
-  if ((y >= PARTYCLOSE_Y && y <= PARTYCLOSE_Y + PARTYCLOSE_H &&
-       x >= PARTYCLOSE_X && x <= PARTYCLOSE_X + PARTYCLOSE_W) || y < 34) {
+  // exit button only (no unmarked top-edge exit trap: issue #24)
+  if (y >= PARTYCLOSE_Y && y <= PARTYCLOSE_Y + PARTYCLOSE_H &&
+      x >= PARTYCLOSE_X && x <= PARTYCLOSE_X + PARTYCLOSE_W) {
     if (partyPick) {                 // declined the swap: the pet is let go
       if (!clearHandover()) { sfxPlay(SFX_DENY); return; }
       partyPick = false;
@@ -2549,14 +2548,14 @@ void onTap(int16_t x, int16_t y) {
       sfxPlay(SFX_TAP);
       return;
     }
-    // the avatar is the only other live target; everything else backs out
+    // only the bottom BACK band closes; a miss near the avatar/name stays put (#24)
     if (playerPage == 0 && x > CX - 40 && x < CX + 40 && y > 70 && y < 146) {
       pet.avatar = (uint8_t)((pet.avatar + 1) % AVATAR_COUNT);
       pet.saveNow();
       sfxPlay(SFX_TAP);
       return;
     }
-    playerOpen = false;
+    if (y > 380) playerOpen = false;
     return;
   }
   if (medalsOpen) {   // nothing on it is live: a tap backs out, as on the card
@@ -2622,7 +2621,7 @@ void onTap(int16_t x, int16_t y) {
       pickOpen = true;
       return;
     }
-    gymOpen = false;
+    if (y > 380) gymOpen = false;   // only the bottom BACK band, not a missed row (#24)
     return;
   }
   if (pet.hasLearnOffer()) {
@@ -2711,7 +2710,7 @@ void onTap(int16_t x, int16_t y) {
       movePickOpen = false;
       return;
     }
-    movePickOpen = false;   // tap anywhere else = back to the moves page
+    if (y > 380) movePickOpen = false;   // only the bottom BACK band (#24)
     return;
   }
   if (partyOpen) {
@@ -2759,8 +2758,8 @@ void onTap(int16_t x, int16_t y) {
         movePickOpen = true;
         return;
       }
-      cardOpen = false;            // anywhere else on the page still exits
-    } else {
+      if (y > 380) cardOpen = false;   // only the bottom BACK band (#24)
+    } else if (y > 380) {
       cardOpen = false;
     }
     return;
@@ -7702,7 +7701,7 @@ void bagTap(int16_t x, int16_t y) {
     bagSay(T(S_ITEM_USED), itemEntry(k).name);
     return;
   }
-  bagOpen = false;   // anywhere else closes, like every other list screen
+  if (y > 380) bagOpen = false;   // only the bottom BACK band, not a missed row (#24)
 }
 
 // ---------- wild encounters ----------
@@ -8049,9 +8048,11 @@ void boxTap(int16_t x, int16_t y) {
       sfxPlay(SFX_TAP);
       return;
     }
-    boxDetail = 0;                          // anywhere else backs out
-    releaseConfirm = false;
-    sfxPlay(SFX_TAP);
+    if (y > 380) {                          // only the bottom BACK band (#24)
+      boxDetail = 0;
+      releaseConfirm = false;
+      sfxPlay(SFX_TAP);
+    }
     return;
   }
   // The hub cycles the order. Checked BEFORE the slots: the hub sits in the
@@ -8093,10 +8094,14 @@ void boxTap(int16_t x, int16_t y) {
     sfxPlay(SFX_TAP);
     return;
   }
-  boxOpen = false;               // anywhere else backs out
-  boxSwapFrom = 0;
-  boxDetail = 0;
-  releaseConfirm = false;
+  // Only the bottom BACK band closes: a slightly missed circle used to close
+  // the box and lose your page (issue #24). Swipe down also goes back.
+  if (y > 380) {
+    boxOpen = false;
+    boxSwapFrom = 0;
+    boxDetail = 0;
+    releaseConfirm = false;
+  }
 }
 
 // ---------- party ----------
@@ -8502,12 +8507,9 @@ void galleryTap(int16_t x, int16_t y) {
     sfxPlay(SFX_TAP);
     return;
   }
-  if (y >= GAL_VBTN_Y && y < GAL_Y) return;   // between buttons: nothing
-  if (y < GAL_VBTN_Y) {  // tocar la cabecera = salir
-    galleryOpen = false;
-    galleryPmd.unload();
-    return;
-  }
+  // Dead space does nothing. The title used to exit on tap, which a thumb aiming
+  // for the view buttons below it hit by accident (issue #24). Swipe down goes back.
+  if (y < GAL_Y) return;
   int c = (x - GAL_X) / GAL_CELL, r = (y - GAL_Y) / GAL_CELL;
   if (c < 0 || c > 3 || r < 0 || r > 3) return;
   // The SAME function the grid was drawn from, so a tap cannot land on a

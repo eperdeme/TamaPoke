@@ -444,7 +444,7 @@ means "you raised this", so it happens when you actually make it the one you rai
   together", re-offered in a day). The good ending.
 - 💔 **Run-away** — if you let **all four stats sit at 0 for a full hour**. A single
   act of care cancels it. It **curses the next egg** (forces Common). The sad ending.
-- 👋 **Release** — long-press the creature to let it go on your terms (neutral).
+- 👋 **Release** — choose **MENU → RETIRE** to let it go on your terms (neutral).
 
 After any ending, a **new egg** appears.
 
@@ -749,8 +749,8 @@ it to the rim is what frees the horizontal axis to mean one thing.
 - **Tap the name** at the top = the **menu** (Pokédex / Bag / Settings). Close it
   with the CLOSE row, by tapping anywhere outside the panel, or with any swipe.
 - Tap the creature = pet it (+happiness, bond).
-- Long press (3 s) on the creature = **release** dialog. Gated to the main
-  screen only, so it can never fire on a party slot.
+- Releasing a creature is only in **MENU → RETIRE** (there is no long press, so
+  it can never fire by accident while you pet it).
 
 The four care stats are **arcs on the rim** rather than bars: colour is severity,
 exactly as the bars were, and the label says which stat. That is what freed the
@@ -912,7 +912,7 @@ always pays off.
 ## Life cycle, eggs by rarity, languages
 
 The life cycle lasts **3 days** of play. Three endings (all leave a new egg):
-**farewell** (final form + 3 days), **release** (long press), **runaway** (all 4
+**farewell** (final form + 3 days), **release** (MENU → RETIRE), **runaway** (all 4
 bars at zero for 1 h). Each bred species is recorded in the **bred Pokédex**
 (normal and shiny separately).
 
