@@ -153,6 +153,11 @@ void pmuEnablePanel() {}
 int batPercent() { return 87; }
 bool batCharging() { return false; }
 bool usbPresent() { return true; }
+bool usbPresentNow() { return true; }
+void cpuLightSleep(uint32_t) {}
+bool batShouldShutdown() { return false; }
+void batPowerOff() {}
+void batSetPollMs(uint32_t) {}
 void pwrSetup() {}
 void pwrPoll() {}
 bool pwrShortPressed() { return false; }
