@@ -30,9 +30,9 @@ public:
   int16_t _w, _h;
   Arduino_CO5300 *_panel;
   std::vector<uint16_t> fb;
-  int16_t cx = 0, cy = 0;
-  uint16_t textColor = 0xFFFF;
-  uint8_t textSize = 1;
+  int16_t cursor_x = 0, cursor_y = 0;
+  uint16_t textcolor = 0xFFFF;
+  uint8_t textsize_x = 1, textsize_y = 1;
   volatile bool frameReady = false;
 
   Arduino_Canvas(int16_t w, int16_t h, Arduino_CO5300 *p)
@@ -41,6 +41,7 @@ public:
   bool begin(uint32_t = 0) { return true; }
   void flush() { frameReady = true; }
   const uint16_t *buffer() const { return fb.data(); }
+  uint16_t *getFramebuffer() { return fb.data(); }
 
   inline void px(int x, int y, uint16_t c) {
     if (x < 0 || y < 0 || x >= _w || y >= _h) return;
@@ -137,24 +138,31 @@ public:
   }
 
   // --- text: the classic 5x7 glyphs, 6*size advance, same as Adafruit_GFX ---
-  void setTextColor(uint16_t c) { textColor = c; }
-  void setTextSize(uint8_t s) { textSize = s ? s : 1; }
-  void setCursor(int16_t x, int16_t y) { cx = x; cy = y; }
+  void setTextColor(uint16_t c) { textcolor = c; }
+  void setTextSize(uint8_t s) { textsize_x = textsize_y = (s ? s : 1); }
+  void setCursor(int16_t x, int16_t y) { cursor_x = x; cursor_y = y; }
 
   void drawChar(char ch, int x, int y) {
     const uint8_t *g = GLCD_FONT + (uint8_t)ch * 5;
     for (int i = 0; i < 5; i++) {
       uint8_t line = g[i];
       for (int j = 0; j < 8; j++, line >>= 1)
-        if (line & 1) fillRect(x + i * textSize, y + j * textSize, textSize, textSize, textColor);
+        if (line & 1) fillRect(x + i * textsize_x, y + j * textsize_y, textsize_x, textsize_y, textcolor);
     }
   }
-  void print(char ch) {
-    if (ch == '\n') { cy += 8 * textSize; cx = 0; return; }
-    drawChar(ch, cx, cy);
-    cx += 6 * textSize;
+  virtual size_t write(uint8_t ch) {
+    if (ch == '\n') { cursor_y += 8 * textsize_y; cursor_x = 0; return 1; }
+    drawChar((char)ch, cursor_x, cursor_y);
+    cursor_x += 6 * textsize_x;
+    return 1;
   }
-  void print(const char *s) { while (*s) print(*s++); }
+  virtual size_t write(const uint8_t *buf, size_t len) {
+    for (size_t i = 0; i < len; i++) write(buf[i]);
+    return len;
+  }
+  void print(char ch) { write((uint8_t)ch); }
+  void print(const char *s) { if (s) write((const uint8_t *)s, strlen(s)); }
+  void print(const String &s) { write((const uint8_t *)s.c_str(), s.length()); }
   template <typename... A> void printf(const char *f, A... a) {
     char buf[256];
     snprintf(buf, sizeof(buf), f, a...);
