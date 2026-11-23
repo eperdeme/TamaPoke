@@ -1013,3 +1013,7 @@ Full list in [`CREDITS.md`](CREDITS.md).
   licensed **CC BY-NC-SA**, and shared here under the same terms.
 
 This is an unofficial fan project, not affiliated with or endorsed by Nintendo.
+
+## Battery and power
+
+The on-screen percentage while on battery comes from a LiPo discharge curve (`batcurve.h`) over smoothed voltage and only goes down while discharging; on USB or charging the PMU gauge is used. If the smoothed voltage stays under 3.30 V for 30 s (not in the first 30 s after boot) the pet is saved and the PMU powers off; the PMU also cuts at 3.1 V as a backstop. `power.h` holds the idle policy: slower frames and dimmer panel as the pet sits idle, brightness caps at <20% / <10% battery, and CPU light sleep (wakes on touch or timer) when the screen is off or nearly off and USB is absent. Credit: ViezeVingertjes (socquique/TamaPoke #26, #27).

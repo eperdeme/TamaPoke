@@ -40,6 +40,7 @@
 #include "i18n.h"
 #include "uifont.h"
 #include "audio.h"
+#include "power.h"
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
@@ -1472,6 +1473,14 @@ void loop() {
 
   updateBrightness(now);
 
+  // Battery at the safe limit (no USB): save the pet and power the PMU off before the cell
+  // drops further; the RTC keeps the time. See batcurve.h.
+  if (batShouldShutdown() && !usbPresentNow()) {
+    flushBeforePowerLoss("battery cutoff");
+    panel->setBrightness(0);
+    batPowerOff();
+  }
+
   // vuelca el autoguardado periodico SOLO con la pantalla atenuada/apagada o
   // durmiendo: la escritura a NVS congela ~1s ambos cores (caché de flash off),
   // y aqui no hay animacion que se corte ni dedo esperando respuesta. Con 90s
@@ -1521,14 +1530,29 @@ void loop() {
   //
   // So the frame still happens, just far less often, and anything with motion or
   // a peer waiting on it keeps its full rate.
-  uint32_t period = (gameOpen || sackOpen || spdOpen || memoOpen) ? 85 : 100;
-  if (gBrightNow == 0 && !battleOpen && !gameOpen && !sackOpen && !spdOpen && !memoOpen)
-    period = 500;
+  PowerCtx pc = {};
+  pc.idleMs = idleSince(now, lastInteract);
+  pc.screenOff = screenOff;
+  pc.sleeping = pet.sleeping;
+  pc.gameOpen = gameOpen || sackOpen || spdOpen || memoOpen || battleOpen;
+  pc.usb = usbPresent();
+  pc.charging = batCharging();
+  pc.batPct = batPercent();
+  uint32_t period = frameIntervalMs(pc);
+  if (screenOff && !battleOpen) period = 500;   // dark panel: the frame stretches, it does not stop (see above)
+  if (period == 0) period = 500;
   // The one pause, and transferMode() already excludes the fights and minigames above.
   if (transferMode()) period = 1000;
+  batSetPollMs(powerCacheMs(pc));
   if (now - lastRender >= period) {
     lastRender = now;
     render();
+  } else if (!transferMode() && !battleOpen && lightSleepAllowed(pc) && !usbPresentNow()) {
+    // Battery only, screen dark or nearly: sleep the CPU between frames. A touch (TP_INT)
+    // or the timer wakes it. Never on USB (the serial port would vanish) or mid-transfer.
+    cpuLightSleep(POWER_SLEEP_MS);
+  } else {
+    delay(idleDelayMs(pc));
   }
 }
 
@@ -1552,6 +1576,12 @@ void updateBrightness(uint32_t now) {
   // upwards by the dim ladder's own numbers -- at level 1 the base is ~20 and
   // dimStage 1's flat 60 would make an idle screen BRIGHTER than an attended one.
   if (target > base) target = base;
+  {
+    PowerCtx bc = {};
+    bc.usb = usbPresent(); bc.charging = batCharging(); bc.batPct = batPercent();
+    if (batteryCritical(bc) && target > 60) target = 60;
+    else if (batteryLow(bc) && target > 100) target = 100;
+  }
   if (screenOff) target = 0;
   if (target != gBrightNow) {
     gBrightNow = target;
