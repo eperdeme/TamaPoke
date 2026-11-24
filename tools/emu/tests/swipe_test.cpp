@@ -527,6 +527,23 @@ int main(){
     clockOpen = false;
   }
 
+  // Jukebox pages on both the rim and horizontal swipes, clamping at 0 and 1.
+  {
+    extern bool jukeOpen; extern uint8_t jukePage;
+    void openJukebox();
+    clearAll(); openJukebox();
+    check("jukebox", &jukeOpen, &jukePage);
+    jukePage = 0;
+    onSwipe(-1);
+    if (!jukeOpen || jukePage != 1) { printf("FAIL  jukebox    left swipe did not advance\n"); bad++; }
+    onSwipe(-1);
+    if (!jukeOpen || jukePage != 1) { printf("FAIL  jukebox    left swipe did not clamp\n"); bad++; }
+    onSwipe(1);
+    if (!jukeOpen || jukePage != 0) { printf("FAIL  jukebox    right swipe did not return\n"); bad++; }
+    else printf("PASS  jukebox    horizontal swipes page 0..1 and clamp\n");
+    jukeOpen = false;
+  }
+
   printf("%s\n", bad?"FAILURES":"every paged screen pages");
   return bad?1:0;
 }

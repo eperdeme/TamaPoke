@@ -300,9 +300,9 @@ int main() {
 
     const char *slot = newerSlot("plyA", "plyB");
     std::vector<uint8_t> v3 = slotBytes(slot);
-    ck(v3.size() > 54 && v3[19] == 52, "the current player checkpoint has the appended quiz field");
-    if (v3.size() > 54 && v3[19] == 52) {
-      v3.erase(v3.begin() + 50, v3.begin() + 52);
+    ck(v3.size() > 60 && v3[19] == 60, "the current player checkpoint has the appended quiz and jukebox fields");
+    if (v3.size() > 60 && v3[19] == 60) {
+      v3.erase(v3.begin() + 50, v3.begin() + 60);
       v3[19] = 50;
       const uint16_t version = 3;
       memcpy(v3.data() + 4, &version, 2);

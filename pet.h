@@ -5,6 +5,7 @@
 #include "trainers.h"   // GYM_REGIONS sizes the badge masks
 #include "party.h"
 #include "save.h"
+#include "music_ids.h"
 
 // 1 tick = 1 minuto de juego. Baja este valor para probar mas rapido
 // (p. ej. 5000UL = las estadisticas caen 12x mas rapido).
@@ -42,6 +43,20 @@ void levelSpeedSet(int realMinsPerLevel);       // clamped to 1..60
 // the creature is ALSO in its final form and has not said farewell before.
 // Persisted under "fwlv".
 #define FAREWELL_LVL_MIN 50
+// Jukebox listening reward: +LISTEN_JOY joy every LISTEN_EVERY awake minutes,
+// capped at LISTEN_DAILY_MIN minutes per day.
+#define LISTEN_EVERY 5
+#define LISTEN_JOY 3
+#define LISTEN_DAILY_MIN 30
+
+// Unlock conditions for each song in music_ids.h.
+enum TuneRuleKind : uint8_t {
+  TRULE_FREE = 0, TRULE_BADGES, TRULE_HATCH, TRULE_GOODBYE, TRULE_STREAK, TRULE_CAUGHT
+};
+struct TuneRule { TuneRuleKind kind; uint16_t n; };
+const TuneRule &tuneRule(uint8_t t);
+
+// FAREWELL_LVL_MAX -> keep line below intact:
 #define FAREWELL_LVL_MAX 100
 #define FAREWELL_LVL_DEFAULT 73
 extern uint8_t gFarewellLevel;
@@ -729,6 +744,19 @@ public:
   // further down.
   void saveNow();
 
+  // Jukebox unlocks (bitmask over TUNE_*) and daily listening allowance.
+  uint16_t tunes = 0;
+  bool tuneUnlocked(uint8_t t) const { return t < TUNE_COUNT && ((tunes >> t) & 1); }
+  bool tuneEarned(uint8_t t) const;
+  uint16_t checkTunes(bool announce = true);
+  uint8_t tuneToastId = 0;
+  uint32_t tuneToastUntil = 0;
+  bool tuneToast() const { return millis() < tuneToastUntil; }
+  bool musicOn = false;
+  uint8_t listenMin = 0;
+  uint32_t listenDay = 0;
+  uint8_t listenToday() const { return listenDay == today() ? listenMin : 0; }
+
 private:
   void applyEvolution(int16_t next);
   Preferences prefs;
@@ -782,6 +810,7 @@ private:
 
   uint32_t today() const { return lastSeenEpoch ? lastSeenEpoch / 86400 : 0; }
   void registerCare();   // primer cuidado del dia: racha + vinculo
+  void listenTick();     // one awake minute with a song on
   void addBond(uint8_t amt);
   uint8_t rollIV(int bonus) const;  // una tirada 8-31 empujada por el cuidado
   void rollIVs();                   // los 4, con las garantias de legendario/shiny

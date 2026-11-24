@@ -82,36 +82,49 @@ int wavMain(const char *path, const char *demo) {
       syn.note(1, gbNote(bass[i] - 12), 2, 9, 0, 0, 260);
       run(syn, out, 270);
     }
-  } else if (d == "gym" || d == "trainer" || d == "wild" || d == "win") {
-    // A REAL battle theme, both pulse channels, exactly as the data says.
-    int t = (d == "gym") ? 0 : (d == "trainer") ? 1 : (d == "wild") ? 2 : 3;
-    const MusicTrack &m = MUSIC_TBL[t];
-    printf("playing %s (%u + %u events)\n", m.name, m.n1, m.n2);
-    uint32_t at1 = 0, at2 = 0;      // ms consumed on each channel
-    uint16_t i1 = 0, i2 = 0;
-    uint32_t clock = 0;
-    const uint32_t LIMIT = 30000;   // 30 s is plenty to judge it
-    while (clock < LIMIT && (i1 < m.n1 || i2 < m.n2)) {
-      if (i1 < m.n1 && clock >= at1) {
-        const MusicNote &n = m.ch1[i1];
-        if (n.freq) syn.note(0, n.freq, n.duty, n.vol, n.envDir, n.envPeriod, n.ms);
-        else syn.silence(0);
-        at1 += n.ms; i1++;
-      }
-      if (i2 < m.n2 && clock >= at2) {
-        const MusicNote &n = m.ch2[i2];
-        if (n.freq) syn.note(1, n.freq, n.duty, n.vol, n.envDir, n.envPeriod, n.ms);
-        else syn.silence(1);
-        at2 += n.ms; i2++;
-      }
-      uint32_t next = LIMIT;
-      if (i1 < m.n1 && at1 < next) next = at1;
-      if (i2 < m.n2 && at2 < next) next = at2;
-      if (next <= clock) next = clock + 5;
-      run(syn, out, next - clock);
-      clock = next;
-    }
   } else {
+    int t = -1;
+    if (d == "gym") t = 0;
+    else if (d == "trainer") t = 1;
+    else if (d == "wild") t = 2;
+    else if (d == "win") t = 3;
+    else {
+      for (int i = 0; i < MUSIC_TRACKS; i++)
+        if (d == MUSIC_TBL[i].name) { t = i; break; }
+    }
+    if (t >= 0) {
+      // A REAL tune from music.h, both pulse channels looping past their intro.
+      const MusicTrack &m = MUSIC_TBL[t];
+      printf("playing %s (%u + %u events)\n", m.name, m.n1, m.n2);
+      uint32_t at1 = 0, at2 = 0;
+      uint16_t i1 = 0, i2 = 0;
+      uint32_t clock = 0;
+      const uint32_t LIMIT = 30000;
+      while (clock < LIMIT && (i1 < m.n1 || i2 < m.n2)) {
+        if (i1 < m.n1 && clock >= at1) {
+          if (i1 >= m.n1) i1 = m.loop1;
+          const MusicNote &n = m.ch1[i1++];
+          if (n.freq) syn.note(0, n.freq, n.duty, n.vol, n.envDir, n.envPeriod, n.ms);
+          else syn.silence(0);
+          at1 += n.ms;
+        }
+        if (i2 < m.n2 && clock >= at2) {
+          if (i2 >= m.n2) i2 = m.loop2;
+          const MusicNote &n = m.ch2[i2++];
+          if (n.freq) syn.note(1, n.freq, n.duty, n.vol, n.envDir, n.envPeriod, n.ms);
+          else syn.silence(1);
+          at2 += n.ms;
+        }
+        uint32_t next = LIMIT;
+        if (at1 < next) next = at1;
+        if (at2 < next) next = at2;
+        if (next <= clock) next = clock + 5;
+        run(syn, out, next - clock);
+        clock = next;
+        if (i1 >= m.n1 && t != 3) i1 = m.loop1;
+        if (i2 >= m.n2 && t != 3) i2 = m.loop2;
+      }
+    } else {
     // the tour: everything at once, in the order it was built
     for (uint8_t dz = 0; dz < 4; dz++) { syn.note(0, gbNote(12), dz, 15, 0, 0, 250); run(syn, out, 280); }
     syn.note(0, gbNote(12), 2, 15, -1, 2, 700); run(syn, out, 800);
@@ -121,6 +134,7 @@ int wavMain(const char *path, const char *demo) {
       syn.note(0, gbNote(mel[i]), 1, 13, -1, 8, 220);
       syn.note(1, gbNote(mel[i] - 19), 2, 8, 0, 0, 220);
       run(syn, out, 230);
+    }
     }
   }
   writeWav(path, out);

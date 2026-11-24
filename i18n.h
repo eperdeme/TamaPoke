@@ -182,6 +182,16 @@ enum StrId : uint8_t {
   S_GAME_TITLE,     // GAME page: its title
   S_EGG_NEW,        // GAME page: label of the "eggs prefer new lines" toggle
   S_FILT_HATCHED,   // Pokedex view: hatched from your eggs (and their evolutions)
+  // The jukebox. Song names are in TUNE_* order (music_ids.h); the hints are
+  // one per TuneRule kind, so a locked row reads the rule that unlocks it.
+  S_JUKEBOX,        // menu row and screen title
+  S_TUNE_GYM, S_TUNE_TRN, S_TUNE_WILD, S_TUNE_WIN, S_TUNE_TITLE,
+  S_TUNE_PALLET, S_TUNE_LAVENDER, S_TUNE_CENTER, S_TUNE_ROUTE1,
+  S_TRULE_HATCH, S_TRULE_BADGE, S_TRULE_BADGES_FMT, S_TRULE_GOODBYE,
+  S_TRULE_STREAK_FMT, S_TRULE_CAUGHT,
+  S_JUKE_SOUND_OFF, // the jukebox, while the sound switch is off
+  S_NEW_TUNE_FMT,   // "NEW SONG: %s" when one unlocks
+  S_JUKE_HELP,      // "tap: play / stop"
   STR_COUNT
 };
 
