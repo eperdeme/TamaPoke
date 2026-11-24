@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path';
 import {
   crc32, parsePak, verifyPak, packIsCurrent, parseSum, probeSum, installFile,
   PUT_BLOCK, PUT_WINDOW, PUT_ATTEMPTS, RETRY_AFTER_TIMEOUT_MS, RETRY_AFTER_ERR_MS,
+  parseCryPak, validateCryBlob, normalizeCryFileName,
 } from '../web/packs.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -255,6 +256,39 @@ const file = { name: 'mons/p025.bin', data: bytes(PUT_BLOCK * 7 + 100, 25) };
   const board = fakeBoard({ silent: true });
   await ckThrows(() => installFile(board.io, file, { sums: false }), 'stopped answering',
                  'a board that never answers fails the file with a reason');
+}
+
+// ---- Cry pack validation & upload helpers ----
+{
+  const makeCry = (rate = 16000, stepIdx = 0, payload = [0x12, 0x34]) => {
+    const out = new Uint8Array(12 + payload.length);
+    out.set([0x54, 0x43, 0x52, 0x59], 0); // TCRY
+    out[4] = rate & 0xff; out[5] = (rate >> 8) & 0xff;
+    out[8] = stepIdx;
+    out.set(payload, 12);
+    return out;
+  };
+  const validCry = makeCry();
+  validateCryBlob('c025.adp', validCry);
+  ck(normalizeCryFileName('25.adp') === 'cries/c025.adp', 'numeric cry name normalizes to cries/c025.adp');
+  ck(normalizeCryFileName('C1025.adp') === 'cries/c1025.adp', 'upper/lower cNNN.adp normalizes cleanly');
+  ckThrows(() => normalizeCryFileName('../mons/c025.adp'), 'invalid cry file', 'path traversal in cry name is rejected');
+  ckThrows(() => normalizeCryFileName('c000.adp'), 'invalid cry dex', 'dex 0 is rejected');
+  ckThrows(() => validateCryBlob('bad.adp', makeCry(8000, 0)), 'unsupported cry rate', 'wrong sample rate is rejected');
+  ckThrows(() => validateCryBlob('bad.adp', makeCry(16000, 89)), 'invalid IMA step index', 'step index > 88 is rejected');
+
+  const cryPak = makePak([
+    { name: 'cries/c025.adp', data: validCry },
+    { name: 'cries/c1025.adp', data: makeCry(16000, 12, [0x56]) },
+  ]);
+  const cryItems = parseCryPak(cryPak);
+  ck(cryItems.length === 2 && cryItems[0].name === 'cries/c025.adp', 'valid cry .pak parses all entries');
+  ckThrows(() => parseCryPak(makePak([{ name: 'mons/p025.bin', data: validCry }])),
+           'unexpected cry pack entry', 'cry .pak rejects sprite paths');
+
+  const board = fakeBoard({});
+  ck(await installFile(board.io, cryItems[0], { sums: true }) === 'sent', 'cry entry uploads over PUT');
+  ck(await installFile(board.io, cryItems[0], { sums: true }) === 'skipped', 'and skips when SUM already matches');
 }
 
 console.log(bad ? `\n${bad} FAILURE(S)` : '\nall good');

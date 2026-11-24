@@ -5,6 +5,7 @@
 #include "rtcbat.h"
 #include "audio.h"
 #include "linknow.h"
+#include "../../adpcm.h"
 #include <cstdio>
 #include <string>
 
@@ -235,3 +236,19 @@ bool audioEnabled() { return g_emuSnd; }
 static int g_resetReason = ESP_RST_POWERON;
 esp_reset_reason_t emuResetReason() { return g_resetReason; }
 void emuSetResetReason(int r) { g_resetReason = r; }
+
+bool sdLoadCry(int16_t dexNum, uint8_t **outBuf, uint32_t *outLen) {
+  if (!sdReady || !outBuf || !outLen || dexNum < 1 || dexNum > DEX_COUNT) return false;
+  char name[28];
+  snprintf(name, sizeof(name), "/../cries/c%03u.adp", (unsigned)dexNum);
+  uint32_t size = 0;
+  uint8_t *buf = slurp(g_spriteDir + name, &size);
+  if (!buf) return false;
+  if (!adpcmValidHeader(buf, size)) {
+    free(buf);
+    return false;
+  }
+  *outBuf = buf;
+  *outLen = size;
+  return true;
+}

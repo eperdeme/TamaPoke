@@ -62,6 +62,7 @@ extern SdThumbs thumbs;
 // is formatted ONLY when asked: the console's SD MOUNT FORMAT, which the web
 // installer sends after the player confirms. It used to format any such card.
 bool sdBegin(bool formatIfUnreadable = false);
+bool sdLoadCry(int16_t dexNum, uint8_t **outBuf, uint32_t *outLen);
 // Narrows gRegionArt to the packs actually present. `verbose` logs one line per
 // region, which is what the boot report wants; the runtime rescan passes false so
 // its output cannot interleave with the PUT transfer protocol the host is parsing.

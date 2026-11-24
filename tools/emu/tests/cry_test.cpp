@@ -19,6 +19,8 @@
 // dependency, deliberately, which is what makes this possible at all.
 #include "gbsynth.h"
 #include "cry.h"
+#include "cry_gb.h"
+#include "adpcm.h"
 #include <cstdio>
 #include <cstring>
 #include <cmath>
@@ -225,6 +227,106 @@ int main() {
     for (uint8_t t = 0; t < TYPE_COUNT; t++)
       if (cryDutyFor(t) > 3) badDuty++;
     ck(badDuty == 0, "every type maps to a real duty cycle");
+  }
+
+  // ---- Tier 2: Authentic Gen 1 & Gen 2 Game Boy cries (#1..#251)
+  {
+    int missing = 0, badLen = 0;
+    for (int16_t d = 1; d <= CRY_DEX; d++) {
+      if (!gbCryHas(d)) missing++;
+      else {
+        uint32_t ms = GbCryPlayer::lengthMs(d);
+        if (ms == 0 || ms > 3000) badLen++;
+      }
+    }
+    ck(missing == 0, "all 251 Gen 1-2 species have authentic GB cry data");
+    ck(badLen == 0, "all 251 GB cries have bounded non-zero duration");
+    ck(!gbCryHas(0) && !gbCryHas(CRY_DEX + 1) && !gbCryHas(DEX_COUNT),
+       "Gen 3+ and out-of-range species fall back past GB cry table");
+
+    int silentGb = 0, clipGb = 0;
+    const int16_t gbSample[] = { 1, 4, 6, 7, 25, 94, 150, 152, 197, 249, 251 };
+    for (int16_t d : gbSample) {
+      GbCryPlayer gb;
+      GbSynth syn;
+      if (!gb.begin(d)) { silentGb++; continue; }
+      int peak = 0, clipped = 0;
+      uint32_t ms;
+      int16_t buf[512];
+      while ((ms = gb.step(syn)) != 0) {
+        uint32_t left = (uint32_t)((uint64_t)ms * GB_RATE / 1000);
+        while (left) {
+          size_t take = left > 512 ? 512 : left;
+          syn.render(buf, take, 7);
+          for (size_t i = 0; i < take; i++) {
+            int v = buf[i] < 0 ? -buf[i] : buf[i];
+            if (v > peak) peak = v;
+            if (v >= 32000) clipped++;
+          }
+          left -= take;
+        }
+      }
+      if (peak < 200) silentGb++;
+      if (clipped) clipGb++;
+    }
+    ck(silentGb == 0, "sampled Gen 1-2 GB cries render audible sound");
+    ck(clipGb == 0, "and Gen 1-2 GB cries do not clip at default volume");
+  }
+
+  // ---- Tier 1: TCRY 16 kHz 4-bit IMA-ADPCM codec
+  {
+    const size_t N = 4000;
+    std::vector<int16_t> src(N);
+    for (size_t i = 0; i < N; i++)
+      src[i] = (int16_t)(16000.0 * sin(2.0 * 3.14159265 * 440.0 * (double)i / 16000.0));
+    uint8_t enc[CRY_ADPCM_HDR + (N + 1) / 2];
+    size_t encLen = adpcmEncode(src.data(), N, enc, sizeof(enc));
+    ck(encLen == sizeof(enc) && adpcmValidHeader(enc, (uint32_t)encLen),
+       "adpcmEncode produces a valid TCRY container");
+
+    AdpcmDec dec;
+    ck(dec.init(enc, (uint32_t)encLen), "AdpcmDec accepts valid TCRY stream");
+    int16_t out[N];
+    size_t got = dec.decode(out, N, 10);
+    ck(got == N && dec.done(), "AdpcmDec decodes the full sample count and marks done");
+    double errSq = 0.0, sigSq = 0.0;
+    for (size_t i = 0; i < N; i++) {
+      double e = (double)src[i] - (double)out[i];
+      errSq += e * e;
+      sigSq += (double)src[i] * (double)src[i];
+    }
+    double snr = 10.0 * log10(sigSq / std::max(1.0, errSq));
+    printf("      IMA-ADPCM round-trip SNR %.1f dB\n", snr);
+    ck(snr > 25.0, "IMA-ADPCM round-trip keeps high SNR");
+
+    int peakPrev = 0;
+    bool monoVol = true;
+    for (uint8_t vol = 0; vol <= 10; vol++) {
+      AdpcmDec vdec;
+      vdec.init(enc, (uint32_t)encLen);
+      int16_t vbuf[N];
+      vdec.decode(vbuf, N, vol);
+      int peak = 0;
+      for (size_t i = 0; i < N; i++) peak = std::max(peak, std::abs((int)vbuf[i]));
+      if (vol == 0 && peak != 0) monoVol = false;
+      if (vol > 0 && peak <= peakPrev) monoVol = false;
+      peakPrev = peak;
+    }
+    ck(monoVol, "ADPCM volume 0 is silent and levels 1..10 increase monotonically");
+
+    uint8_t badMagic[20] = {};
+    memcpy(badMagic, enc, 20);
+    badMagic[0] = 'X';
+    ck(!adpcmValidHeader(badMagic, 20), "bad TCRY magic is rejected");
+    uint8_t badRate[20] = {};
+    memcpy(badRate, enc, 20);
+    badRate[4] = 0x40; badRate[5] = 0x1F; // 8000 Hz
+    ck(!adpcmValidHeader(badRate, 20), "unsupported sample rate is rejected");
+    uint8_t badIdx[20] = {};
+    memcpy(badIdx, enc, 20);
+    badIdx[8] = 89;
+    ck(!adpcmValidHeader(badIdx, 20), "out-of-range IMA step index is rejected");
+    ck(!adpcmValidHeader(enc, CRY_ADPCM_HDR - 1), "truncated header is rejected");
   }
 
   printf("%s\n", bad ? "FAILURES" : "all good");

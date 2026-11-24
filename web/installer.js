@@ -1,7 +1,10 @@
 import {
   verifyBackup, describeBackup, sendBackup, saveSummary, backupFileName,
-} from './savefile.js?v=a74403c4d34e585d';
-import { parsePak, verifyPak, packIsCurrent, probeSum, installFile } from './packs.js?v=2d4d719f12e1ccb6';
+} from './savefile.js?v=32f23b9e12500bd2';
+import {
+  parsePak, verifyPak, packIsCurrent, probeSum, installFile,
+  parseCryPak, validateCryBlob, normalizeCryFileName,
+} from './packs.js?v=0752b44c6eec58c0';
 
 const byId = (id) => document.getElementById(id);
 const enc = new TextEncoder();
@@ -572,6 +575,7 @@ function syncControls() {
   byId('backup').disabled = busy || !connected;
   byId('restore-button').disabled = busy || !connected;
   byId('files-button').disabled = busy || !connected;
+  byId('cry-pack-button').disabled = busy || !connected;
   for (const input of document.querySelectorAll('[data-region]')) input.disabled = busy || !connected;
   for (const button of document.querySelectorAll('.status button')) button.disabled = busy;
   refreshSelection();
@@ -1473,6 +1477,52 @@ byId('files').addEventListener('change', async (event) => {
     await queryInstalledPacks();
   } catch (error) {
     report('pack', 'Custom file transfer failed', error);
+  } finally {
+    setBusy(false);
+  }
+});
+
+byId('cry-pack-button').addEventListener('click', () => byId('cry-pack-files').click());
+byId('cry-pack-files').addEventListener('change', async (event) => {
+  const files = [...event.target.files];
+  event.target.value = '';
+  if (!files.length || !writer) return;
+  setBusy(true);
+  clearStatus('pack');
+  try {
+    const items = [];
+    for (const file of files) {
+      const buf = await file.arrayBuffer();
+      if (/\.pak$/i.test(file.name)) {
+        items.push(...parseCryPak(buf));
+      } else {
+        const name = normalizeCryFileName(file.name);
+        const data = new Uint8Array(buf);
+        validateCryBlob(name, data);
+        items.push({ name, data });
+      }
+    }
+    if (sumSupported === null) sumSupported = await probeSum(packIo);
+    const total = items.reduce((sum, item) => sum + item.data.length, 0);
+    let done = 0;
+    let sent = 0;
+    let skipped = 0;
+    for (const item of items) {
+      const label = `Cry pack \u00b7 ${item.name.replace('cries/', '')}`;
+      const result = await installFile(packIo, item, {
+        sums: Boolean(sumSupported),
+        onProgress: (bytes) => showProgress(label, (done + bytes) / total, `${MB(done + bytes)} of ${MB(total)}`),
+      });
+      if (result === 'skipped') skipped++;
+      else sent++;
+      done += item.data.length;
+    }
+    showProgress('Cry pack complete', 1);
+    log(`Cry upload finished: ${sent} written, ${skipped} already up to date.`);
+    setStatus('pack', 'ok', `${items.length} cry file${items.length === 1 ? '' : 's'} ready `
+      + `(${sent} uploaded, ${skipped} skipped).`);
+  } catch (error) {
+    report('pack', 'Cry pack upload failed', error);
   } finally {
     setBusy(false);
   }
