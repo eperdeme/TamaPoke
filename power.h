@@ -23,6 +23,7 @@ struct PowerCtx {
   bool usb;           // alimentacion externa
   bool charging;
   int batPct;         // 0-100, -1 si no hay bateria
+  bool stepActive;    // IMU pedometer activo: acorta light sleep para no perder pasos
 };
 
 // ms desde `last`, sin desbordar si `last` es posterior a `now` (un toque atendido despues de
@@ -82,7 +83,12 @@ inline uint32_t idleDelayMs(const PowerCtx &c) { return c.screenOff ? 20 : 1; }
 inline bool lightSleepAllowed(const PowerCtx &c) {
   return !c.usb && (c.screenOff || dimStageFor(c.idleMs) == DIM_OFF);
 }
-#define POWER_SLEEP_MS 200  // duracion de cada sueno; el toque despierta antes
+#define POWER_SLEEP_MS 200       // duracion de cada sueno; el toque despierta antes
+#define POWER_STEP_SLEEP_MS 50   // 20 Hz max cuando el podometro esta activo
+
+inline uint32_t lightSleepMs(const PowerCtx &c) {
+  return c.stepActive ? POWER_STEP_SLEEP_MS : POWER_SLEEP_MS;
+}
 
 // cada cuanto se lee la bateria por I2C
 inline uint32_t powerCacheMs(const PowerCtx &c) {

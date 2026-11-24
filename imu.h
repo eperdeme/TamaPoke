@@ -3,5 +3,6 @@
 
 // QMI8658 6-axis IMU. Only the accelerometer is used (for step counting).
 bool imuBegin();                                   // false if the chip is not found
+bool imuPresent();                                 // true if QMI8658 responded at boot
 void imuSetEnabled(bool on);                       // powers accelerometer up or down
 bool imuReadAccel(float &x, float &y, float &z);   // in g; false when off or no new sample ready

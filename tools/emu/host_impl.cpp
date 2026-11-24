@@ -173,6 +173,7 @@ uint32_t pmuReadErrors() { return 0; }
 // --- IMU (stubbed; steps_test drives StepDetector directly) ---
 #include "../../imu.h"
 bool imuBegin() { return false; }
+bool imuPresent() { return false; }
 void imuSetEnabled(bool) {}
 bool imuReadAccel(float &, float &, float &) { return false; }
 

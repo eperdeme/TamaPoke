@@ -130,6 +130,12 @@ until you actually raise it.
 |---|---|---|
 | <img src="docs/screens/today.png" width="240"> | <img src="docs/screens/medals.png" width="240"> | <img src="docs/screens/quiz.png" width="240"> |
 
+### Companion, steps & settings
+
+| Jukebox | Dancing companion | Step counter | Settings | Game rules |
+|---|---|---|---|---|
+| <img src="docs/screens/jukebox.png" width="180"> | <img src="docs/screens/dance.png" width="180"> | <img src="docs/screens/steps.png" width="180"> | <img src="docs/screens/settings.png" width="180"> | <img src="docs/screens/game.png" width="180"> |
+
 ## Status
 
 Running on hardware. Implemented: 1025 species + shinies animated from microSD, full
@@ -137,11 +143,11 @@ life cycle (egg by rarity → evolution → farewell/release/runaway, each gated
 behind a decision dialog), bred-Pokédex with gallery, turn-based trainer, wild
 and LAN battles, **wild capture and a shared bag**, battle stats (IVs +
 training), retention hooks (streak / bond / medals / name), biome + real-time
-backgrounds, **four minigames**, animated bath, RTC with offline
+backgrounds, **four minigames**, animated bath, **jukebox** (8 unlockable chiptune tracks with dancing and daily listening joy), **step counter** (QMI8658 IMU with daily walking milestones and an in-game ON/OFF toggle), RTC with offline
 progression, battery (AXP2101) and PWR button, anti-burn-in dimming with a
-**brightness setting**, **synthesised per-species chirps**,
+**brightness setting**, **3-tier Pokémon cries** (optional microSD ADPCM voice packs, authentic Gen 1–2 Game Boy cries, and procedural fallback),
 **sound (ES8311)**, **7 UI languages (English default)**, **starter choice on
-first run**, and a one-click **web installer**.
+first run**, and a one-click **web installer** (firmware, saves, sprite packs, and cry packs).
 
 All nine regions are in the dex, and all nine have a gym ladder and a sprite pack.
 A region whose pack is not on the card shows as NEEDS PACK and stays out of the
@@ -573,11 +579,14 @@ three early retires in a row still cost one day. The creature's card says
 "evolves a day later" while it carries the debt, and the confirm dialog says the
 price before you accept it.
 
-### Settings, brightness and starting over
-Settings is **two pages**, paged from the rim like every other paged screen.
-Page 1 is the clock. Page 2 is sound, volume, **brightness** and language, plus
-**RESET GAME**.
+### Settings, jukebox, step counter & starting over
+Settings is **three pages**, paged from the rim like every other paged screen:
+- Page 1: Sound ON/OFF, volume (0–10), **brightness** (1–10), language (7 languages).
+- Page 2 (**Clock**): Year / Month / Day / Hour / Minute setters.
+- Page 3 (**Game**): Leveling speed, Farewell level gate, Egg preference (`NEW ONLY` / `ALL`), **Step counter** (`ON` / `OFF`), and **RESET GAME**.
 
+- **Jukebox** (**MENU → JUKEBOX**): 8 unlockable Game Boy chiptunes earned through badges, hatching, streaks, captures, and farewells. Playing a track makes your awake companion dance on screen and earns **+3 JOY** every 5 minutes (capped at 30 minutes/day). Stops automatically when the screen turns off or the pet sleeps.
+- **Step counter**: Uses the onboard QMI8658 accelerometer to count walking steps (with pocket light-sleep cadence when active) and grants daily milestones at **500** (snack: +15 food, +10 joy), **1,500** (+10 energy, +10 joy), **3,000** (+10 joy, +1 bond), and **5,000** (+3 training points into ATK/DEF/SPD under your IV cap, +20 joy). Toggle `OFF` anytime on **SETTINGS → GAME** to save power and pause step milestones without losing today's step count.
 - **Brightness** is a level 1–10 and it is **saved**, so it survives a reboot and
   travels in your `.tpsave` backup. It is a *ceiling* on the automatic dimming
   rather than a replacement for it — the idle dimming and the sleep dimming are
@@ -630,7 +639,7 @@ what rate-limits rematching. A fully trained creature is told so.
 - Round 466×466 AMOLED, **CO5300** driver (QSPI, 80 MHz)
 - Capacitive touch **CST9217** (I2C, address 0x5A)
 - **AXP2101** (power management + battery + PWR button), **PCF85063** (RTC),
-  microSD slot, **ES8311** audio codec (→ amplifier → external speaker on the
+  **QMI8658** (6-axis IMU for the step counter), microSD slot, **ES8311** audio codec (→ amplifier → external speaker on the
   MX1.25 connector)
 - Pins taken from the [official Waveshare repo](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.75) (see `pin_config.h`)
 
@@ -707,6 +716,12 @@ To make the **one-click web-installer bundle** instead of sending over USB:
 
 ```bash
 python3 tools/pack_bundle.py    # bundle tools/sdcard/mons/* into web/sprites-<region>.pak, one per region
+```
+
+To build and upload an optional **microSD cry pack** (Tier 1 16 kHz 4-bit IMA-ADPCM voice cries, falling back to authentic Gen 1–2 Game Boy cries or procedural chirps when absent):
+
+```bash
+python3 tools/pack_cries.py --out web/cries.pak   # builds /cries/cNNN.adp pack (install via web installer "Upload cry pack")
 ```
 
 Then install them from the web installer's region list (or `send_sd.py`
@@ -931,7 +946,7 @@ battle narration that names the move being used.
 
 The idle screen paints the sky from the **RTC's real time** (dawn / day / dusk /
 night with moon and stars) and the ground from the **type's biome** (meadow,
-beach, forest, volcano, mountain, snow). Sleeping forces night.
+beach, forest, volcano, mountain, snow, graveyard). Sleeping forces night.
 
 ## Layout
 
@@ -969,7 +984,8 @@ runaway-ready state) · `WIPE` (factory reset → new game) · `BEEP` (audio tes
 encounter) ·
 `TIME <epoch>` / `RTCSET <epoch>` · `HEALTH` (uptime + heap for the soak test) ·
 `LS` / `PUT` (SD files) · `SUM <path>` (CRC32 and size of a file as stored on the
-card) · `PACKS` (installed sprite pack versions) · `SD MOUNT` (mount a card
+card) · `PACKS` (installed sprite pack versions) · `MUSIC` / `MUSIC <idx>` / `MUSIC OFF` ·
+`TUNES` / `TUNES ALL` · `STEPS` / `STEPS <n>` / `STEPS ON|OFF` · `SD MOUNT` (mount a card
 inserted after boot) · `SD MOUNT FORMAT` (the same, formatting a card the board
 cannot read — it erases the card).
 
@@ -984,10 +1000,7 @@ To test fast: lower `PET_TICK_MS`, `MINUTES_PER_LEVEL` and `FAREWELL_AGE_MIN` in
 ## Roadmap
 
 - **Soak test** 24–48 h (instrumentation ready: `HEALTH` command/heartbeat).
-- **Cries by ear.** The per-species chirps are synthesised from each creature's
-  own typing and base stats, and `cry_test` proves all 1025 are audible, bounded,
-  distinct and deterministic — but no test can say whether they *sound* right.
-  That needs `tamapoke-emu --wav` and a board.
+- **Hardware walk & speaker mix verification.** Validate QMI8658 pocket step thresholds (`steps.cpp`) on a real walk and check speaker loudness balance across Tier 1 ADPCM cries, Tier 2 Gen 1–2 GB cries, and jukebox tracks on the board.
 
 *(Done: Galar and Paldea gym ladders and sprite packs; wild encounters, catching and the bag; 3D-printed case [published on MakerWorld](https://makerworld.com/es/models/2937822-tamapoke-a-pokemon-pokeball-tamagotchi); repo public with the browser installer + one-click sprite bundle.)*
 

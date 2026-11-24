@@ -94,8 +94,10 @@ struct Collection {
   std::array<uint8_t, ITEM_COUNT> items;
   char trainer[sizeof(pet.trainerName)] = {};
   uint8_t avatar = 0, region = 0;
-  uint16_t medals = 0, streak = 0, bestStreak = 0;
-  bool sound = true;
+  uint16_t medals = 0, streak = 0, bestStreak = 0, tunes = 0;
+  uint32_t stepCount = 0, stepDay = 0;
+  uint8_t stepClaim = 0;
+  bool sound = true, stepEnabled = true;
   uint8_t volume = 7;
 };
 
@@ -115,6 +117,11 @@ static Collection collection() {
   result.medals = pet.totalMedals; result.streak = pet.streak; result.bestStreak = pet.bestStreak;
   for (ItemKey key = 1; key < ITEM_COUNT; key++) result.items[key] = bag.count(key);
   result.sound = audioEnabled(); result.volume = audioVolume();
+  result.tunes = pet.tunes;
+  result.stepCount = pet.stepCount;
+  result.stepDay = pet.stepDay;
+  result.stepClaim = pet.stepClaim;
+  result.stepEnabled = gStepCounterEnabled;
   return result;
 }
 
@@ -144,6 +151,9 @@ static void compareCollection(const Collection &expected, bool live) {
   require(actual.dex == expected.dex && actual.shiny == expected.shiny, "existing Pokedex differs");
   require(actual.items == expected.items, "inventory rewards or spent ball differ after battle/reboot");
   require(actual.sound == expected.sound && actual.volume == expected.volume, "audio settings differ after reboot");
+  require(actual.tunes == expected.tunes && actual.stepCount == expected.stepCount &&
+          actual.stepDay == expected.stepDay && actual.stepClaim == expected.stepClaim &&
+          actual.stepEnabled == expected.stepEnabled, "jukebox or step state differs after reboot");
   require(!memcmp(actual.trainer, expected.trainer, sizeof(actual.trainer)) &&
           actual.avatar == expected.avatar && actual.region == expected.region &&
           actual.medals == expected.medals && actual.streak == expected.streak &&
@@ -198,6 +208,13 @@ static void fixture(const Case &test) {
   }
   require(party.savePair(), "could not seed disposable box");
   if (test.ending == Ending::Capture) require(bag.add(IT_MASTERBALL, 2) == 2, "cannot seed capture balls");
+  pet.tunes = (uint16_t)((1u << TUNE_PALLET) | (1u << TUNE_CENTER) | (1u << TUNE_ROUTE1));
+  pet.checkTunes(false);
+  pet.setClock(1767225600UL + 13 * 3600);
+  pet.stepDay = 1767225600UL / 86400;
+  pet.stepCount = 400;
+  pet.stepClaim = 0;
+  stepCounterSet(!test.hard);
   pet.saveNow();
   advance();
   require(pet.saveHealthy() && !pet.savePending(), "fixture saving is not healthy");
