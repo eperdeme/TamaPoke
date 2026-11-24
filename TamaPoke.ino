@@ -36,6 +36,8 @@
 #include "wild.h"
 #include "sdmon.h"
 #include "rtcbat.h"
+#include "imu.h"
+#include "steps.h"
 #include "nvsinfo.h"
 #include "i18n.h"
 #include "uifont.h"
@@ -435,7 +437,11 @@ void focusRecover();
 int gameStepAt(int r, int16_t x, int16_t y);
 int uiGameRowY(int r);
 int uiGameEggY();
+int uiGameStepY();
 bool gameEggAt(int16_t x, int16_t y);
+bool gameStepToggleAt(int16_t x, int16_t y);
+void setStepCounter(bool on);
+void drawStepPill();
 int uiGameBtnX(int step);
 void lifeSpanText(char *out, size_t cap);
 void renderGameOptions();
@@ -1254,6 +1260,7 @@ void setup() {
   levelSpeedLoad();     // minutos por nivel (por defecto: 60, el juego original)
   farewellLevelLoad();  // nivel de despedida (por defecto: 73, el juego original)
   eggPreferNewLoad();   // huevos: priorizar lineas nuevas (por defecto: si)
+  stepCounterLoad();    // contador de pasos: activado por defecto ("stepen")
   Wire.begin(IIC_SDA, IIC_SCL);
   // CST9217 (tactil), AXP2101 (PMU) y PCF85063 (RTC) comparten este bus I2C.
   // Red de seguridad para PMU/RTC (SensorLib NO respeta este timeout en el
@@ -1315,6 +1322,8 @@ void setup() {
   rtcBegin();
   batBegin();
   pwrSetup();
+  imuBegin();
+  imuSetEnabled(gStepCounterEnabled);
   uint32_t e = rtcEpoch();
   if (e == 0) {
     // CLOCK_EPOCH_FLOOR, not a literal: the same number is what clockVerdict()
@@ -1478,6 +1487,16 @@ void loop() {
     // creature's life. Same for the battery's low warning.
     if (pwrLongPressed()) flushBeforePowerLoss("pwr long press");
     if (batLowWarning()) flushBeforePowerLoss("battery low");
+  }
+
+  static StepDetector stepper;
+  if (gStepCounterEnabled) {
+    float ax, ay, az;
+    if (imuReadAccel(ax, ay, az)) pet.addSteps(stepper.feed(ax, ay, az, now));
+    uint8_t stepMs = pet.claimSteps();
+    if (stepMs) sfxPlay(stepMs >= STEP_MS_COUNT ? SFX_MEDAL : SFX_HEART);
+  } else {
+    stepper.reset();
   }
 
   // On the first pass after boot, flush the first real frame while the panel
@@ -1658,6 +1677,22 @@ void handleSerial() {
     pet.ageMinutes = (uint32_t)(want - 1) * MINUTES_PER_LEVEL;
     pet.saveNow();
     Serial.printf("lvl=%u\n", pet.level());
+  } else if (line == "STEPS ON") {
+    setStepCounter(true);
+    Serial.println("steps_enabled=1");
+  } else if (line == "STEPS OFF") {
+    setStepCounter(false);
+    Serial.println("steps_enabled=0");
+  } else if (line.startsWith("STEPS ")) {
+    long want = line.substring(6).toInt();
+    if (want < 0) want = 0;
+    if (want > STEP_MAX) want = STEP_MAX;
+    pet.setStepsToday((uint32_t)want);
+    pet.saveNow();
+    Serial.printf("steps=%lu\n", (unsigned long)pet.stepsToday());
+  } else if (line == "STEPS") {
+    Serial.printf("steps=%lu enabled=%u claim=%u\n", (unsigned long)pet.stepsToday(),
+                  gStepCounterEnabled ? 1 : 0, (unsigned)pet.stepClaim);
   } else if (line == "MAX" && gEmuDebug) {
     // MAX: the fully-raised creature, in one command. LVL 100 + IV 31 x4 + TR at
     // the ceiling + no care mistakes, which is otherwise four commands in the
@@ -5203,6 +5238,7 @@ void render() {
     snprintf(name, sizeof(name), T(S_NAME_FMT), pet.shiny ? "*" : "", base, pet.level());
     drawHeader(name, gNight ? UI_INK_NIGHT : d.accent, statusMsg());
     drawStreakBadge();
+    drawStepPill();
     drawPet();
     drawEatFood();
     drawBath();
@@ -5885,17 +5921,28 @@ static void renderClockOptions() {
 // farewell level (50..100), and whether eggs prefer unfinished lines. Each
 // numeric value sits between four buttons (-10, -1, +1, +10) that stop at the
 // ends rather than wrapping, with a "ONE LIFE" duration readout underneath.
-#define GAME_ROW_H 48
+#define GAME_ROW_H 44
 #define GAME_BTN_W 48
 #define GAME_BTN_GAP 4
 #define GAME_HALF 170          // the row spans CX - 170 .. CX + 170
-#define GAME_LBL_Y(r) (86 + (r) * 90)
-#define GAME_ROW_Y(r) (GAME_LBL_Y(r) + 22)
-#define GAME_LIFE_Y 264
-#define GAME_EGG_LBL_Y 296     // the egg setting: a label and one YES/NO button
-#define GAME_EGG_Y 318
-#define GAME_EGG_W 120
-#define GAME_EGG_H 44
+#define GAME_LBL_Y(r) (80 + (r) * 74)
+#define GAME_ROW_Y(r) (GAME_LBL_Y(r) + 20)
+#define GAME_LIFE_Y 226
+#define GAME_EGG_Y 252
+#define GAME_EGG_H UI_TAP_MIN
+#define GAME_STEP_Y 308
+#define GAME_STEP_H UI_TAP_MIN
+
+void setStepCounter(bool on) {
+  stepCounterSet(on);
+  imuSetEnabled(on);
+}
+
+static void gameToggleRect(int y, int h, int *rx, int *rw) {
+  int half = uiSafeHalfWidthFor(y, y + h) - 18;
+  *rx = CX - half;
+  *rw = half * 2;
+}
 
 int gameStepAt(int r, int16_t x, int16_t y) {
   if (y < GAME_ROW_Y(r) || y > GAME_ROW_Y(r) + GAME_ROW_H) return 0;
@@ -5909,9 +5956,16 @@ int gameStepAt(int r, int16_t x, int16_t y) {
 }
 int uiGameRowY(int r) { return GAME_ROW_Y(r) + GAME_ROW_H / 2; }
 int uiGameEggY() { return GAME_EGG_Y + GAME_EGG_H / 2; }
+int uiGameStepY() { return GAME_STEP_Y + GAME_STEP_H / 2; }
 bool gameEggAt(int16_t x, int16_t y) {
-  return y >= GAME_EGG_Y && y <= GAME_EGG_Y + GAME_EGG_H &&
-         x >= CX - GAME_EGG_W / 2 && x <= CX + GAME_EGG_W / 2;
+  int rx, rw;
+  gameToggleRect(GAME_EGG_Y, GAME_EGG_H, &rx, &rw);
+  return y >= GAME_EGG_Y && y <= GAME_EGG_Y + GAME_EGG_H && x >= rx && x <= rx + rw;
+}
+bool gameStepToggleAt(int16_t x, int16_t y) {
+  int rx, rw;
+  gameToggleRect(GAME_STEP_Y, GAME_STEP_H, &rx, &rw);
+  return y >= GAME_STEP_Y && y <= GAME_STEP_Y + GAME_STEP_H && x >= rx && x <= rx + rw;
 }
 int uiGameBtnX(int step) {
   const int l0 = CX - GAME_HALF, l1 = l0 + GAME_BTN_W + GAME_BTN_GAP;
@@ -5970,23 +6024,53 @@ void renderGameOptions() {
   gfx->setCursor(CX - (int)strlen(life) * 6, GAME_LIFE_Y);
   gfx->print(life);
 
-  gfx->setTextColor(UI_INK);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(T(S_EGG_NEW)) * 6, GAME_EGG_LBL_Y);
-  gfx->print(T(S_EGG_NEW));
-  const char *yn = T(gEggPreferNew ? S_YES : S_NO);
-  const int bx = CX - GAME_EGG_W / 2;
-  gfx->fillRoundRect(bx, GAME_EGG_Y, GAME_EGG_W, GAME_EGG_H, 10, UI_WHITE);
-  gfx->drawRoundRect(bx, GAME_EGG_Y, GAME_EGG_W, GAME_EGG_H, 10, UI_INK);
-  gfx->setTextColor(UI_INK);
-  gfx->setTextSize(3);
-  gfx->setCursor(CX - (int)strlen(yn) * 9, GAME_EGG_Y + GAME_EGG_H / 2 - 11);
-  gfx->print(yn);
+  // Eggs toggle pill
+  {
+    int rx, rw;
+    gameToggleRect(GAME_EGG_Y, GAME_EGG_H, &rx, &rw);
+    const char *lbl = T(S_EGG_NEW);
+    const char *yn = T(gEggPreferNew ? S_YES : S_NO);
+    gfx->fillRoundRect(rx, GAME_EGG_Y, rw, GAME_EGG_H, 10, gEggPreferNew ? UI_BAR_OK : UI_WHITE);
+    gfx->drawRoundRect(rx, GAME_EGG_Y, rw, GAME_EGG_H, 10, UI_INK);
+    gfx->setTextColor(gEggPreferNew ? UI_BG_DAY : UI_INK);
+    gfx->setTextSize(2);
+    const int ty = GAME_EGG_Y + GAME_EGG_H / 2 - 8;
+    const int lw = (int)strlen(lbl) * 12, yw = (int)strlen(yn) * 12;
+    if (lw + yw + 36 <= rw) {
+      gfx->setCursor(rx + 14, ty);
+      gfx->print(lbl);
+      gfx->setCursor(rx + rw - 14 - yw, ty);
+      gfx->print(yn);
+    } else {
+      char comb[48];
+      snprintf(comb, sizeof(comb), "%s %s", lbl, yn);
+      gfx->setCursor(CX - (int)strlen(comb) * 6, ty);
+      gfx->print(comb);
+    }
+  }
+
+  // Step counter toggle pill
+  {
+    int rx, rw;
+    gameToggleRect(GAME_STEP_Y, GAME_STEP_H, &rx, &rw);
+    const char *sl = T(gStepCounterEnabled ? S_STEP_ON : S_STEP_OFF);
+    gfx->fillRoundRect(rx, GAME_STEP_Y, rw, GAME_STEP_H, 10, gStepCounterEnabled ? UI_BAR_OK : UI_WHITE);
+    gfx->drawRoundRect(rx, GAME_STEP_Y, rw, GAME_STEP_H, 10, UI_INK);
+    gfx->setTextColor(gStepCounterEnabled ? UI_BG_DAY : UI_INK);
+    gfx->setTextSize(2);
+    gfx->setCursor(CX - (int)strlen(sl) * 6, GAME_STEP_Y + GAME_STEP_H / 2 - 8);
+    gfx->print(sl);
+  }
 }
 
 void gameOptionsTap(int16_t x, int16_t y) {
   if (gameEggAt(x, y)) {
     eggPreferNewSet(!gEggPreferNew);
+    sfxPlay(SFX_TAP);
+    return;
+  }
+  if (gameStepToggleAt(x, y)) {
+    setStepCounter(!gStepCounterEnabled);
     sfxPlay(SFX_TAP);
     return;
   }
@@ -6201,6 +6285,42 @@ void drawStreakBadge() {
   gfx->setTextSize(2);
   gfx->setCursor(x + 22, y + 2);
   gfx->print(s);
+}
+
+// Compact daily step counter pill centered below statusMsg(). Hidden whenever
+// the player turns the step counter off in Settings -> GAME.
+void drawStepPill() {
+  if (!gStepCounterEnabled) return;
+  const int w = 132, h = 24;
+  const int x = CX - w / 2, y = 114;
+  const uint32_t steps = pet.stepsToday();
+  const uint16_t ink = inkColor();
+  gfx->fillRoundRect(x, y, w, h, 10, gNight ? C565(0x1c, 0x26, 0x44) : UI_WHITE);
+  gfx->drawRoundRect(x, y, w, h, 10, ink);
+
+  // Two small staggered footprints on the left of the pill
+  for (int f = 0; f < 2; f++) {
+    int fx = x + 10 + f * 6;
+    int fy = y + (f ? 7 : 4);
+    gfx->fillRoundRect(fx, fy, 4, 6, 1, ink);
+    gfx->fillRect(fx + 1, fy + 7, 2, 2, ink);
+  }
+
+  char buf[8];
+  snprintf(buf, sizeof(buf), "%lu", (unsigned long)steps);
+  const int tw = (int)strlen(buf) * 12;
+  const int areaX = x + 28, areaW = w - 36;
+  gfx->setTextColor(ink);
+  gfx->setTextSize(2);
+  gfx->setCursor(areaX + (areaW - tw) / 2, y + 3);
+  gfx->print(buf);
+
+  const int barX = x + 10, barY = y + h - 5, barW = w - 20;
+  gfx->fillRoundRect(barX, barY, barW, 3, 1, UI_TRACK);
+  const uint32_t capped = steps > STEP_GOAL ? STEP_GOAL : steps;
+  int fillW = (int)(capped * (uint32_t)barW / STEP_GOAL);
+  if (fillW > 0)
+    gfx->fillRoundRect(barX, barY, fillW, 3, 1, steps >= STEP_GOAL ? UI_BAR_WARN : UI_BAR_OK);
 }
 
 // banner temporal: medalla nueva o hito de racha
@@ -11142,6 +11262,11 @@ const char *statusMsg() {
     static char tuneBuf[40];
     snprintf(tuneBuf, sizeof(tuneBuf), T(S_NEW_TUNE_FMT), tuneName(pet.tuneToastId));
     return tuneBuf;
+  }
+  if (gStepCounterEnabled && pet.stepToast()) {
+    static char stepBuf[24];
+    snprintf(stepBuf, sizeof(stepBuf), T(S_STEP_GOAL_FMT), pet.stepToastSteps);
+    return stepBuf;
   }
   if (pet.showHeart()) return T(S_LIKES);
   if (pet.fullness < 25) return T(S_HUNGRY);

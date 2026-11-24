@@ -6,7 +6,7 @@ import { runCommand } from './bounded.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '../../..');
-const core = ['gbsynth', 'pet', 'i18n', 'party', 'battle', 'link', 'save', 'inventory', 'wild'];
+const core = ['gbsynth', 'pet', 'i18n', 'party', 'battle', 'link', 'save', 'inventory', 'wild', 'steps'];
 
 function replaceOnce(source, before, after) {
   assert(source.split(before).length === 2, 'mutation anchor must occur exactly once');

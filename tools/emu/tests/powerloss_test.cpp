@@ -245,9 +245,9 @@ int main() {
     // fewer dex bytes, and the header saying so.
     const char *slot = newerSlot("plyA", "plyB");
     std::vector<uint8_t> small = slotBytes(slot);
-    ck(small.size() > 60, "the player checkpoint was written");
-    if (small.size() > 60) {
-      const size_t FIXED = 42;
+    ck(small.size() > 72, "the player checkpoint was written");
+    if (small.size() > 72) {
+      const size_t FIXED = small[19] ? small[19] : 42;
       uint16_t storedDex;
       memcpy(&storedDex, small.data() + 12, 2);
       const size_t shrinkTo = 19;                    // dex 1..152, the Kanto-era size
@@ -300,9 +300,9 @@ int main() {
 
     const char *slot = newerSlot("plyA", "plyB");
     std::vector<uint8_t> v3 = slotBytes(slot);
-    ck(v3.size() > 60 && v3[19] == 60, "the current player checkpoint has the appended quiz and jukebox fields");
-    if (v3.size() > 60 && v3[19] == 60) {
-      v3.erase(v3.begin() + 50, v3.begin() + 60);
+    ck(v3.size() > 72 && v3[19] == 72, "the current player checkpoint has the appended quiz, jukebox, and step fields");
+    if (v3.size() > 72 && v3[19] == 72) {
+      v3.erase(v3.begin() + 50, v3.begin() + 72);
       v3[19] = 50;
       const uint16_t version = 3;
       memcpy(v3.data() + 4, &version, 2);

@@ -53,17 +53,20 @@ int main(){
   levelSpeedLoad();
   farewellLevelLoad();
   eggPreferNewLoad();
-  ck(gLevelMins == 60 && gFarewellLevel == 73 && gEggPreferNew,
-     "a save with no settings plays the original game: 60 min/lv, farewell at 73, prefer new");
+  stepCounterLoad();
+  ck(gLevelMins == 60 && gFarewellLevel == 73 && gEggPreferNew && gStepCounterEnabled,
+     "a save with no settings plays the original game: 60 min/lv, farewell at 73, prefer new, steps on");
   levelSpeedSet(0);   ck(gLevelMins == 1, "the speed stops at 1, it does not wrap");
   levelSpeedSet(75);  ck(gLevelMins == 60, "and at 60");
   farewellLevelSet(10);  ck(gFarewellLevel == 50, "the farewell level stops at 50");
   farewellLevelSet(140); ck(gFarewellLevel == 100, "and at 100");
-  levelSpeedSet(7); farewellLevelSet(61); eggPreferNewSet(false);
-  gLevelMins = 60; gFarewellLevel = 73; gEggPreferNew = true;
-  levelSpeedLoad(); farewellLevelLoad(); eggPreferNewLoad();
-  ck(gLevelMins == 7 && gFarewellLevel == 61 && !gEggPreferNew, "all three survive a reboot");
+  levelSpeedSet(7); farewellLevelSet(61); eggPreferNewSet(false); stepCounterSet(false);
+  gLevelMins = 60; gFarewellLevel = 73; gEggPreferNew = true; gStepCounterEnabled = true;
+  levelSpeedLoad(); farewellLevelLoad(); eggPreferNewLoad(); stepCounterLoad();
+  ck(gLevelMins == 7 && gFarewellLevel == 61 && !gEggPreferNew && !gStepCounterEnabled,
+     "all four survive a reboot");
   eggPreferNewSet(true);
+  stepCounterSet(true);
   {
     Preferences pr; pr.begin("tamapoke", false);
     pr.putUChar("lvspd", 0); pr.putUChar("fwlv", 200); pr.end();

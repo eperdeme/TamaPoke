@@ -145,24 +145,24 @@ int main(){
        "minutes per level, farewell level and egg preference are in the backup table");
     Pet p5; p5.begin(); p5.dbgHatchAs(7, false);
     party.begin();
-    levelSpeedSet(20); farewellLevelSet(60); eggPreferNewSet(false);
+    levelSpeedSet(20); farewellLevelSet(60); eggPreferNewSet(false); stepCounterSet(false);
     std::vector<uint8_t> buf(SAVE_TRANSFER_MAX);
     size_t n = saveExport(buf.data(), buf.size());
-    levelSpeedSet(45); farewellLevelSet(90); eggPreferNewSet(true);
+    levelSpeedSet(45); farewellLevelSet(90); eggPreferNewSet(true); stepCounterSet(true);
     ck(n > 0 && saveImport(buf.data(), n), "a save with custom GAME settings exports and imports");
-    levelSpeedLoad(); farewellLevelLoad(); eggPreferNewLoad();
-    ck(gLevelMins == 20 && gFarewellLevel == 60 && !gEggPreferNew,
-       "restoring puts all three back as they were");
+    levelSpeedLoad(); farewellLevelLoad(); eggPreferNewLoad(); stepCounterLoad();
+    ck(gLevelMins == 20 && gFarewellLevel == 60 && !gEggPreferNew && !gStepCounterEnabled,
+       "restoring puts all four back as they were");
 
-    // a backup taken before they were listed: none of the three keys
+    // a backup taken before they were listed: none of the four keys
     { Preferences g; g.begin("tamapoke", false);
-      g.remove("lvspd"); g.remove("fwlv"); g.remove("eggnew"); g.end(); }
+      g.remove("lvspd"); g.remove("fwlv"); g.remove("eggnew"); g.remove("stepen"); g.end(); }
     n = saveExport(buf.data(), buf.size());
-    levelSpeedSet(45); farewellLevelSet(90); eggPreferNewSet(false);
+    levelSpeedSet(45); farewellLevelSet(90); eggPreferNewSet(false); stepCounterSet(false);
     ck(n > 0 && saveImport(buf.data(), n), "an older backup without them still imports");
-    levelSpeedLoad(); farewellLevelLoad(); eggPreferNewLoad();
-    ck(gLevelMins == MINUTES_PER_LEVEL && gFarewellLevel == FAREWELL_LVL_DEFAULT && gEggPreferNew,
-       "and leaves the defaults (60 / 73 / yes), not the values it replaced");
+    levelSpeedLoad(); farewellLevelLoad(); eggPreferNewLoad(); stepCounterLoad();
+    ck(gLevelMins == MINUTES_PER_LEVEL && gFarewellLevel == FAREWELL_LVL_DEFAULT && gEggPreferNew && gStepCounterEnabled,
+       "and leaves the defaults (60 / 73 / yes / steps on), not the values it replaced");
   }
 
   for (int budget = 0; budget <= 5; ++budget) {

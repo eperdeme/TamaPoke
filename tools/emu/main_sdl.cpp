@@ -206,7 +206,8 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
   if (!strcmp(screen, "starter")) onTap(233, 108 + 30);        // KANTO
   if (!strcmp(screen, "starterj")) onTap(233, 108 + 72 + 30);  // JOHTO
   for (int i = 0; i < 2; i++) loop();          // pick up the sprite for the new species
-  if (!strcmp(screen, "main") || !strncmp(screen, "eat", 3) || !strcmp(screen, "dance")) {   // let the hatch/level medal toast expire
+  if (!strcmp(screen, "main") || !strncmp(screen, "eat", 3) || !strcmp(screen, "dance") ||
+      !strcmp(screen, "steps") || !strcmp(screen, "stepsoff")) {   // let the hatch/level medal toast expire
     emuSetTimeScale(5000);
     uint32_t t0 = millis();
     while (millis() - t0 < 4500) {}
@@ -260,6 +261,14 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
   else if (!strcmp(screen, "dance")) {
     audioPlayTrack(TUNE_PALLET);
     pet.musicOn = true;
+  }
+  else if (!strcmp(screen, "steps")) {
+    stepCounterSet(true);
+    pet.setStepsToday(4321);
+  }
+  else if (!strcmp(screen, "stepsoff")) {
+    stepCounterSet(false);
+    pet.setStepsToday(4321);
   }
   else if (!strcmp(screen, "train"))   trainOpen = true;
   else if (!strcmp(screen, "moves"))   { cardOpen = true; cardPage = 2; }

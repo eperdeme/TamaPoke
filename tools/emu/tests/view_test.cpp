@@ -772,10 +772,10 @@ int main(){
     void onTap(int16_t x, int16_t y);
     uint8_t uiCurrentScreen();
     extern const char *const SCREEN_NAME[];
-    int uiGameRowY(int r); int uiGameBtnX(int step); int uiGameEggY();
+    int uiGameRowY(int r); int uiGameBtnX(int step); int uiGameEggY(); int uiGameStepY();
     while (pet.hasLearnOffer()) pet.declineLearn();
     clockOpen = true; clockPage = 2;
-    levelSpeedSet(60); farewellLevelSet(73); eggPreferNewSet(true);
+    levelSpeedSet(60); farewellLevelSet(73); eggPreferNewSet(true); stepCounterSet(true);
     render();
     ck(!strcmp(SCREEN_NAME[uiCurrentScreen()], "clock"), "the settings screen is up on its third page");
     onTap(uiGameBtnX(-1), uiGameRowY(0));
@@ -796,9 +796,14 @@ int main(){
     render();
     onTap(233, uiGameEggY());
     ck(gEggPreferNew, "and back on");
+    onTap(233, uiGameStepY());
+    ck(!gStepCounterEnabled, "the step button turns step counter off");
+    render();
+    onTap(233, uiGameStepY());
+    ck(gStepCounterEnabled, "and back on");
     render();
     clockOpen = false; clockPage = 0;
-    levelSpeedSet(60); farewellLevelSet(73); eggPreferNewSet(true);
+    levelSpeedSet(60); farewellLevelSet(73); eggPreferNewSet(true); stepCounterSet(true);
   }
 
   printf("%s\n", bad?"FAILURES":"all good");
