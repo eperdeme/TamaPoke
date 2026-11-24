@@ -50,6 +50,7 @@ static void tapCenter(int x, int y, int w, int h) {
 
 int main() {
   setup();
+  check(pet.saveHealthy() && !pet.savePending(), "fresh boot leaves saving healthy and clean");
   pet.dbgSetSeen(1700000000UL);
   pet.dbgHatchAs(25, false);
 
@@ -246,6 +247,8 @@ int main() {
 
   Pet reloaded;
   reloaded.begin();
+  check(reloaded.saveHealthy() && !reloaded.savePending(),
+        "checkpoint reload leaves saving healthy and clean");
   check(reloaded.tunes == unlockedMask, "plyA/plyB checkpoint restores tunes bitmask");
   check(reloaded.listenMin == savedListenMin && reloaded.listenDay == savedListenDay,
         "plyA/plyB checkpoint restores listenMin/listenDay");

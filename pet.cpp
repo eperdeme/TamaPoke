@@ -407,11 +407,11 @@ void Pet::begin() {
   for (int i = 0; i < REGION_COUNT; i++) eggByRegion[i] = 0;
   if (!prefs.getBool("init", false)) {
     prefs.putBool("init", true);
+    checkTunes(false);   // seed free starter track before initial newEgg() save
     newEgg();
   } else {
     load();
   }
-  checkTunes(false);   // older saves earn what they already qualify for, silently
   // Without a clock the allowance is per boot.
   if (bondDay == 0) bondToday = 0;
   lastTick = millis();
@@ -676,8 +676,8 @@ uint16_t Pet::checkTunes(bool announce) {
     if (!tuneUnlocked(t) && tuneEarned(t)) fresh |= (uint16_t)1 << t;
   if (!fresh) return 0;
   tunes |= fresh;
-  pendingSave = true;
   if (announce) {
+    pendingSave = true;
     for (uint8_t t = 0; t < TUNE_COUNT; t++)
       if ((fresh >> t) & 1) tuneToastId = t;
     tuneToastUntil = millis() + 4000;
@@ -2428,6 +2428,7 @@ void Pet::load() {
   checkLearnGates();
   // siembra: la mascota actual cuenta como criada (guardados antiguos)
   if (speciesId >= 1) registerSpecies(speciesId);
+  checkTunes(false);   // older saves earn qualified tunes before the migration save
   // Now that the legacy keys are the ONLY migration path and are never
   // rewritten, a checkpoint missing here would otherwise wait for "the next
   // save" to exist at all -- and EXPORT, or a crash, between boot and whatever
