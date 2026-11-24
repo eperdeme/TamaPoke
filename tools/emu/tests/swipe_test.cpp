@@ -501,6 +501,32 @@ int main(){
     else printf("PASS  picker     Mew's whole list fits (%u moves), none twice\n", n);
   }
 
+  // Settings pages through horizontal swipes AND the rim, clamping at 0 and 2,
+  // and stays locked while resetConfirm is up.
+  {
+    extern bool resetConfirm; extern uint8_t clockPage;
+    void openClock();
+    clearAll(); openClock();
+    if (clockPage != 0 || !clockOpen) { printf("FAIL  settings   did not open on Options (page=%u)\n", clockPage); bad++; }
+    else printf("PASS  settings   opens on Options (page 0)\n");
+    onSwipe(-1);
+    if (clockPage != 1 || !clockOpen) { printf("FAIL  settings   left swipe did not advance to page 1\n"); bad++; }
+    onSwipe(-1);
+    if (clockPage != 2 || !clockOpen) { printf("FAIL  settings   left swipe did not advance to page 2\n"); bad++; }
+    onSwipe(-1);
+    if (clockPage != 2 || !clockOpen) { printf("FAIL  settings   left swipe off end did not clamp\n"); bad++; }
+    onSwipe(1);
+    if (clockPage != 1 || !clockOpen) { printf("FAIL  settings   right swipe did not return to page 1\n"); bad++; }
+    resetConfirm = true;
+    onSwipe(1);
+    if (clockPage != 1) { printf("FAIL  settings   swiped while resetConfirm was open\n"); bad++; }
+    resetConfirm = false;
+    onSwipe(1); onSwipe(1);
+    if (clockPage != 0 || !clockOpen) { printf("FAIL  settings   right swipe off start did not clamp\n"); bad++; }
+    else printf("PASS  settings   horizontal swipes page 0..2 cleanly and clamp\n");
+    clockOpen = false;
+  }
+
   printf("%s\n", bad?"FAILURES":"every paged screen pages");
   return bad?1:0;
 }

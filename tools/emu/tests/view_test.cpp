@@ -17,6 +17,7 @@
 #include "party.h"
 #include "dex.h"
 #include "i18n.h"
+#include "audio.h"
 #include <cstdio>
 #include <cmath>
 #include <cstring>
@@ -705,6 +706,64 @@ int main(){
     ck(memoOver && memoBest == 1, "the same deadline is enforced across the wrap");
     leaveMemo();
     emuSetClockPaused(false);
+  }
+
+  // --- Settings: opens on Options (0), footer < BACK >, direct bar taps, and Set Time OK ---
+  {
+    extern bool clockOpen; extern uint8_t clockPage; extern uint8_t gBrightLevel;
+    void openClock();
+    void brightSetLevel(uint8_t level);
+    int uiBrightMax(); int uiBrightDefault();
+    void setRowRect(int i, int *x, int *y, int *w, int *h);
+    void setNavRect(int which, int *x, int *y, int *w, int *h);
+    void onTap(int16_t x, int16_t y);
+    while (pet.hasLearnOffer()) pet.declineLearn();
+    openClock();
+    render();
+    ck(clockOpen && clockPage == 0, "openClock() opens directly on Audio & Display (page 0)");
+
+    int nx, ny, nw, nh;
+    setNavRect(1, &nx, &ny, &nw, &nh);
+    onTap(nx + nw / 2, ny + nh / 2);
+    ck(clockOpen && clockPage == 1, "footer > advances to Set Time (page 1)");
+    onTap(nx + nw / 2, ny + nh / 2);
+    ck(clockOpen && clockPage == 2, "footer > advances to Game (page 2)");
+    setNavRect(-1, &nx, &ny, &nw, &nh);
+    onTap(nx + nw / 2, ny + nh / 2);
+    onTap(nx + nw / 2, ny + nh / 2);
+    ck(clockOpen && clockPage == 0, "footer < returns to Options (page 0)");
+
+    // Direct bar tap on Volume (row 1) and Brightness (row 2)
+    int rx, ry, rw, rh;
+    setRowRect(1, &rx, &ry, &rw, &rh);
+    const int volBarX0 = rx + 54 + 12, volBarW = rw - 54 * 2 - 24;
+    onTap(volBarX0, ry + rh / 2);
+    ck(audioVolume() == 0, "tapping left end of Volume bar sets 0");
+    onTap(volBarX0 + volBarW, ry + rh / 2);
+    ck(audioVolume() == 10, "tapping right end of Volume bar sets 10");
+    onTap(volBarX0 + volBarW / 2, ry + rh / 2);
+    ck(audioVolume() == 5, "tapping middle of Volume bar sets 5");
+
+    setRowRect(2, &rx, &ry, &rw, &rh);
+    const int brBarX0 = rx + 54 + 12, brBarW = rw - 54 * 2 - 24;
+    onTap(brBarX0, ry + rh / 2);
+    ck(gBrightLevel == 1, "tapping left end of Brightness bar clamps at 1 (never black)");
+    onTap(brBarX0 + brBarW, ry + rh / 2);
+    ck(gBrightLevel == uiBrightMax(), "tapping right end of Brightness bar sets max");
+
+    // Set Time OK closes Settings
+    setNavRect(1, &nx, &ny, &nw, &nh);
+    onTap(nx + nw / 2, ny + nh / 2);
+    render();
+    onTap(233, 334);
+    ck(!clockOpen, "OK on Set Time applies clock and closes Settings");
+
+    openClock();
+    setNavRect(0, &nx, &ny, &nw, &nh);
+    onTap(nx + nw / 2, ny + nh / 2);
+    ck(!clockOpen, "footer BACK closes Settings");
+    audioSetVolume(7);
+    brightSetLevel((uint8_t)uiBrightDefault());
   }
 
   // --- the GAME settings page: four buttons a row, stopping at the ends ---

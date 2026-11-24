@@ -89,11 +89,10 @@ int main(){
   clearAll(); menuOpen=true;     check("menu");
   clearAll(); partyOpen=true;    check("party");
   clearAll(); bagOpen=true;      check("bag");
-  clearAll(); clockOpen=true;    check("clock");
-  // Settings is two pages now, and the second one is where brightness and the
-  // reset live -- a page that never flushed would look like a frozen device
-  // exactly where somebody is trying to change a setting.
-  clearAll(); clockOpen=true; clockPage=1; check("settings");
+  // Settings has three pages, opening on Options (0), then Clock (1), then Game (2).
+  clearAll(); clockOpen=true; clockPage=0; check("settings");
+  clearAll(); clockOpen=true; clockPage=1; check("clock");
+  clearAll(); clockOpen=true; clockPage=2; check("game");
   // Every player page, one per ladder, so a ladder added later brings its page.
   for (uint8_t p = 0; p < GYM_REGIONS; p++) {
     clearAll(); playerOpen=true; playerPage=p;

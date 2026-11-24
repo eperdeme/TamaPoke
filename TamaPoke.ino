@@ -2596,7 +2596,14 @@ void onSwipe(int dir) {
   if (gameOpen) { leaveGame(); return; }   // swipe out, keeping what you earned
   if (spdOpen) { leaveSpeed(); return; }
   if (memoOpen) { leaveMemo(); return; }
-  if (kbOpen || clockOpen) return;
+  if (kbOpen) return;
+  if (clockOpen) {
+    if (resetConfirm) return;
+    if (dir < 0 && clockPage + 1 < CLOCK_PAGES) { clockPage++; sfxPlay(SFX_TAP); }
+    else if (dir > 0 && clockPage > 0) { clockPage--; sfxPlay(SFX_TAP); }
+    else sfxPlay(SFX_DENY);
+    return;
+  }
   if (cardOpen) { cardOpen = false; return; }
 }
 
@@ -5657,6 +5664,10 @@ void drawClockBtn(int x, int y, const char *l) {
 // The -/+ pair on a stepper row sits at its two ends, so the label and the bar
 // own the middle.
 #define SET_STEP_W 54
+#define SET_NAV_Y 372
+#define SET_NAV_H UI_TAP_MIN
+#define SET_NAV_BTN_W 54
+#define SET_NAV_GAP 8
 
 // One answer for where a settings row is, asked by the draw path, the tap path
 // and hit_test. Three copies of this arithmetic is how a control ends up
@@ -5669,8 +5680,25 @@ void setRowRect(int i, int *x, int *y, int *w, int *h) {
   if (w) *w = half * 2;
   if (h) *h = SET_ROW_H;
 }
+void setNavRect(int which, int *x, int *y, int *w, int *h) {
+  int half = uiSafeHalfWidthFor(SET_NAV_Y, SET_NAV_Y + SET_NAV_H) - 20;
+  if (which < 0) {
+    if (x) *x = CX - half;
+    if (w) *w = SET_NAV_BTN_W;
+  } else if (which > 0) {
+    if (x) *x = CX + half - SET_NAV_BTN_W;
+    if (w) *w = SET_NAV_BTN_W;
+  } else {
+    if (x) *x = CX - half + SET_NAV_BTN_W + SET_NAV_GAP;
+    if (w) *w = half * 2 - 2 * (SET_NAV_BTN_W + SET_NAV_GAP);
+  }
+  if (y) *y = SET_NAV_Y;
+  if (h) *h = SET_NAV_H;
+}
 int uiSettingsRowCenterY(int i) { return SET_ROW_Y(i) + SET_ROW_H / 2; }
 int uiSettingsRows() { return SET_ROWS; }
+int uiBrightMax() { return BRIGHT_LEVELS; }
+int uiBrightDefault() { return BRIGHT_DEFAULT; }
 
 // The training menu and quiz geometry, published for hit_test
 // so it holds them to the finger floor and the round bezel without keeping its own
@@ -5687,40 +5715,35 @@ int uiQuizOptH() { return QUIZ_OPT_H; }
 
 static const char *const LANG_CODES[LANG_COUNT] = { "ES", "EN", "FR", "DE", "IT", "PT", "NL" };
 
-// Page 0: the clock. Unchanged, minus the controls that moved to page 1.
+// Page 1: the clock.
 static void renderClockTime() {
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(3);
-  gfx->setCursor(CX - strlen(T(S_SET_TIME)) * 9, 44);
+  gfx->setCursor(CX - strlen(T(S_SET_TIME)) * 9, 30);
   gfx->print(T(S_SET_TIME));
 
   char t[8];
   snprintf(t, sizeof(t), "%02d:%02d", clockH, clockM);
   gfx->setTextSize(7);
-  gfx->setCursor(CX - 105, 108);
+  gfx->setCursor(CX - 105, 100);
   gfx->print(t);
 
-  drawClockBtn(104, 190, "-");  // hora -
-  drawClockBtn(170, 190, "+");  // hora +
-  drawClockBtn(252, 190, "-");  // min -
-  drawClockBtn(318, 190, "+");  // min +
+  drawClockBtn(104, 184, "-");  // hora -
+  drawClockBtn(170, 184, "+");  // hora +
+  drawClockBtn(252, 184, "-");  // min -
+  drawClockBtn(318, 184, "+");  // min +
   gfx->setTextSize(2);
   gfx->setTextColor(UI_INK_SOFT);
-  gfx->setCursor(120, 256);
+  gfx->setCursor(120, 250);
   gfx->print(T(S_HOUR));
-  gfx->setCursor(276, 256);
+  gfx->setCursor(276, 250);
   gfx->print(T(S_MIN));
 
-  gfx->fillRoundRect(133, 340, 200, 48, 14, UI_BAR_OK);
+  gfx->fillRoundRect(133, 310, 200, 48, 14, UI_BAR_OK);
   gfx->setTextColor(UI_BG_DAY);
   gfx->setTextSize(3);
-  gfx->setCursor(CX - 18, 352);
+  gfx->setCursor(CX - 18, 322);
   gfx->print("OK");
-
-  gfx->setTextColor(UI_INK_SOFT);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - strlen(T(S_CLOCK_CANCEL)) * 6, 410);
-  gfx->print(T(S_CLOCK_CANCEL));
 }
 
 // A stepper row: label, a level bar, and -/+ at the two ends. Volume and
@@ -5759,11 +5782,11 @@ static void drawStepperRow(int i, const char *fmt, uint8_t v, uint8_t vmax,
   if (v) gfx->fillRoundRect(mid + 12, ry + rh - 14, barW * v / vmax, 8, 3, barCol);
 }
 
-// Page 1: everything that takes effect the moment it is touched.
+// Page 0: everything that takes effect the moment it is touched (opens first).
 static void renderClockOptions() {
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(3);
-  gfx->setCursor(CX - strlen(T(S_SETTINGS)) * 9, 44);
+  gfx->setCursor(CX - strlen(T(S_SETTINGS)) * 9, 30);
   gfx->print(T(S_SETTINGS));
 
   int rx, ry, rw, rh;
@@ -5816,11 +5839,11 @@ static void renderClockOptions() {
 #define GAME_BTN_W 48
 #define GAME_BTN_GAP 4
 #define GAME_HALF 170          // the row spans CX - 170 .. CX + 170
-#define GAME_LBL_Y(r) (90 + (r) * 96)
-#define GAME_ROW_Y(r) (GAME_LBL_Y(r) + 24)
-#define GAME_LIFE_Y 296
-#define GAME_EGG_LBL_Y 330     // the egg setting: a label and one YES/NO button
-#define GAME_EGG_Y 352
+#define GAME_LBL_Y(r) (86 + (r) * 90)
+#define GAME_ROW_Y(r) (GAME_LBL_Y(r) + 22)
+#define GAME_LIFE_Y 264
+#define GAME_EGG_LBL_Y 296     // the egg setting: a label and one YES/NO button
+#define GAME_EGG_Y 318
 #define GAME_EGG_W 120
 #define GAME_EGG_H 44
 
@@ -5885,7 +5908,7 @@ void lifeSpanText(char *out, size_t cap) {
 void renderGameOptions() {
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(3);
-  gfx->setCursor(CX - (int)strlen(T(S_GAME_TITLE)) * 9, 44);
+  gfx->setCursor(CX - (int)strlen(T(S_GAME_TITLE)) * 9, 30);
   gfx->print(T(S_GAME_TITLE));
   drawGameRow(0, T(S_LEVEL_SPEED_FMT), gLevelMins, LEVEL_SPEED_MIN, LEVEL_SPEED_MAX);
   drawGameRow(1, T(S_FAREWELL_LVL), gFarewellLevel, FAREWELL_LVL_MIN, FAREWELL_LVL_MAX);
@@ -5936,9 +5959,45 @@ void gameOptionsTap(int16_t x, int16_t y) {
 void renderClock() {
   gfx->fillScreen(RGB565_BLACK);
   gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
-  if (clockPage == 0) renderClockTime();
-  else if (clockPage == 1) renderClockOptions();
+  if (clockPage == 0) renderClockOptions();
+  else if (clockPage == 1) renderClockTime();
   else renderGameOptions();
+
+  // page indicator (and battery readout on Audio & Display) under the title
+  {
+    char sub[28];
+    int pc = (clockPage == 0) ? batPercent() : -1;
+    if (clockPage == 0 && pc >= 0)
+      snprintf(sub, sizeof(sub), "%u/%u  %s %d%%", (unsigned)(clockPage + 1),
+               (unsigned)CLOCK_PAGES, batCharging() ? "CHG" : "BAT", pc);
+    else
+      snprintf(sub, sizeof(sub), "%u/%u", (unsigned)(clockPage + 1),
+               (unsigned)CLOCK_PAGES);
+    gfx->setTextColor(UI_INK_SOFT);
+    gfx->setTextSize(2);
+    gfx->setCursor(CX - (int)strlen(sub) * 6, 60);
+    gfx->print(sub);
+  }
+
+  // shared footer navigation bar: <  CLOSE  >
+  for (int which = -1; which <= 1; which++) {
+    int nx, ny, nw, nh;
+    setNavRect(which, &nx, &ny, &nw, &nh);
+    const bool live = (which == 0) || (which < 0 ? clockPage > 0 : clockPage + 1 < CLOCK_PAGES);
+    gfx->fillRoundRect(nx, ny, nw, nh, 10, live ? UI_WHITE : UI_TRACK);
+    gfx->drawRoundRect(nx, ny, nw, nh, 10, UI_INK);
+    gfx->setTextColor(live ? UI_INK : 0x8410);
+    if (which == 0) {
+      const char *bl = T(S_CLOSE);
+      gfx->setTextSize(2);
+      gfx->setCursor(nx + (nw - (int)strlen(bl) * 12) / 2, ny + nh / 2 - 8);
+      gfx->print(bl);
+    } else {
+      gfx->setTextSize(3);
+      gfx->setCursor(nx + nw / 2 - 9, ny + nh / 2 - 11);
+      gfx->print(which < 0 ? "<" : ">");
+    }
+  }
 
   // version del firmware (discreta, abajo del todo)
   char ver[20];
@@ -5947,7 +6006,7 @@ void renderClock() {
   gfx->setTextSize(1);
   gfx->setCursor(CX - (int)strlen(ver) * 3, 436);
   gfx->print(ver);
-  // the arc scrollbar and the tile dots, so the second page advertises itself
+  // the arc scrollbar and the tile dots, so the other pages advertise themselves
   uiChrome();
   // Drawn LAST and over everything, because it is modal: while it is up nothing
   // else on the screen responds (clockTap checks it first).
@@ -5991,8 +6050,26 @@ void clockTap(int16_t x, int16_t y) {
     return;      // anything else while it is up does nothing at all
   }
 
+  for (int which = -1; which <= 1; which++) {
+    int nx, ny, nw, nh;
+    setNavRect(which, &nx, &ny, &nw, &nh);
+    if (x >= nx && x <= nx + nw && y >= ny && y <= ny + nh) {
+      if (which < 0) {
+        if (clockPage > 0) { clockPage--; sfxPlay(SFX_TAP); }
+        else sfxPlay(SFX_DENY);
+      } else if (which > 0) {
+        if (clockPage + 1 < CLOCK_PAGES) { clockPage++; sfxPlay(SFX_TAP); }
+        else sfxPlay(SFX_DENY);
+      } else {
+        clockOpen = false;
+        sfxPlay(SFX_TAP);
+      }
+      return;
+    }
+  }
+
   if (clockPage == 2) { gameOptionsTap(x, y); return; }
-  if (clockPage != 0) {
+  if (clockPage == 0) {
     for (int i = 0; i < SET_ROWS; i++) {
       int rx, ry, rw, rh;
       setRowRect(i, &rx, &ry, &rw, &rh);
@@ -6005,7 +6082,25 @@ void clockTap(int16_t x, int16_t y) {
       if (i == SET_VOL || i == SET_BRIGHT) {
         const bool minus = (x < rx + SET_STEP_W);
         const bool plus = (x > rx + rw - SET_STEP_W);
-        if (!minus && !plus) return;             // the middle is a readout
+        if (!minus && !plus) {
+          const int barX0 = rx + SET_STEP_W + 12;
+          const int barW = rw - SET_STEP_W * 2 - 24;
+          int rel = x - barX0;
+          if (rel < 0) rel = 0;
+          if (rel > barW) rel = barW;
+          if (i == SET_VOL) {
+            uint8_t v = (uint8_t)((rel * 10 + barW / 2) / barW);
+            if (v > 10) v = 10;
+            audioSetVolume(v);
+            sfxPlay(SFX_TAP);
+          } else {
+            uint8_t lv = (uint8_t)(1 + (rel * (BRIGHT_LEVELS - 1) + barW / 2) / barW);
+            if (lv > BRIGHT_LEVELS) lv = BRIGHT_LEVELS;
+            brightSetLevel(lv);
+            sfxPlay(SFX_TAP);
+          }
+          return;
+        }
         if (i == SET_VOL) {
           uint8_t v = audioVolume();
           if (plus && v < 10) audioSetVolume(v + 1);
@@ -6034,14 +6129,14 @@ void clockTap(int16_t x, int16_t y) {
     return;
   }
 
-  if (y >= 190 && y <= 248) {  // fila de botones +/-
+  if (y >= 184 && y <= 242) {  // fila de botones +/-
     if (x >= 104 && x < 162) clockH = (clockH + 23) % 24;
     else if (x >= 170 && x < 228) clockH = (clockH + 1) % 24;
     else if (x >= 252 && x < 310) clockM = (clockM + 59) % 60;
     else if (x >= 318 && x < 376) clockM = (clockM + 1) % 60;
     return;
   }
-  if (y >= 340 && y <= 388 && x >= 133 && x <= 333) { applyClock(); return; }
+  if (y >= 310 && y <= 358 && x >= 133 && x <= 333) { applyClock(); return; }
 }
 
 // llama + numero de racha arriba a la izquierda

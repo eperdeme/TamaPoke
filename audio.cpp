@@ -205,11 +205,19 @@ static void audioTask(void *) {
   uint32_t at1 = 0, at2 = 0, clock = 0;
   uint8_t playing = MUS_NONE;
   bool ampOn = false;
+  // GPIO-only PA gating on Core 0 (never touch Wire/I2C from audioTask): keep the
+  // amp off at master volume 0 even while pumping silent timing samples.
+  auto syncAmp = [&](bool active) {
+    bool want = active && gOn && gReady && gVol > 0;
+    if (want && !ampOn) { digitalWrite(PA, HIGH); delay(6); ampOn = true; }
+    else if (!want && ampOn) { digitalWrite(PA, LOW); ampOn = false; }
+  };
 
   for (;;) {
     uint8_t m = gMusic;
     bool wantAudio = (m != MUS_NONE) || gSyn.busy();
     if (!gOn || !gReady) { gSyn.allOff(); m = MUS_NONE; wantAudio = false; }
+    if (!wantAudio) syncAmp(false);
 
     // An effect always wins the melody voice. With three voices a cue that
     // mixed politely underneath would just be mud; cutting through is both
@@ -221,8 +229,9 @@ static void audioTask(void *) {
         CryNote cn[CRY_NOTES];
         const uint8_t n = crySynth(req.dex, cn);
         if (n) {
-          if (!ampOn) { digitalWrite(PA, HIGH); delay(6); ampOn = true; }
+          syncAmp(true);
           for (uint8_t i = 0; i < n; i++) {
+            syncAmp(true);
             if (cn[i].noise)
               gSyn.noise(cn[i].vol, cn[i].envDir, cn[i].envPeriod, cn[i].ms,
                          cn[i].noisePeriod);
@@ -233,9 +242,10 @@ static void audioTask(void *) {
           }
         }
       } else if (gOn && gReady && req.kind == AUD_SFX && req.sfx < SFX_COUNT) {
-        if (!ampOn) { digitalWrite(PA, HIGH); delay(6); ampOn = true; }
+        syncAmp(true);
         const SfxDef &d = SFX[req.sfx];
         for (uint8_t i = 0; i < d.len; i++) {
+          syncAmp(true);
           uint16_t f = hzToGb(d.n[i].f);
           // percussion for the impact cues, a pulse for everything else
           if (req.sfx == SFX_HIT || req.sfx == SFX_FAINT)
@@ -258,7 +268,7 @@ static void audioTask(void *) {
     }
 
     if (m != playing) { playing = m; mi1 = mi2 = 0; at1 = at2 = clock = 0; }
-    if (!ampOn) { digitalWrite(PA, HIGH); delay(6); ampOn = true; }
+    syncAmp(true);
 
     // 0 = the gym leader battle, 3 = the victory fanfare. Winning used to play
     // index 2, which is the WILD BATTLE theme -- so a win sounded like the fight

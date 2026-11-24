@@ -61,12 +61,17 @@ bool GbSynth::busy() const {
   return false;
 }
 
+// Perceptual logarithmic scale: linear scaling made levels 1..3 too loud for a
+// small speaker at night, while 0 stays silent and 10 keeps the full headroom.
+static const int32_t MASTER_SCALE[11] = {
+  0, 24, 48, 86, 145, 235, 370, 560, 820, 1140, 1500
+};
+
 void GbSynth::render(int16_t *out, size_t n, uint8_t master) {
   if (master > 10) master = 10;
   // Headroom for three voices at once: each can reach 15, and the sum is
-  // divided so a full chord cannot clip. 1500 per unit of master keeps a single
-  // voice comfortably audible without the mix distorting.
-  const int32_t scale = (int32_t)master * 150;
+  // scaled cleanly so single voices stay audible without clipping the mix.
+  const int32_t scale = MASTER_SCALE[master];
   for (size_t i = 0; i < n; i++) {
     int32_t mix = 0;
     for (int c = 0; c < GB_VOICES; c++) {

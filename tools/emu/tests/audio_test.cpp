@@ -59,8 +59,14 @@ int main() {
   if (audioRuntime.taskStarts != 1) return 1;
   runCase(MUS_BATTLE, true, 7, "stopping battle music silences voices and reaches a blocking wait");
   runCase(MUS_VICTORY, true, 7, "dismissing victory music cannot starve the idle task");
+  int paHighsBeforeAudible = g_emuPaHighs;
   runCase(MUS_VICTORY, false, 7, "the victory fanfare finishes without leaving a spinning task");
+  ck(g_emuPaHighs > paHighsBeforeAudible && g_emuPaVal == LOW,
+     "audible playback raises PA while playing and drops it after finishing");
+  int paHighsBeforeMute = g_emuPaHighs;
   runCase(MUS_VICTORY, false, 0, "a muted victory fanfare still finishes and blocks");
+  ck(g_emuPaHighs == paHighsBeforeMute && g_emuPaVal == LOW,
+     "master volume 0 keeps PA powered off while pacing silent frames");
   printf("%s\n", bad ? "FAILURES" : "all good");
   return bad ? 1 : 0;
 }

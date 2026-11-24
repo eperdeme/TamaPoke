@@ -231,7 +231,14 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
     galleryRegion = 1;
     for (int d = 1; d <= 200; d++) pet.dbgHatchAs(d, false);
   }
-  else if (!strcmp(screen, "clock"))   clockOpen = true;
+  else if (!strcmp(screen, "settings")) {
+    extern uint8_t clockPage;
+    clockOpen = true; clockPage = 0;
+  }
+  else if (!strcmp(screen, "clock")) {
+    extern uint8_t clockPage;
+    clockOpen = true; clockPage = 1;
+  }
   else if (!strcmp(screen, "game")) {
     extern uint8_t clockPage;
     clockOpen = true; clockPage = 2; levelSpeedSet(20); farewellLevelSet(60);
