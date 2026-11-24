@@ -7,6 +7,9 @@
 #include "pet.h"
 #include "party.h"
 #include "battle.h"
+#include "audio.h"
+void openJukebox();
+extern uint8_t jukePage;
 #include <chrono>
 #include <string>
 #include <deque>
@@ -203,7 +206,7 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
   if (!strcmp(screen, "starter")) onTap(233, 108 + 30);        // KANTO
   if (!strcmp(screen, "starterj")) onTap(233, 108 + 72 + 30);  // JOHTO
   for (int i = 0; i < 2; i++) loop();          // pick up the sprite for the new species
-  if (!strcmp(screen, "main") || !strncmp(screen, "eat", 3)) {   // let the hatch/level medal toast expire
+  if (!strcmp(screen, "main") || !strncmp(screen, "eat", 3) || !strcmp(screen, "dance")) {   // let the hatch/level medal toast expire
     emuSetTimeScale(5000);
     uint32_t t0 = millis();
     while (millis() - t0 < 4500) {}
@@ -244,6 +247,20 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
     clockOpen = true; clockPage = 2; levelSpeedSet(20); farewellLevelSet(60);
   }
   else if (!strcmp(screen, "menu"))    menuOpen = true;
+  else if (!strcmp(screen, "jukebox")) {
+    pet.tunes = (uint16_t)((1u << TUNE_COUNT) - 1) & ~(1u << TUNE_ROUTE1) & ~(1u << TUNE_WILD);
+    openJukebox();
+    audioPlayTrack(TUNE_PALLET);
+  }
+  else if (!strcmp(screen, "jukebox2")) {
+    pet.tunes = (uint16_t)((1u << TUNE_COUNT) - 1) & ~(1u << TUNE_WILD);
+    openJukebox();
+    jukePage = 1;
+  }
+  else if (!strcmp(screen, "dance")) {
+    audioPlayTrack(TUNE_PALLET);
+    pet.musicOn = true;
+  }
   else if (!strcmp(screen, "train"))   trainOpen = true;
   else if (!strcmp(screen, "moves"))   { cardOpen = true; cardPage = 2; }
   else if (!strcmp(screen, "movepick")) { movePickOpen = true; }

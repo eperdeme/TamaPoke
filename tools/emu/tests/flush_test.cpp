@@ -32,8 +32,8 @@ extern bool bagOpen;
 // minigames were NEVER covered here, which is a gap in the one test that exists
 // because a screen shipped frozen -- and every one of them advances real state
 // from its render path, so a missing flush there is worse than a still picture.
-extern bool gameOpen, sackOpen, spdOpen, memoOpen;
-extern uint8_t clockPage, playerPage, medalsPage;
+extern bool gameOpen, sackOpen, spdOpen, memoOpen, jukeOpen;
+extern uint8_t clockPage, playerPage, medalsPage, jukePage;
 void startGame(); void startSack(); void startSpeedGame(); void startMemoGame();
 extern Party party;
 void startBattle(int16_t dex, uint8_t lvl);
@@ -47,8 +47,8 @@ static void clearAll(){
   exploreOpen=false;
   boxOpen=releaseConfirm=false;
   bagOpen=false;
-  gameOpen=sackOpen=spdOpen=memoOpen=false;
-  clockPage=0; playerPage=0; medalsPage=0;
+  gameOpen=sackOpen=spdOpen=memoOpen=jukeOpen=false;
+  clockPage=0; playerPage=0; medalsPage=0; jukePage=0;
   partyDetail=boxDetail=0;
 }
 static void check(const char *name){
@@ -89,6 +89,7 @@ int main(){
   clearAll(); menuOpen=true;     check("menu");
   clearAll(); partyOpen=true;    check("party");
   clearAll(); bagOpen=true;      check("bag");
+  clearAll(); jukeOpen=true;     check("jukebox");
   // Settings has three pages, opening on Options (0), then Clock (1), then Game (2).
   clearAll(); clockOpen=true; clockPage=0; check("settings");
   clearAll(); clockOpen=true; clockPage=1; check("clock");
@@ -150,6 +151,7 @@ int main(){
   clearAll(); clockOpen=true;       crumbIs("clock");
   clearAll(); cardOpen=true;        crumbIs("card");
   clearAll(); bagOpen=true;         crumbIs("bag");
+  clearAll(); jukeOpen=true;        crumbIs("jukebox");
   clearAll(); startBattle(9,50);    crumbIs("battle");
   clearAll(); startMemoGame();      crumbIs("minigame");
   clearAll();
