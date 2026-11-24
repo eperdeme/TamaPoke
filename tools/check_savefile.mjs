@@ -286,9 +286,10 @@ const fullEntries = [
     { space: 0, key: 'lvspd', kind: 1, value: new Uint8Array([20]) },
     { space: 0, key: 'fwlv', kind: 1, value: new Uint8Array([60]) },
     { space: 0, key: 'eggnew', kind: 1, value: new Uint8Array([0]) },
+    { space: 0, key: 'stepen', kind: 1, value: new Uint8Array([0]) },
   ];
-  ck(verifyBackup(backupText(backupBlob([...fullEntries, ...gameSettings], 3))).fields === fullEntries.length + 3,
-     'v3 accepts the GAME settings keys (lvspd, fwlv, eggnew)');
+  ck(verifyBackup(backupText(backupBlob([...fullEntries, ...gameSettings], 3))).fields === fullEntries.length + 4,
+     'v3 accepts the GAME settings keys (lvspd, fwlv, eggnew, stepen)');
 }
 
 // ---- truncation: the case that used to pass

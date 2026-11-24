@@ -169,6 +169,12 @@ bool pwrLongPressed() { return false; }
 bool batLowWarning() { return false; }
 uint32_t pmuReadErrors() { return 0; }
 
+// --- IMU (stubbed; steps_test drives StepDetector directly) ---
+#include "../../imu.h"
+bool imuBegin() { return false; }
+void imuSetEnabled(bool) {}
+bool imuReadAccel(float &, float &, float &) { return false; }
+
 // --- NVS headroom (nvsinfo.cpp on the board) ---
 // The emulator's NVS is a std::map in Preferences.h: there is no partition to
 // exhaust, so this reports a healthy, fixed figure rather than pretending to

@@ -192,6 +192,9 @@ enum StrId : uint8_t {
   S_JUKE_SOUND_OFF, // the jukebox, while the sound switch is off
   S_NEW_TUNE_FMT,   // "NEW SONG: %s" when one unlocks
   S_JUKE_HELP,      // "tap: play / stop"
+  S_STEP_ON,        // GAME page: step counter enabled toggle
+  S_STEP_OFF,       // GAME page: step counter disabled toggle
+  S_STEP_GOAL_FMT,  // status toast when a step milestone pays
   STR_COUNT
 };
 

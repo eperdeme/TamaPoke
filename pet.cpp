@@ -170,7 +170,7 @@ static bool readPetCore(Preferences &prefs, const char *key,
 // however big the table got -- applied inside one atomic blob instead of across
 // twenty-five separate writes.
 static constexpr uint32_t PLAYER_MAGIC = 0x31594B54UL;   // "TKY1"
-static constexpr uint16_t PLAYER_VERSION = 5;
+static constexpr uint16_t PLAYER_VERSION = 6;
 // Header + every scalar, before the arrays begin.
 //
 // THIS LENGTH NOW TRAVELS IN THE RECORD, at buf[19], for exactly the reason the
@@ -187,7 +187,8 @@ static constexpr size_t PLAYER_FIXED_V1 = 42;
 static constexpr size_t PLAYER_FIXED_V2 = 44;   // v2: + memoHi at offset 42
 static constexpr size_t PLAYER_FIXED_V3 = 50;   // v3: + calmToday (44), reserved (45), calmDay (46)
 static constexpr size_t PLAYER_FIXED_V4 = 52;   // v4: + quizHi at offset 50
-static constexpr size_t PLAYER_FIXED = 60;      // v5: + tunes (52), listenMin (54), res (55), listenDay (56)
+static constexpr size_t PLAYER_FIXED_V5 = 60;   // v5: + tunes (52), listenMin (54), res (55), listenDay (56)
+static constexpr size_t PLAYER_FIXED = 72;      // v6: + stepCount (60), stepDay (64), stepClaim (68), res (69..71)
 static constexpr size_t PLAYER_CAP = 1024;   // 512 before the four origin dexes
 static constexpr size_t PLAYER_DEX_BYTES = (DEX_COUNT + 7) / 8;
 // DERIVED from the tables, never restated: CLAUDE.md § "sizeof(PartyMon) is
@@ -239,6 +240,10 @@ bool Pet::savePlayerSnapshot() {
   buf[54] = listenMin;                            // v5
   buf[55] = 0;                                    // v5, reserved
   ckptWr32(buf + 56, listenDay);                  // v5
+  ckptWr32(buf + 60, stepCount);                  // v6
+  ckptWr32(buf + 64, stepDay);                    // v6
+  buf[68] = stepClaim;                            // v6
+  buf[69] = buf[70] = buf[71] = 0;                // v6, reserved
 
   CkptCursor cur{ buf, PLAYER_FIXED, PLAYER_CAP - CKPT_CRC };
   cur.put(dexReg, sizeof(dexReg));
@@ -338,10 +343,16 @@ bool Pet::loadPlayerSnapshot() {
     calmToday = calmDay ? buf[44] : 0;
   }
   if (fixed >= PLAYER_FIXED_V4) quizHi = ckptRd16(buf + 50);
-  if (fixed >= PLAYER_FIXED) {
+  if (fixed >= PLAYER_FIXED_V5) {
     tunes = ckptRd16(buf + 52);
     listenDay = ckptRd32(buf + 56);
     listenMin = listenDay ? buf[54] : 0;
+  }
+  if (fixed >= PLAYER_FIXED) {
+    stepCount = ckptRd32(buf + 60);
+    if (stepCount > STEP_MAX) stepCount = STEP_MAX;
+    stepDay = ckptRd32(buf + 64);
+    stepClaim = buf[68] & (uint8_t)((1u << STEP_MS_COUNT) - 1);
   }
 
   CkptCursor cur{ buf, fixed, body };
@@ -404,6 +415,12 @@ void Pet::begin() {
   tunes = 0;
   listenMin = 0;
   listenDay = 0;
+  stepCount = 0;
+  stepDay = 0;
+  stepClaim = 0;
+  stepsUnsaved = 0;
+  stepToastUntil = 0;
+  stepToastSteps = 0;
   for (int i = 0; i < REGION_COUNT; i++) eggByRegion[i] = 0;
   if (!prefs.getBool("init", false)) {
     prefs.putBool("init", true);
@@ -456,6 +473,7 @@ void Pet::newEgg() {
 uint8_t gLevelMins = MINUTES_PER_LEVEL;
 uint8_t gFarewellLevel = FAREWELL_LVL_DEFAULT;
 bool gEggPreferNew = true;
+bool gStepCounterEnabled = true;
 
 static uint8_t clampU8(int v, int lo, int hi) {
   return (uint8_t)(v < lo ? lo : v > hi ? hi : v);
@@ -505,6 +523,21 @@ void eggPreferNewSet(bool on) {
   Preferences p;
   if (!p.begin("tamapoke", false)) return;
   p.putUChar("eggnew", on ? 1 : 0);
+  p.end();
+}
+
+void stepCounterLoad() {
+  Preferences p;
+  if (!p.begin("tamapoke", true)) return;
+  gStepCounterEnabled = p.getUChar("stepen", 1) != 0;
+  p.end();
+}
+
+void stepCounterSet(bool on) {
+  gStepCounterEnabled = on;
+  Preferences p;
+  if (!p.begin("tamapoke", false)) return;
+  p.putUChar("stepen", on ? 1 : 0);
   p.end();
 }
 
@@ -690,6 +723,61 @@ void Pet::listenTick() {
   if (listenMin >= LISTEN_DAILY_MIN) return;
   listenMin++;
   if (listenMin % LISTEN_EVERY == 0) joy = clamp100(joy + LISTEN_JOY);
+}
+
+void Pet::addSteps(uint32_t n) {
+  if (!n) return;
+  uint32_t d = today();
+  if (d != stepDay) {
+    stepDay = d;
+    stepCount = 0;
+    stepClaim = 0;
+    pendingSave = true;
+  }
+  stepCount += n;
+  if (stepCount > STEP_MAX) stepCount = STEP_MAX;
+  stepsUnsaved += (uint16_t)(n > 65535u ? 65535u : n);
+  if (stepsUnsaved >= 20) {
+    stepsUnsaved = 0;
+    pendingSave = true;
+  }
+}
+
+uint8_t Pet::claimSteps() {
+  if (!gStepCounterEnabled || isEgg() || ceremony != CER_NONE || stepDay != today()) return 0;
+  uint8_t top = 0;
+  for (uint8_t i = 0; i < STEP_MS_COUNT; i++) {
+    if ((stepClaim & (1 << i)) || stepCount < STEP_MS[i]) continue;
+    stepClaim |= (uint8_t)(1 << i);
+    top = (uint8_t)(i + 1);
+    if (i == 0) {
+      fullness = clamp100(fullness + 15);
+      joy = clamp100(joy + 10);
+    } else if (i == 1) {
+      joy = clamp100(joy + 20);
+      energy = clamp100(energy + 10);
+      addBond(3);
+    } else {
+      uint8_t which;
+      rewardTraining(3, which);
+      joy = clamp100(joy + 30);
+      addBond(5);
+    }
+  }
+  if (top) {
+    heartUntil = millis() + HEART_MS;
+    stepToastUntil = millis() + 5000;
+    stepToastSteps = STEP_MS[top - 1];
+    save();
+  }
+  return top;
+}
+
+void Pet::setStepsToday(uint32_t n) {
+  if (stepDay != today()) stepClaim = 0;
+  stepDay = today();
+  stepCount = n > STEP_MAX ? STEP_MAX : n;
+  stepsUnsaved = 0;
 }
 
 void Pet::tick() {

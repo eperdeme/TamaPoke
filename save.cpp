@@ -14,7 +14,7 @@ const SaveField SAVE_FIELDS[] = {
   {"fxA", SK_BYTES}, {"fxB", SK_BYTES},
   {"bag", SK_BYTES}, {"lang", SK_U8}, {"snd", SK_BOOL},
   {"vol", SK_U8}, {"brt", SK_U8},
-  {"lvspd", SK_U8}, {"fwlv", SK_U8}, {"eggnew", SK_U8},
+  {"lvspd", SK_U8}, {"fwlv", SK_U8}, {"eggnew", SK_U8}, {"stepen", SK_U8},
   {"colv", SK_U8},
   // Upgrades deliberately retain these original keys. Preserve them too:
   // checkpoints remain authoritative, but an export must not silently drop

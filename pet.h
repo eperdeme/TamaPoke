@@ -6,6 +6,7 @@
 #include "party.h"
 #include "save.h"
 #include "music_ids.h"
+#include "steps.h"
 
 // 1 tick = 1 minuto de juego. Baja este valor para probar mas rapido
 // (p. ej. 5000UL = las estadisticas caen 12x mas rapido).
@@ -78,6 +79,11 @@ void farewellLevelSet(int level);               // clamped to 50..100
 extern bool gEggPreferNew;
 void eggPreferNewLoad();
 void eggPreferNewSet(bool on);
+// Step counter (QMI8658 IMU + daily milestone rewards). Enabled by default;
+// toggled in Settings -> GAME and persisted under "stepen".
+extern bool gStepCounterEnabled;
+void stepCounterLoad();
+void stepCounterSet(bool on);
 #define RUNAWAY_TICKS 60                   // se escapa tras 1 h con TODO a cero
 // Night, by the RTC: midnight to 06:00. Auto-sleep needs BOTH: the screen off
 // AND this window.
@@ -757,6 +763,18 @@ public:
   uint32_t listenDay = 0;
   uint8_t listenToday() const { return listenDay == today() ? listenMin : 0; }
 
+  // Step counter (player-wide, persisted inside plyA/plyB checkpoint).
+  uint32_t stepCount = 0;
+  uint32_t stepDay = 0;
+  uint8_t stepClaim = 0;
+  uint32_t stepToastUntil = 0;
+  uint16_t stepToastSteps = 0;
+  bool stepToast() const { return millis() < stepToastUntil; }
+  uint32_t stepsToday() const { return stepDay == today() ? stepCount : 0; }
+  void addSteps(uint32_t n);
+  uint8_t claimSteps();
+  void setStepsToday(uint32_t n);
+
 private:
   void applyEvolution(int16_t next);
   Preferences prefs;
@@ -811,6 +829,7 @@ private:
   uint32_t today() const { return lastSeenEpoch ? lastSeenEpoch / 86400 : 0; }
   void registerCare();   // primer cuidado del dia: racha + vinculo
   void listenTick();     // one awake minute with a song on
+  uint16_t stepsUnsaved = 0;
   void addBond(uint8_t amt);
   uint8_t rollIV(int bonus) const;  // una tirada 8-31 empujada por el cuidado
   void rollIVs();                   // los 4, con las garantias de legendario/shiny

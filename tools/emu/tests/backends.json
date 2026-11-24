@@ -31,6 +31,8 @@
     "reset_test": "Partial/refused reset-intent writes and direct host namespace inspection",
     "sprite_test": "Host filesystem sprite streaming; board SD/MMC path not validated",
     "starter_test": "Synthetic chooser gestures and real UI state",
+    "stepreward_test": "Step milestone rewards, daily cap, IV ceiling, and in-game toggle",
+    "steps_test": "Synthetic StepDetector gait filtering and Pet daily step counter",
     "swipe_test": "Synthetic swipe/rim gestures and framebuffer-backed paged UI",
     "touch_test": "Synthetic touch IRQ, framebuffer and NVS handle-failure regression",
     "transfer_test": "Host transfer-mode, sprites and deterministic loop clock controls",
