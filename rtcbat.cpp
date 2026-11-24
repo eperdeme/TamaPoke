@@ -5,6 +5,10 @@
 #include <time.h>
 #include <SensorPCF85063.hpp>
 #include <XPowersLib.h>
+#ifdef ESP32
+#include <driver/gpio.h>
+#include <esp_sleep.h>
+#endif
 
 static SensorPCF85063 rtc;
 static XPowersPMU pmu;
@@ -98,10 +102,14 @@ int batPercent() { refreshPower(); return cachedPct; }
 bool batCharging() { refreshPower(); return cachedCharging; }
 bool usbPresent() { refreshPower(); return cachedUsb; }
 void cpuLightSleep(uint32_t ms) {
+#ifdef ESP32
   gpio_wakeup_enable((gpio_num_t)TP_INT, GPIO_INTR_LOW_LEVEL);
   esp_sleep_enable_gpio_wakeup();
   esp_sleep_enable_timer_wakeup((uint64_t)ms * 1000ULL);
   esp_light_sleep_start();
+#else
+  (void)ms;
+#endif
 }
 bool usbPresentNow() { return pmuOk ? pmu.isVbusIn() : true; }
 bool batShouldShutdown() { refreshPower(); return monDischarging && mon.shutdownNeeded(millis()); }

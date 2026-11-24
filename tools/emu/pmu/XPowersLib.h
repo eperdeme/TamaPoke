@@ -21,16 +21,28 @@
 inline uint8_t g_pmuStatus[3] = { 0, 0, 0 };   // the chip's three INTSTS registers
 inline int g_pmuFailNext = 0;                  // this many register reads fail next
 inline int g_pmuClears = 0;                    // clearIrqStatus() call count
+inline bool g_pmuBatConn = true;
+inline int g_pmuBatPct = 80;
+inline bool g_pmuCharging = false;
+inline bool g_pmuVbusIn = true;
+inline uint16_t g_pmuBattMv = 3900;
+inline bool g_pmuBattMeasEnabled = false;
+inline uint16_t g_pmuSysPowerDownMv = 0;
+inline int g_pmuShutdowns = 0;
 
 class XPowersPMU {
 public:
   bool begin(FakeWire &, uint8_t, int, int) { return true; }
   void setBLDO1Voltage(int) {}
   void enableBLDO1() {}
-  bool isBatteryConnect() { return true; }
-  int getBatteryPercent() { return 80; }
-  bool isCharging() { return false; }
-  bool isVbusIn() { return true; }
+  void enableBattVoltageMeasure() { g_pmuBattMeasEnabled = true; }
+  void setSysPowerDownVoltage(uint16_t mv) { g_pmuSysPowerDownMv = mv; }
+  bool isBatteryConnect() { return g_pmuBatConn; }
+  int getBatteryPercent() { return g_pmuBatPct; }
+  uint16_t getBattVoltage() { return g_pmuBattMv; }
+  bool isCharging() { return g_pmuCharging; }
+  bool isVbusIn() { return g_pmuVbusIn; }
+  void shutdown() { g_pmuShutdowns++; }
   void setPowerKeyPressOffTime(int) {}
   void setLowBatWarnThreshold(uint8_t) {}
   void disableIRQ(uint32_t m) {

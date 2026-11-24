@@ -10,6 +10,7 @@
 // reproduce that XPowersLib behaviour.
 #include "Arduino.h"
 #include "XPowersLib.h"
+#include "batcurve.h"
 #include "rtcbat.h"
 #include <cstdio>
 
@@ -30,6 +31,8 @@ static void ck(bool ok, const char *w) {
 
 int main() {
   ck(batBegin(), "the PMU comes up");
+  ck(g_pmuBattMeasEnabled, "batBegin enables battery voltage measurement");
+  ck(g_pmuSysPowerDownMv == BAT_HW_CUTOFF_MV, "batBegin sets hardware cutoff backstop");
   pwrSetup();
 
   // Positive controls: real interrupts are seen once and acknowledged.
@@ -81,6 +84,26 @@ int main() {
   g_pmuStatus[1] = 0x08;
   pwrPoll();
   ck(pwrShortPressed(), "a real press after failed reads still gets through");
+
+  // Discharge voltage smoothing & sustained safe-shutdown integration via rtcbat.cpp.
+  g_pmuVbusIn = false;
+  g_pmuCharging = false;
+  g_pmuBattMv = 3900;
+  bool healthyOk = true;
+  for (int i = 0; i < 4; i++) {
+    if (batShouldShutdown()) healthyOk = false;
+  }
+  ck(healthyOk, "healthy cell voltage does not trigger shutdown");
+
+  g_pmuBattMv = 3200;
+  bool shut = false;
+  for (int i = 0; i < 30 && !shut; i++) shut = batShouldShutdown();
+  ck(shut, "sustained low voltage on battery triggers batShouldShutdown()");
+  batPowerOff();
+  ck(g_pmuShutdowns == 1, "batPowerOff() invokes pmu.shutdown()");
+  ck(!batShouldShutdown(), "batPowerOff() resets monitor state");
+  g_pmuVbusIn = true;
+  g_pmuBattMv = 3900;
 
   printf("%s\n", bad ? "FAILURES" : "all good");
   return bad ? 1 : 0;
