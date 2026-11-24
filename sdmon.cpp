@@ -2,6 +2,7 @@
 #include "pin_config.h"
 #include "pet.h"   // gRegionArt, REGIONS -- the mask this narrows
 #include "crc32.h"
+#include "adpcm.h"
 #include <FS.h>
 #include <SD_MMC.h>
 
@@ -167,6 +168,7 @@ bool sdBegin(bool formatIfUnreadable) {
   if (sdReady) {
     Serial.printf("SD montada: %llu MB\n", SD_MMC.cardSize() / (1024ULL * 1024ULL));
     SD_MMC.mkdir("/mons");
+    SD_MMC.mkdir("/cries");
     sdScanRegionArt();
   } else {
     Serial.println(formatIfUnreadable
@@ -296,6 +298,28 @@ static void invalidatePackForPath(const String &path) {
     invalidatePackMarker(regionOfDex((int16_t)dex));
 }
 
+bool sdLoadCry(int16_t dexNum, uint8_t **outBuf, uint32_t *outLen) {
+  if (!sdReady || !outBuf || !outLen || dexNum < 1 || dexNum > DEX_COUNT) return false;
+  char path[28];
+  snprintf(path, sizeof(path), "/cries/c%03u.adp", (unsigned)dexNum);
+  File f = SD_MMC.open(path, FILE_READ);
+  if (!f) return false;
+  uint32_t size = f.size();
+  if (size < CRY_ADPCM_HDR || size > CRY_ADPCM_MAX) { f.close(); return false; }
+  uint8_t *buf = (uint8_t *)ps_malloc(size);
+  if (!buf) buf = (uint8_t *)malloc(size);
+  if (!buf) { f.close(); return false; }
+  size_t rd = f.read(buf, size);
+  f.close();
+  if (rd != size || !adpcmValidHeader(buf, size)) {
+    free(buf);
+    return false;
+  }
+  *outBuf = buf;
+  *outLen = size;
+  return true;
+}
+
 bool sdSerialCommand(const String &line) {
   if (line.startsWith("PUT ")) {
     int sp = line.lastIndexOf(' ');
@@ -307,7 +331,9 @@ bool sdSerialCommand(const String &line) {
     }
     if (!path.startsWith("/")) path = "/" + path;
     if (!sdTransferAt || millis() - sdTransferAt >= SD_TRANSFER_IDLE_MS) sdTransferFiles = 0;
-    invalidatePackForPath(path);
+    const bool isCry = path.startsWith("/cries/");
+    if (isCry) SD_MMC.mkdir("/cries");
+    else invalidatePackForPath(path);
     File f = SD_MMC.open(path, FILE_WRITE);
     if (!f) {
       Serial.println("ERR");
@@ -329,13 +355,11 @@ bool sdSerialCommand(const String &line) {
     Serial.setTimeout(1000);
     // Set, never cleared: during a transfer the reload waits, and a later failed PUT
     // must not cancel it.
-    if (remaining == 0) sdDirty = true;
-    // A pack file just landed, so which regions are playable may have changed.
-    // Flag it rather than rescanning here: this runs between the last data block
-    // and the DONE the host is waiting on, and 15 file opens belong nowhere near
-    // that. loop() picks it up.
     if (remaining == 0) {
-      sdArtDirty = true;
+      if (!isCry) {
+        sdDirty = true;
+        sdArtDirty = true;
+      }
       sdTransferFiles++;
       if (path == "/mons/thumbs.bin") sdThumbsDirty = true;
     }

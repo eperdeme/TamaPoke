@@ -2,6 +2,9 @@
 #include "gbsynth.h"
 #include "music.h"
 #include "cry.h"   // per-species chirps, synthesised rather than sampled
+#include "adpcm.h" // sampled microSD cry decoder (TCRY 16 kHz IMA-ADPCM)
+#include "cry_gb.h" // Gen 1-2 authentic Game Boy cries (cries.h)
+#include "sdmon.h"
 #include "pin_config.h"
 #include <Arduino.h>
 #include <Wire.h>
@@ -40,6 +43,8 @@ struct AudioReq {
   uint8_t kind;
   uint8_t sfx;
   int16_t dex;
+  uint8_t *pcm;
+  uint32_t pcmLen;
 };
 
 // ---- I2C del códec ----
@@ -226,37 +231,72 @@ static void audioTask(void *) {
     // simpler and the right priority.
     if (xQueueReceive(gQ, &req, wantAudio ? 0 : pdMS_TO_TICKS(40)) == pdTRUE) {
       if (gOn && gReady && req.kind == AUD_CRY) {
-        // A species chirp, built on the spot from DEX_TBL. Nothing is stored and
-        // nothing is looked up: see cry.h.
-        CryNote cn[CRY_NOTES];
-        const uint8_t n = crySynth(req.dex, cn);
-        if (n) {
-          syncAmp(true);
-          for (uint8_t i = 0; i < n; i++) {
+        if (req.pcm && req.pcmLen >= CRY_ADPCM_HDR) {
+          AdpcmDec dec;
+          if (dec.init(req.pcm, req.pcmLen)) {
             syncAmp(true);
-            if (cn[i].noise)
-              gSyn.noise(cn[i].vol, cn[i].envDir, cn[i].envPeriod, cn[i].ms,
-                         cn[i].noisePeriod);
-            else
-              gSyn.note(0, cn[i].gbFreq, cn[i].duty, cn[i].vol, cn[i].envDir,
-                        cn[i].envPeriod, cn[i].ms);
-            pump(cn[i].ms);
+            while (gOn && !dec.done()) {
+              size_t n = dec.decode(mono, 256, gVol);
+              if (!n) break;
+              for (size_t i = 0; i < n; i++) { buf[i * 2] = mono[i]; buf[i * 2 + 1] = mono[i]; }
+              i2s.write((uint8_t *)buf, n * 4);
+            }
+          }
+          free(req.pcm);
+        } else {
+          if (req.pcm) free(req.pcm);
+          if (gbCryHas(req.dex)) {
+            gSyn.allOff();
+            GbCryPlayer gb;
+            if (gb.begin(req.dex)) {
+              syncAmp(true);
+              uint32_t ms;
+              while (gOn && (ms = gb.step(gSyn)) != 0) {
+                while (gOn && ms) {
+                  uint32_t chunk = ms > 60 ? 60 : ms;
+                  syncAmp(true);
+                  pump(chunk);
+                  ms -= chunk;
+                }
+              }
+            }
+            gSyn.allOff();
+          } else {
+            // Procedural chirp fallback from DEX_TBL (see cry.h).
+            CryNote cn[CRY_NOTES];
+            const uint8_t n = crySynth(req.dex, cn);
+            if (n) {
+              syncAmp(true);
+              for (uint8_t i = 0; i < n; i++) {
+                syncAmp(true);
+                if (cn[i].noise)
+                  gSyn.noise(cn[i].vol, cn[i].envDir, cn[i].envPeriod, cn[i].ms,
+                             cn[i].noisePeriod);
+                else
+                  gSyn.note(0, cn[i].gbFreq, cn[i].duty, cn[i].vol, cn[i].envDir,
+                            cn[i].envPeriod, cn[i].ms);
+                pump(cn[i].ms);
+              }
+            }
           }
         }
-      } else if (gOn && gReady && req.kind == AUD_SFX && req.sfx < SFX_COUNT) {
-        syncAmp(true);
-        const SfxDef &d = SFX[req.sfx];
-        for (uint8_t i = 0; i < d.len; i++) {
+      } else {
+        if (req.pcm) free(req.pcm);
+        if (gOn && gReady && req.kind == AUD_SFX && req.sfx < SFX_COUNT) {
           syncAmp(true);
-          uint16_t f = hzToGb(d.n[i].f);
-          // percussion for the impact cues, a pulse for everything else
-          if (req.sfx == SFX_HIT || req.sfx == SFX_FAINT)
-            gSyn.noise(13, -1, 2, d.n[i].ms, (uint16_t)(4 + i * 4));
-          else if (f)
-            gSyn.note(0, f, 1, 14, -1, 4, d.n[i].ms);
-          else
-            gSyn.silence(0);
-          pump(d.n[i].ms);
+          const SfxDef &d = SFX[req.sfx];
+          for (uint8_t i = 0; i < d.len; i++) {
+            syncAmp(true);
+            uint16_t f = hzToGb(d.n[i].f);
+            // percussion for the impact cues, a pulse for everything else
+            if (req.sfx == SFX_HIT || req.sfx == SFX_FAINT)
+              gSyn.noise(13, -1, 2, d.n[i].ms, (uint16_t)(4 + i * 4));
+            else if (f)
+              gSyn.note(0, f, 1, 14, -1, 4, d.n[i].ms);
+            else
+              gSyn.silence(0);
+            pump(d.n[i].ms);
+          }
         }
       }
       continue;
@@ -354,15 +394,19 @@ void audioBegin() {
 
 void sfxPlay(uint8_t id) {
   if (!gReady || !gOn || !gQ) return;
-  AudioReq r = { AUD_SFX, id, 0 };
+  AudioReq r = { AUD_SFX, id, 0, nullptr, 0 };
   xQueueSend(gQ, &r, 0);  // descarta si la cola esta llena
 }
 
 void audioCry(int16_t dex) {
   if (!gReady || !gOn || !gQ) return;
   if (dex < 1 || dex > DEX_COUNT) return;   // never queue a cry nothing can build
-  AudioReq r = { AUD_CRY, 0, dex };
-  xQueueSend(gQ, &r, 0);
+  uint8_t *pcm = nullptr;
+  uint32_t pcmLen = 0;
+  if (!sdTransferAt || millis() - sdTransferAt >= SD_TRANSFER_IDLE_MS)
+    sdLoadCry(dex, &pcm, &pcmLen);
+  AudioReq r = { AUD_CRY, 0, dex, pcm, pcmLen };
+  if (xQueueSend(gQ, &r, 0) != pdTRUE && pcm) free(pcm);
 }
 
 void audioSetEnabled(bool on) {

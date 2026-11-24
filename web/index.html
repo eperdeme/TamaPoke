@@ -159,6 +159,13 @@
         <button type="button" class="text-action" id="files-button" disabled>Choose .bin files</button>
         <input id="files" type="file" accept=".bin" multiple hidden>
       </div>
+
+      <div class="custom-pack">
+        <i data-lucide="volume-2" aria-hidden="true"></i>
+        <span>Optional SD Pokemon cries (16 kHz IMA-ADPCM):</span>
+        <button type="button" class="text-action" id="cry-pack-button" disabled>Upload cry .pak / .adp</button>
+        <input id="cry-pack-files" type="file" accept=".pak,.adp" multiple hidden>
+      </div>
     </section>
 
     <section class="work-section" aria-labelledby="save-title">
@@ -232,6 +239,6 @@
        this package, and check_installer.py reads the copy that ships. -->
   <script type="module" src="vendor/esp-web-tools-10.4.0/install-button.js"></script>
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script type="module" src="installer.js?v=0c5a7a1e81dff107"></script>
+  <script type="module" src="installer.js?v=3acbff73f142fd2a"></script>
 </body>
 </html>

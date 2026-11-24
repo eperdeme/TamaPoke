@@ -179,3 +179,42 @@ export async function installFile(io, item, { sums = false, onProgress } = {}) {
   }
   throw new Error(reason);
 }
+
+export const CRY_MAGIC = 'TCRY';
+export const CRY_SAMPLE_RATE = 16000;
+export const CRY_MAX_BYTES = 65536;
+
+export function validateCryBlob(name, bytes) {
+  if (!bytes || bytes.byteLength < 12) throw new Error(`${name}: cry file is too short`);
+  if (bytes.byteLength > CRY_MAX_BYTES) throw new Error(`${name}: cry file exceeds ${CRY_MAX_BYTES} bytes`);
+  if (bytes[0] !== 0x54 || bytes[1] !== 0x43 || bytes[2] !== 0x52 || bytes[3] !== 0x59) {
+    throw new Error(`${name}: not a TCRY cry file`);
+  }
+  const rate = bytes[4] | (bytes[5] << 8);
+  if (rate !== CRY_SAMPLE_RATE) throw new Error(`${name}: unsupported cry rate ${rate} Hz`);
+  if (bytes[8] > 88) throw new Error(`${name}: invalid IMA step index ${bytes[8]}`);
+}
+
+export function normalizeCryFileName(name) {
+  const base = String(name || '');
+  if (base.includes('/') || base.includes('\\') || base.includes('..')) {
+    throw new Error(`invalid cry file name: ${base}`);
+  }
+  const m = /^(?:c)?(\d{1,4})\.adp$/i.exec(base);
+  if (!m) throw new Error(`cry file must be named c001.adp..c1025.adp (${base})`);
+  const dex = Number(m[1]);
+  if (!Number.isInteger(dex) || dex < 1) throw new Error(`invalid cry dex number in ${base}`);
+  return `cries/c${String(dex).padStart(3, '0')}.adp`;
+}
+
+export function parseCryPak(buffer) {
+  const items = parsePak(buffer);
+  if (!items.length) throw new Error('cry pack is empty');
+  for (const item of items) {
+    if (!/^cries\/c\d{3,4}\.adp$/.test(item.name)) {
+      throw new Error(`unexpected cry pack entry: ${item.name}`);
+    }
+    validateCryBlob(item.name, item.data);
+  }
+  return items;
+}

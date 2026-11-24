@@ -6882,6 +6882,7 @@ void startTrainerBattle(uint8_t idx, bool hard) {
   btlSyncSprite(0, btlYou);
   btlSyncSprite(1, btlFoe);
   audioMusic(MUS_BATTLE);
+  audioCry(btlFoe.dex);
   btlLungeUntil[0] = btlLungeUntil[1] = 0;
   btlHitUntil[0] = btlHitUntil[1] = 0;
   battleOpen = true;
@@ -6915,6 +6916,7 @@ void startBattle(int16_t dex, uint8_t lvl) {
   btlSyncSprite(0, btlYou);
   btlSyncSprite(1, btlFoe);
   audioMusic(MUS_BATTLE);
+  audioCry(btlFoe.dex);
   btlLungeUntil[0] = btlLungeUntil[1] = 0;
   btlHitUntil[0] = btlHitUntil[1] = 0;
   battleOpen = true;
@@ -9773,6 +9775,7 @@ bool startWildBattle(uint8_t region, bool hard) {
   btlSyncSprite(0, btlYou);
   btlSyncSprite(1, btlFoe);
   audioMusic(MUS_BATTLE);
+  audioCry(btlFoe.dex);
   btlLungeUntil[0] = btlLungeUntil[1] = 0;
   btlHitUntil[0] = btlHitUntil[1] = 0;
   battleOpen = true;
