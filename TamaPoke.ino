@@ -1042,7 +1042,7 @@ Btn buttons[BTN_COUNT] = {
 static const uint8_t CRACK1[][2] = { {15,8},{16,9},{15,10} };
 static const uint8_t CRACK2[][2] = { {11,13},{12,14},{11,15},{20,12},{19,13},{20,14} };
 // estrellas del modo noche
-static const uint16_t STARS[][2] = { {120,140},{330,120},{370,210},{95,230},{280,90},{160,95} };
+#define STAR_COUNT 40
 
 bool wasPressed = false;
 // eleccion de inicial (primera partida): Bulbasaur / Charmander / Squirtle, 3 filas
@@ -1591,6 +1591,16 @@ void updateBrightness(uint32_t now) {
 
 // ---------- consola serie (provision de SD + depuracion) ----------
 
+// The values are what dex.h stores in `DexEntry::biome`, plus BIOME_GRAVEYARD
+// for Ghost-type species (from crenberries428/TamaPoke, MIT).
+enum Biome : uint8_t {
+  BIOME_MEADOW, BIOME_BEACH, BIOME_FOREST, BIOME_VOLCANO, BIOME_MOUNTAIN, BIOME_SNOW, BIOME_GRAVEYARD,
+  BIOME_COUNT
+};
+
+// Debug override set by the BIOME console command; -1 = follow the species.
+int8_t gBiomeOverride = -1;
+
 void handleSerial() {
   if (!Serial.available()) return;
   String line = Serial.readStringUntil('\n');
@@ -1607,6 +1617,13 @@ void handleSerial() {
       pet.prevSpeciesId = pet.speciesId;
       pet.speciesId = n;
       Serial.printf("especie #%d %s\n", n, DEX_TBL[n].name);
+    }
+    Serial.println("DONE");
+  } else if (line.startsWith("BIOME ")) {
+    int n = line.substring(6).toInt();
+    if (n >= 0 && n < BIOME_COUNT) {
+      gBiomeOverride = (int8_t)n;
+      Serial.printf("biome %d\n", n);
     }
     Serial.println("DONE");
   } else if (line.startsWith("LVL ")) {
@@ -3005,101 +3022,1537 @@ uint16_t lerp565(uint16_t a, uint16_t b, int i, int n) {
                     (((ag + (bg - ag) * i / n) << 5)) | (ab + (bb - ab) * i / n));
 }
 
+void drawPmdActZ(PmdMon &m, uint8_t actId, int cx, int groundY, uint32_t t, bool loop, bool sil,
+                 uint8_t maxS, uint16_t zoom100, uint16_t maxPx);
+
+static uint8_t speciesBiome(int16_t dex) {
+  if (dex < 1 || dex > DEX_COUNT) return BIOME_MEADOW;
+  const DexEntry &d = DEX_TBL[dex];
+  if (d.type1 == T_GHOST || d.type2 == T_GHOST) return BIOME_GRAVEYARD;
+  return d.biome;
+}
+
+static uint8_t sceneBiome() {
+  if (gBiomeOverride >= 0) return (uint8_t)gBiomeOverride;
+  return pet.isEgg() ? BIOME_MEADOW : speciesBiome(pet.speciesId);
+}
+
 // hora del dia 0-23 (de la hora real cacheada cada 30s; 13 si no hay reloj)
 int sceneHour() {
   uint32_t e = pet.lastSeenEpoch;
   return e ? (int)((e / 3600) % 24) : 13;
 }
 
-// suelo de cada bioma de dia (de noche se mezcla hacia el azul nocturno)
-static const uint16_t BIOME_SOIL[6] = {
-  C565(0x7e, 0xc0, 0x7f),  // 0 pradera
-  C565(0xdc, 0xca, 0x94),  // 1 playa (arena)
-  C565(0x4f, 0x8a, 0x55),  // 2 bosque
-  C565(0x8a, 0x55, 0x44),  // 3 volcan
-  C565(0xa8, 0x90, 0x6a),  // 4 montana
-  C565(0xe6, 0xee, 0xf5),  // 5 nieve
+// ground of each biome by day (at night it blends toward the night blue)
+static const uint16_t BIOME_SOIL[BIOME_COUNT] = {
+  C565(0x7e, 0xc0, 0x7f),  // BIOME_MEADOW
+  C565(0xdc, 0xca, 0x94),  // BIOME_BEACH (sand)
+  C565(0x3f, 0x78, 0x4c),  // BIOME_FOREST
+  C565(0x5e, 0x40, 0x3c),  // BIOME_VOLCANO (dark basalt)
+  C565(0xa8, 0x90, 0x6a),  // BIOME_MOUNTAIN
+  C565(0xe6, 0xee, 0xf5),  // BIOME_SNOW
+  C565(0x5e, 0x5a, 0x6e),  // BIOME_GRAVEYARD (cold violet-grey earth)
 };
 
-void drawClouds(uint32_t now, uint16_t col) {
-  for (int k = 0; k < 2; k++) {
-    int cx = (int)((now / 50 + k * 250) % 560) - 40;
-    int cy = 70 + k * 34;
-    gfx->fillCircle(cx, cy, 16, col);
-    gfx->fillCircle(cx + 18, cy + 3, 13, col);
-    gfx->fillCircle(cx - 15, cy + 4, 12, col);
+// One puffy cloud: a flat-bottomed body of overlapping circles, a soft shadow
+// band under it and a highlight on the top puffs (from crenberries428/TamaPoke, MIT).
+static void drawCloud(int cx, int cy, int s, uint16_t col, uint16_t shade) {
+  auto px = [&](int v) { return v * s / 100; };
+  int r1 = px(17), r2 = px(13), r3 = px(11), r4 = px(9);
+  gfx->fillRoundRect(cx - px(30), cy + px(2), px(60), px(14), px(7), shade);
+  gfx->fillCircle(cx + px(20), cy + px(5), r3, shade);
+  gfx->fillCircle(cx - px(20), cy + px(6), r4, shade);
+  gfx->fillRoundRect(cx - px(30), cy - px(2), px(60), px(14), px(7), col);
+  gfx->fillCircle(cx - px(2), cy - px(6), r1, col);
+  gfx->fillCircle(cx + px(18), cy + px(1), r2, col);
+  gfx->fillCircle(cx - px(19), cy + px(3), r3, col);
+  gfx->fillCircle(cx + px(30), cy + px(6), r4, col);
+  gfx->fillCircle(cx - px(30), cy + px(7), r4, col);
+}
+
+void drawClouds(uint32_t now, uint16_t col, uint16_t shade) {
+  static const int Y[3] = { 62, 108, 170 };
+  static const int S[3] = { 120, 80, 100 };
+  static const int OFS[3] = { 0, 190, 360 };
+  static const int DIV[3] = { 70, 110, 90 };
+  for (int k = 0; k < 3; k++) {
+    int cx = (int)((now / DIV[k] + OFS[k]) % 600) - 70;
+    drawCloud(cx, Y[k], S[k], col, shade);
   }
+}
+
+static void drawSun(int cx, int cy, int r, uint16_t core, uint16_t sky, uint32_t now) {
+  for (int i = 0; i < 4; i++)
+    gfx->fillCircle(cx, cy, r + 30 - i * 8, lerp565(sky, core, i + 1, 9));
+  float a0 = (now % 24000) * (2.0f * PI / 24000.0f);
+  for (int k = 0; k < 8; k++) {
+    float a = a0 + k * (PI / 4.0f);
+    float ca = cosf(a), sa = sinf(a), cb = cosf(a + 0.16f), sb = sinf(a + 0.16f);
+    int r0 = r + 4, r1 = r + (k & 1 ? 20 : 28);
+    gfx->fillTriangle(cx + (int)(ca * r0), cy + (int)(sa * r0),
+                      cx + (int)(cb * r0), cy + (int)(sb * r0),
+                      cx + (int)(ca * r1 + cb * r1) / 2, cy + (int)(sa * r1 + sb * r1) / 2,
+                      lerp565(sky, core, 6, 9));
+  }
+  gfx->fillCircle(cx, cy, r, core);
+  gfx->fillCircle(cx, cy, r - 5, lerp565(core, C565(0xff, 0xff, 0xff), 1, 3));
+  gfx->fillCircle(cx - r / 3, cy - r / 3, r / 4, C565(0xff, 0xff, 0xff));
+}
+
+static void drawStars(uint32_t now, uint16_t top, uint16_t bot, int yMax) {
+  static struct { int16_t x, y; uint16_t period, phase; uint8_t size; } st[STAR_COUNT];
+  static bool rolled = false;
+  if (!rolled) {
+    for (int i = 0; i < STAR_COUNT; i++) {
+      int x, y;
+      do {
+        x = 20 + random(426); y = 24 + random(yMax - 24);
+      } while ((x - 233) * (x - 233) + (y - 233) * (y - 233) > 215 * 215);
+      st[i] = { (int16_t)x, (int16_t)y, (uint16_t)(1400 + random(2600)),
+                (uint16_t)random(4000), (uint8_t)(random(4) == 0 ? 2 : 1) };
+    }
+    rolled = true;
+  }
+  for (int i = 0; i < STAR_COUNT; i++) {
+    int t = (int)((now + st[i].phase) % st[i].period) * 16 / st[i].period;
+    int b = t < 8 ? t : 16 - t;
+    int sy = st[i].y;
+    uint16_t sky = lerp565(top, bot, sy, HORIZON);
+    uint16_t c = lerp565(sky, C565(0xff, 0xff, 0xf0), 3 + b, 11);
+    int sz = st[i].size * 2;
+    gfx->fillRect(st[i].x, sy, sz, sz, c);
+    if (st[i].size == 2 && b >= 5) {
+      uint16_t d = lerp565(sky, c, 1, 2);
+      gfx->fillRect(st[i].x - 3, sy + 1, 10, 2, d);
+      gfx->fillRect(st[i].x + 1, sy - 3, 2, 10, d);
+    }
+  }
+}
+
+static void drawMoon(int cx, int cy, uint16_t sky) {
+  const int R = 26, CR = 22, cutX = cx + 12;
+  for (int i = 0; i < 4; i++)
+    gfx->fillCircle(cx, cy, 50 - i * 6, lerp565(sky, C565(0xb8, 0xc4, 0xe0), i + 1, 12));
+  uint16_t lit = C565(0xf2, 0xf0, 0xdc);
+  for (int dy = -R; dy <= R; dy++) {
+    int mw = (int)sqrtf((float)(R * R - dy * dy));
+    int x0 = cx - mw, x1 = cx + mw;
+    if (abs(dy) >= CR) { gfx->fillRect(x0, cy + dy, x1 - x0 + 1, 1, lit); continue; }
+    int cw = (int)sqrtf((float)(CR * CR - dy * dy));
+    int c0 = cutX - cw;
+    if (c0 > x0) gfx->fillRect(x0, cy + dy, min(c0, x1 + 1) - x0, 1, lit);
+    if (cutX + cw < x1) gfx->fillRect(cutX + cw + 1, cy + dy, x1 - cutX - cw, 1, lit);
+  }
+  uint16_t cr = C565(0xd6, 0xd6, 0xc2);
+  gfx->fillCircle(cx - 18, cy + 8, 3, cr);
+  gfx->fillCircle(cx - 20, cy - 8, 2, cr);
+  gfx->fillCircle(cx - 12, cy + 18, 2, cr);
+}
+
+// Volcano biome, in the forest's style: layered tones lit from the sun side, and
+// hand-built shapes rather than flat triangles. Back to front: a jagged distant
+// range with a small second cone, a smoke plume lit from below, the main cone
+// (craggy scanline-built edges, four rock tones, eroded gullies, a rim warmed by
+// the crater), lava streams, an occasional eruption burst and lava bombs, glowing
+// ground cracks, a small SLUGMA crawling far back, faceted boulders and a charred
+// dead tree. The cone sits left of centre so its plume stays clear of the sun and
+// moon (upper right). Keep the ground's lower left clear: poops land there (see
+// drawPoops). The step counter covers the far left, the HUD everything below ~310.
+
+// Cheap deterministic noise 0..255: fixed per (a, seed), so edges never shimmer.
+static int volNoise(int a, int seed) {
+  uint32_t v = (uint32_t)a * 374761393u + (uint32_t)seed * 668265263u;
+  v = (v ^ (v >> 13)) * 1274126177u;
+  return (int)((v >> 16) & 0xff);
+}
+
+// A boulder: a fan of facets around a noisy outline, tone chosen by the facet's
+// facing (lit toward the upper right), with a lava rim-light on the lower left.
+static void volBoulder(int cx, int cy, int r, int seed, bool night, uint16_t lava) {
+  uint16_t t[4];
+  if (night) { t[0] = C565(0x0c, 0x08, 0x0e); t[1] = C565(0x18, 0x12, 0x18); t[2] = C565(0x24, 0x1c, 0x24); t[3] = C565(0x34, 0x28, 0x30); }
+  else       { t[0] = C565(0x2a, 0x1e, 0x22); t[1] = C565(0x42, 0x30, 0x34); t[2] = C565(0x5e, 0x46, 0x46); t[3] = C565(0x80, 0x60, 0x58); }
+  const int N = 8;
+  int vx[N + 1], vy[N + 1];
+  for (int i = 0; i < N; i++) {
+    float an = i * 6.2832f / N;
+    int rr = r * (78 + volNoise(i, seed) % 30) / 100;
+    vx[i] = cx + (int)(cosf(an) * rr * 1.25f);                // wider than tall: it sits on the ground
+    vy[i] = cy + (int)(sinf(an) * rr * 0.8f);
+  }
+  vx[N] = vx[0]; vy[N] = vy[0];
+  for (int i = 0; i < N; i++) {
+    float an = (i + 0.5f) * 6.2832f / N;                       // facet facing; y is down, so up-right is negative sin
+    float lit = cosf(an) * 0.6f - sinf(an) * 0.8f;             // dot with the sun direction
+    uint16_t c = lit > 0.75f ? t[3] : (lit > 0.2f ? t[2] : (lit > -0.4f ? t[1] : t[0]));
+    gfx->fillTriangle(cx, cy - r / 6, vx[i], vy[i], vx[i + 1], vy[i + 1], c);
+  }
+  uint16_t rim = lerp565(t[0], lava, 1, 2);                    // lava glow along the lower-left edge
+  for (int i = 3; i <= 5; i++) gfx->drawLine(vx[i], vy[i], vx[i + 1], vy[i + 1], rim);
+}
+
+// Charred dead tree: forked bare limbs, a lit edge, and ember cracks that pulse.
+// Thickness steps down limb by limb; the tips sway.
+static void volDeadTree(int cx, int footY, uint32_t now, float sway, bool night, uint16_t lava) {
+  uint16_t ch  = night ? C565(0x14, 0x0e, 0x10) : C565(0x2e, 0x22, 0x22);
+  uint16_t chL = night ? C565(0x24, 0x1a, 0x1c) : C565(0x58, 0x40, 0x3a);
+  static const int16_t LB[12][5] = {                          // x0 y0 x1 y1 width
+    { 0, 0, -3, -50, 4 }, { -3, -50, 2, -96, 3 },
+    { -3, -50, -26, -74, 2 }, { -26, -74, -38, -98, 2 },
+    { -3, -56, 22, -72, 2 }, { 22, -72, 34, -100, 2 },
+    { 2, -96, -12, -122, 2 }, { 2, -96, 16, -118, 2 },
+    { -38, -98, -47, -110, 1 }, { 34, -100, 45, -111, 1 },
+    { -12, -122, -18, -136, 1 }, { 16, -118, 25, -132, 1 } };
+  for (int i = 0; i < 4; i++)                                // root flare
+    gfx->fillTriangle(cx + (i < 2 ? -14 : 14), footY + 2, cx + (i < 2 ? -4 : 4), footY - 14, cx + (i < 2 ? -4 : 4), footY + 2, ch);
+  for (int i = 0; i < 12; i++) {
+    int x0 = cx + LB[i][0] + (int)(sway * -LB[i][1] / 100.0f), y0 = footY + LB[i][1];
+    int x1 = cx + LB[i][2] + (int)(sway * -LB[i][3] / 100.0f), y1 = footY + LB[i][3];
+    for (int w = 0; w < LB[i][4]; w++) gfx->drawLine(x0 + w - LB[i][4] / 2, y0, x1 + w - LB[i][4] / 2, y1, ch);
+    gfx->drawLine(x0 + LB[i][4] / 2, y0, x1 + LB[i][4] / 2, y1, chL);            // lit right edge
+  }
+  float pulse = (sinf(now / 600.0f) + 1.0f) * 0.5f;
+  uint16_t ember = lerp565(lava, C565(0xff, 0xd0, 0x58), (int)(pulse * 4), 8);
+  static const int8_t EM[5][3] = { { -1, -14, 8 }, { 0, -30, 6 }, { -3, -52, 6 }, { 1, -74, 7 }, { -27, -80, 5 } };
+  for (int i = 0; i < 5; i++)                                // glowing cracks in the char
+    gfx->fillRect(cx + EM[i][0] + (int)(sway * -EM[i][1] / 100.0f), footY + EM[i][1], 1, EM[i][2], ember);
+}
+
+// A small SLUGMA creeping along the ground far behind the pet. Loaded once on
+// entering the volcano (~140 KB of PSRAM) and freed when the biome changes.
+static PmdMon gVolcanoMon;
+static bool gVolcanoTried = false;
+
+static void drawVolcano(uint32_t now, bool night, uint16_t top, uint16_t bot) {
+  const int VX = 170, VT = HORIZON - 104, B = HORIZON + 2;   // crater centre, cone top, base
+  float pulse = (sinf(now / 420.0f) + 1.0f) * 0.5f;          // 0..1
+  uint16_t rockD = night ? C565(0x0e, 0x0a, 0x10) : C565(0x34, 0x24, 0x28);
+  uint16_t rock  = night ? C565(0x1c, 0x16, 0x1c) : C565(0x56, 0x3e, 0x40);
+  uint16_t rockM = night ? C565(0x2a, 0x20, 0x28) : C565(0x74, 0x52, 0x4c);
+  uint16_t rockL = night ? C565(0x3a, 0x2e, 0x36) : C565(0x98, 0x6c, 0x60);
+  uint16_t lava  = lerp565(C565(0xe8, 0x4a, 0x14), C565(0xff, 0x9a, 0x2a), (int)(pulse * 8), 8);
+  uint16_t hot   = C565(0xff, 0xd0, 0x58);
+  auto skyAt = [&](int y) { return lerp565(top, bot, y < 0 ? 0 : y, HORIZON); };
+  auto hw = [&](int y) { return 26 + (y - VT) * 100 / (B - VT); };   // cone half-width at y
+  auto seg = [&](int x0, int x1, int y, uint16_t c) { if (x1 > x0) gfx->fillRect(x0, y, x1 - x0, 2, c); };
+
+  // heat glow along the horizon, then a jagged distant range and a small far cone
+  gfx->fillRect(0, HORIZON - 12, 466, 14, lerp565(skyAt(HORIZON), lava, 1, 7));
+  uint16_t far = lerp565(rock, skyAt(HORIZON - 40), 1, 2);
+  for (int x = -10; x < 480; x += 14) {                      // ridge profile interpolated between noisy peaks
+    int h1 = 14 + volNoise(x / 14, 11) % 30, h2 = 14 + volNoise(x / 14 + 1, 11) % 30;
+    gfx->fillTriangle(x, B, x + 14, B, x, B - h1, far);
+    gfx->fillTriangle(x + 14, B, x + 14, B - h2, x, B - h1, far);
+  }
+  gfx->fillTriangle(330, B, 480, B, 400, HORIZON - 54, far);                              // far second cone
+  gfx->fillRect(393, HORIZON - 56, 14, 3, lerp565(far, lava, 1, 3 + (int)(pulse * 1)));  // its faint crater glow
+
+  // smoke: puffs rise, grow and fade; each is a dark body with a lighter disc
+  // low on it, so the young ones read as lit orange from the crater below
+  uint16_t smoke = night ? C565(0x34, 0x2c, 0x3c) : C565(0x5c, 0x4a, 0x50);
+  for (int k = 0; k < 7; k++) {
+    int t = (int)((now / 36 + k * 31) % 217);               // 0..216 life of one puff
+    int y = VT - 6 - t;
+    int x = VX + 6 + t / 3 + (int)(sinf((t + k * 20) / 22.0f) * 8);
+    int r = 10 + t / 8;
+    uint16_t c = lerp565(smoke, skyAt(y), t, 217);
+    uint16_t glowC = t < 90 ? lerp565(c, lava, 90 - t, 260) : lerp565(c, C565(0xff, 0xff, 0xff), 1, night ? 14 : 8);
+    gfx->fillCircle(x, y, r, c);
+    gfx->fillCircle(x + 1, y + r / 4, r * 65 / 100, glowC);
+  }
+
+  // lightning flickering inside the plume every few seconds
+  if (now % 5200 < 140) {
+    int lx = VX + 30, ly = VT - 120;
+    uint16_t bolt = C565(0xff, 0xf4, 0xc8);
+    static const int8_t Z[5][2] = { { 0, 0 }, { -9, 14 }, { 6, 28 }, { -8, 44 }, { 2, 62 } };
+    for (int i = 0; i < 4; i++) {
+      gfx->drawLine(lx + Z[i][0], ly + Z[i][1], lx + Z[i + 1][0], ly + Z[i + 1][1], bolt);
+      gfx->drawLine(lx + Z[i][0] + 1, ly + Z[i][1], lx + Z[i + 1][0] + 1, ly + Z[i + 1][1], bolt);
+    }
+  }
+
+  // main cone, one 2 px scanline at a time: noisy edges, four rock bands whose
+  // borders wobble, lava warmth near the rim, and rock/light specks
+  for (int y = VT; y <= B; y += 2) {
+    int w = hw(y);
+    int xl = VX - w + volNoise(y / 4, 1) % 5 - 2, xr = VX + w + volNoise(y / 4, 2) % 5 - 2, W = xr - xl;   // noise per 8 px: craggy, not stair-stepped
+    int wob = (int)(sinf(y / 9.0f) * 4.0f);
+    int b1 = xl + W * 30 / 100 + wob + volNoise(y, 3) % 7 - 3;
+    int b2 = xl + W * 55 / 100 - wob + volNoise(y, 4) % 7 - 3;
+    int b3 = xl + W * 76 / 100 + wob + volNoise(y, 5) % 7 - 3;
+    int k = y < VT + 30 ? (30 - (y - VT)) * (50 + (int)(pulse * 14)) / 30 : 0;   // lava warmth, 0..~64
+    seg(xl, b1, y, k ? lerp565(rockD, lava, k, 160) : rockD);
+    seg(b1, b2, y, k ? lerp565(rock, lava, k, 160) : rock);
+    seg(b2, b3, y, k ? lerp565(rockM, lava, k, 160) : rockM);
+    seg(b3, xr, y, k ? lerp565(rockL, lava, k, 160) : rockL);
+    if (volNoise(y, 6) < 70 && W > 4) gfx->fillRect(xl + volNoise(y, 7) % W, y, 3, 2, rockD);
+    if (volNoise(y, 8) < 60 && xr > b3 + 3) gfx->fillRect(b3 + volNoise(y, 9) % (xr - b3 - 2), y, 2, 2, lerp565(rockL, C565(0xff, 0xff, 0xff), 1, 6));
+  }
+  for (int g = 0; g < 6; g++)                                // eroded gullies fanning from the rim
+    for (int y = VT + 12; y < B - 4; y += 3) {
+      int x = VX + (g * 46 - 115) * (y - VT) / (B - VT) + volNoise(y + g * 31, 12) % 5 - 2;
+      gfx->fillRect(x, y, 2, 3, rockD);
+    }
+  volBoulder(VX - 98, B + 6, 8, 5, night, lava);              // a few boulders at the foot
+  volBoulder(VX + 58, B + 8, 9, 6, night, lava);
+  volBoulder(VX + 108, B + 4, 6, 7, night, lava);
+
+  // crater: a rocky lip, a dark throat, a lava lake with a hot centre and bubbles
+  gfx->fillRoundRect(VX - 34, VT - 9, 68, 17, 8, rockM);
+  gfx->fillRoundRect(VX - 34, VT - 9, 68, 5, 3, rockL);                       // lit lip
+  gfx->fillRoundRect(VX - 28, VT - 6, 56, 11, 5, rockD);
+  gfx->fillRoundRect(VX - 25, VT - 5, 50, 9, 4, lava);
+  gfx->fillRoundRect(VX - 13, VT - 3, 26, 4, 2, hot);
+  for (int i = 0; i < 3; i++)                                                  // bubbles popping
+    if ((now / 260 + i * 2) % 5 < 2) gfx->fillCircle(VX - 16 + i * 16 + (int)(sinf(now / 300.0f + i) * 3), VT - 3, 2, hot);
+
+  // lava streams, wiggling, white-hot at the top, with a bright core and a glow at the foot
+  const int SX[3] = { VX - 10, VX + 8, VX + 18 };
+  const int SD[3] = { -34, -4, 40 };                         // total drift of each stream
+  const int SL[3] = { 96, 70, 100 };                         // length
+  for (int i = 0; i < 3; i++) {
+    for (int y = 0; y < SL[i]; y += 2) {
+      int x = SX[i] + SD[i] * y / SL[i] + (int)(sinf(y / 9.0f + i * 2) * 3);
+      gfx->fillRect(x - 3, VT + 4 + y, 7, 3, lerp565(lava, rockD, 1, 5));   // dark crust edge
+      gfx->fillRect(x - 2, VT + 4 + y, 5, 3, y < 10 ? hot : lava);
+      gfx->fillRect(x - 1, VT + 4 + y, 2, 3, lerp565(lava, hot, 1, 2));     // core
+      if (y > 20 && volNoise(y + i * 17, 16) < 50) gfx->fillRect(x - 2, VT + 4 + y, 5, 3, lerp565(lava, rockD, 2, 3));   // cooled crust patches
+    }
+    int fx = SX[i] + SD[i];
+    if (VT + 4 + SL[i] > B - 14) gfx->fillCircle(fx, B - 2, 6 + (int)(pulse * 2), lerp565(rock, lava, 1, 2));
+  }
+
+  // every ~9 s the crater erupts for a second: a fountain of sparks and a flare
+  uint32_t ep = now % 9000;
+  if (ep < 1100) {
+    int et = (int)(ep * 100 / 1100);                         // 0..99
+    gfx->fillCircle(VX, VT - 2, 16 * (100 - et) / 100 + 4, lerp565(lava, hot, 1, 2));
+    for (int i = 0; i < 16; i++) {
+      int dx = (volNoise(i, 17) % 121) - 60, vy = 70 + volNoise(i, 18) % 70;
+      int x = VX + dx * et / 100, y = VT - vy * et / 100 + 90 * et * et / 10000;
+      if (y > 14 && y < B - 4) gfx->fillRect(x, y, 3, 3, i & 1 ? hot : lava);
+    }
+  }
+
+  // lava bombs: thrown from the crater on arcs, trailing sparks
+  static const int8_t BVX[4] = { -92, -40, 56, 104 };         // horizontal reach
+  static const uint8_t BH[4] = { 130, 104, 120, 90 };         // arc height
+  for (int k = 0; k < 4; k++) {
+    for (int tr = 0; tr < 3; tr++) {                         // head, then two fading trail dots
+      int ph = (int)((now / 12 + k * 50) % 210) - tr * 5;     // 0..209, tr steps back in time
+      if (ph < 0 || ph >= 150) continue;
+      int x = VX + BVX[k] * ph / 150;
+      int y = VT - 4 * BH[k] * ph * (150 - ph) / (150 * 150);
+      uint16_t c = tr == 0 ? hot : (tr == 1 ? lava : lerp565(skyAt(y), lava, 1, 2));
+      int sz = tr == 0 ? 5 : (tr == 1 ? 4 : 3);
+      if (y > 14 && y < B - 4) gfx->fillRect(x - sz / 2, y - sz / 2, sz, sz, c);
+    }
+  }
+
+  // cracked ground: thin jagged fissures with dim lava showing through, kept to
+  // the edges and well under the stream brightness so the pet stays the focus
+  static const int16_t CK[5][8][2] = {                        // x,y points, x < 0 ends the line
+    { { 332, 236 }, { 348, 248 }, { 338, 262 }, { 362, 274 }, { 354, 290 }, { 378, 304 }, { -1, 0 } },
+    { { 348, 248 }, { 372, 254 }, { 390, 246 }, { -1, 0 } },
+    { { 414, 240 }, { 426, 256 }, { 416, 270 }, { 442, 284 }, { -1, 0 } },
+    { { 112, 238 }, { 126, 250 }, { 116, 262 }, { 138, 272 }, { -1, 0 } },
+    { { 262, 246 }, { 274, 260 }, { 266, 274 }, { 286, 286 }, { -1, 0 } } };
+  uint16_t crack = lerp565(lerp565(rockD, lava, 5, 8), lava, (int)(pulse * 3), 8);
+  for (int c = 0; c < 5; c++)
+    for (int i = 0; CK[c][i + 1][0] >= 0; i++) {
+      int x0 = CK[c][i][0], y0 = CK[c][i][1], x1 = CK[c][i + 1][0], y1 = CK[c][i + 1][1];
+      gfx->drawLine(x0 - 1, y0, x1 - 1, y1, rockD);           // dark lip either side
+      gfx->drawLine(x0 + 1, y0, x1 + 1, y1, rockD);
+      gfx->drawLine(x0, y0, x1, y1, crack);
+    }
+
+  // a SLUGMA creeping along behind the pet, slowly
+  if (!gVolcanoTried) { gVolcanoTried = true; gVolcanoMon.load(218, false); }
+  if (gVolcanoMon.loaded) {
+    const uint32_t P = 34000;
+    uint32_t u = now % (2 * P);
+    bool right = u < P;
+    uint32_t tri = right ? u : 2 * P - u;
+    int x = 250 + (int)(100ULL * tri / P);
+    uint8_t act = right ? PMD_WALKR : PMD_WALKL;
+    if (!gVolcanoMon.has(act)) act = PMD_IDLE;
+    drawPmdActZ(gVolcanoMon, act, x, 262, now, true, false, 2, 70, 220);
+  }
+
+  // faceted boulders in front, on the right and the middle ground
+  volBoulder(412, 296, 17, 1, night, lava);
+  volBoulder(380, 302, 10, 2, night, lava);
+  volBoulder(306, 292, 11, 3, night, lava);
+  volBoulder(452, 300, 12, 4, night, lava);
+  // the charred tree last, so it stands in front
+  volDeadTree(436, 274, now, sinf(now / 1700.0f) * 2.0f, night, lava);
+
+  // ash drifting down across the sky, embers rising from the crater
+  for (int a = 0; a < 14; a++) {
+    int x = (a * 67 + (int)(now / 70) + a * a * 5) % 466;
+    int y = (a * 41 + (int)(now / 34)) % (HORIZON - 30) + 24;
+    gfx->fillRect(x, y, 2, 2, lerp565(skyAt(y), rockD, 1, 2));
+  }
+  for (int e = 0; e < 8; e++) {
+    int life = (int)((now / (14 + e * 2) + e * 53) % 190);
+    int x0 = VX - 20 + e * 6;
+    int y0 = VT;
+    int x = x0 + (int)(sinf((life + e * 17) / 14.0f) * 10);
+    int y = y0 - life;
+    if (y < 20) continue;
+    gfx->fillRect(x, y, life < 120 ? 3 : 2, life < 120 ? 3 : 2, life < 120 ? hot : lava);
+  }
+}
+
+// Beach biome: a hazy island and a sailboat on a banded sea whose crests drift
+// at depth-scaled speeds, a glitter path under the sun or moon, gulls by day, a
+// tide that washes foam in and out over wet sand, an EXEGGUTOR pacing the
+// shore, a WINGULL overhead and shells.
+// The sea horizon is higher than HORIZON so there is room for water above the
+// pet; the lower left stays bare (poops land there, see drawPoops).
+#define SEA_TOP 176   // sea horizon y
+
+// A small EXEGGUTOR strolls the shore far behind the pet and a WINGULL flies
+// over. Each PMD sprite (~140 KB of PSRAM) is loaded once on entering the beach
+// and freed when the biome changes.
+static PmdMon gBeachMon;
+static PmdMon gBeachBird;          // WINGULL, wheeling across the sky by day
+static bool gBeachBirdTried = false;
+static bool gBeachTried = false;   // one load attempt per visit: no SD must not retry every frame
+
+static void drawBeach(uint32_t now, bool night, int h, uint16_t top, uint16_t bot, uint16_t soil) {
+  bool sunset = !night && h >= 18, sunrise = !night && h < 8;
+  auto skyAt = [&](int y) { return lerp565(top, bot, y < 0 ? 0 : y, HORIZON); };
+
+  uint16_t farC, nearC;
+  if (night)  { farC = C565(0x1e, 0x38, 0x58); nearC = C565(0x0c, 0x1c, 0x34); }
+  else        { farC = C565(0x86, 0xcc, 0xdc); nearC = C565(0x2a, 0x82, 0xb0); }
+  if (sunset || sunrise) {                                  // tint the water by the sky
+    farC = lerp565(farC, bot, 1, 3);
+    nearC = lerp565(nearC, bot, 1, 5);
+  }
+  uint16_t crest = night ? lerp565(nearC, C565(0x8a, 0xa8, 0xd0), 1, 3) : lerp565(farC, C565(0xff, 0xff, 0xff), 2, 3);
+
+  // distant island and sailboat sit on the horizon, hazed toward the sky
+  uint16_t isl = lerp565(night ? C565(0x10, 0x20, 0x1c) : C565(0x3e, 0x72, 0x56), skyAt(SEA_TOP), 1, 3);
+  gfx->fillCircle(408, SEA_TOP + 2, 24, isl);
+  gfx->fillCircle(380, SEA_TOP + 4, 15, isl);
+  if (!night) {
+    int bob = (int)(sinf(now / 700.0f) * 1.5f);
+    int bx = 172;
+    gfx->fillTriangle(bx - 1, SEA_TOP - 22 + bob, bx - 1, SEA_TOP - 4 + bob, bx + 11, SEA_TOP - 4 + bob, C565(0xff, 0xff, 0xff));
+    gfx->fillTriangle(bx - 3, SEA_TOP - 17 + bob, bx - 3, SEA_TOP - 4 + bob, bx - 13, SEA_TOP - 4 + bob, lerp565(C565(0xff, 0xff, 0xff), skyAt(SEA_TOP), 1, 4));
+    gfx->fillRect(bx - 12, SEA_TOP - 3 + bob, 26, 3, C565(0x7a, 0x4a, 0x30));
+  }
+
+  // sea: depth bands, haze at the horizon
+  const int ROWS = 6, RH = 11;
+  for (int r = 0; r < ROWS; r++)
+    gfx->fillRect(0, SEA_TOP + r * RH, 466, RH, lerp565(farC, nearC, r, ROWS - 1));
+  gfx->fillRect(0, SEA_TOP, 466, 3, lerp565(skyAt(SEA_TOP), farC, 1, 2));
+
+  // drifting crests: farther rows are slower and shorter (parallax)
+  for (int r = 0; r < ROWS; r++) {
+    int y0 = SEA_TOP + r * RH;
+    for (int k = 0; k < 7; k++) {
+      int x = ((k * 83 + r * 37) + (int)(now / (52 - r * 6))) % 540 - 40;
+      int yy = y0 + 5 + (int)(sinf(now / 520.0f + k + r) * 2);
+      int w = 10 + r * 5;
+      gfx->fillRect(x, yy, w, 2, crest);
+      gfx->fillRect(x + w / 3, yy + 2, w / 3, 1, lerp565(lerp565(farC, nearC, r, ROWS - 1), crest, 1, 2));
+    }
+  }
+
+  // glitter path under the sun (or moon): flickering dashes that widen toward us
+  int gx = sunset ? 233 : 360;
+  uint16_t gl = night ? C565(0xd8, 0xe0, 0xf0) : C565(0xff, 0xf4, 0xd0);
+  for (int r = 0; r < ROWS; r++)
+    for (int k = 0; k < 4; k++) {
+      if ((now / 140 + k * 2 + r * 3) % 4 == 0) continue;     // flicker
+      int dx = (int)(sinf(now / 420.0f + k * 1.9f + r) * (5 + r * 5));
+      int w = 4 + r * 2;
+      gfx->fillRect(gx + dx - w / 2, SEA_TOP + r * RH + 2 + k * 2, w, 1, gl);
+    }
+
+  // sand, then the tide: per column the water reaches ye(x), wet sand just beyond
+  gfx->fillRect(0, SEA_TOP + ROWS * RH, 466, 466 - (SEA_TOP + ROWS * RH), soil);
+  uint16_t wet = lerp565(soil, night ? C565(0x08, 0x0c, 0x18) : C565(0x70, 0x5a, 0x3c), 1, 4);
+  for (int x = 0; x < 466; x += 4) {
+    int ye = 252 + (int)(sinf(now / 1100.0f + x / 46.0f) * 6);
+    gfx->fillRect(x, SEA_TOP + ROWS * RH, 4, ye - (SEA_TOP + ROWS * RH), nearC);
+    gfx->fillRect(x, ye, 4, 14, wet);
+    gfx->fillRect(x, ye - 1, 4, 3, night ? C565(0xa8, 0xc0, 0xe0) : C565(0xff, 0xff, 0xff));      // foam line
+    if (((x / 4) + (int)(now / 300)) % 3) gfx->fillRect(x, ye + 5, 4, 1, lerp565(wet, crest, 1, 2));  // thin trail
+  }
+
+  // a WINGULL crossing the sky by day, turning round at each edge: the same
+  // triangle-wave beat as the walkers, with a slow bob. Its walk cycle is the
+  // wingbeat, so the walk action doubles as flying.
+  if (!night && !gBeachBirdTried) { gBeachBirdTried = true; gBeachBird.load(278, false); }
+  if (!night && gBeachBird.loaded) {
+    const uint32_t P = 17000;
+    uint32_t u = (now + 5000) % (2 * P);
+    bool right = u < P;
+    uint32_t tri = right ? u : 2 * P - u;
+    int x = -40 + (int)(540ULL * tri / P);
+    int y = 156 + (int)(sinf(now / 900.0f) * 9.0f);
+    uint8_t act = right ? PMD_WALKR : PMD_WALKL;
+    if (!gBeachBird.has(act)) act = PMD_IDLE;
+    drawPmdActZ(gBeachBird, act, x, y, now, true, false, 1, 140, 220);
+  }
+
+  // an EXEGGUTOR pacing the waterline, small and far, turning at each end of its
+  // beat. Behind the pet, in front of the sea.
+  if (!gBeachTried) { gBeachTried = true; gBeachMon.load(103, false); }
+  if (gBeachMon.loaded) {
+    static const struct { int16_t y; uint16_t zoom; uint32_t period; uint32_t phase; int16_t lo, hi; } WK[1] = {
+      { 262, 125, 30000, 0, 50, 420 } };
+    for (int i = 0; i < 1; i++) {
+      uint32_t u = (now + WK[i].phase) % (2 * WK[i].period);
+      bool right = u < WK[i].period;
+      uint32_t tri = right ? u : 2 * WK[i].period - u;
+      int x = WK[i].lo + (int)((WK[i].hi - WK[i].lo) * (uint64_t)tri / WK[i].period);
+      uint8_t act = right ? PMD_WALKR : PMD_WALKL;
+      if (!gBeachMon.has(act)) act = PMD_IDLE;
+      drawPmdActZ(gBeachMon, act, x, WK[i].y, now, true, false, 1, WK[i].zoom, 220);
+    }
+  }
+
+  // shells and a starfish on the dry sand, on the right where the pet is not
+  gfx->fillCircle(366, 296, 5, night ? C565(0x70, 0x58, 0x60) : C565(0xf0, 0xb8, 0xb0));
+  gfx->fillCircle(366, 296, 2, lerp565(soil, C565(0xff, 0xff, 0xff), 1, 3));
+  uint16_t star = night ? C565(0x80, 0x48, 0x30) : C565(0xf0, 0x7a, 0x3a);
+  for (int a = 0; a < 5; a++) {
+    float an = a * 1.2566f - 1.5708f;
+    gfx->fillTriangle(424, 292, 424 + (int)(cosf(an) * 11), 292 + (int)(sinf(an) * 11),
+                      424 + (int)(cosf(an + 0.6f) * 4), 292 + (int)(sinf(an + 0.6f) * 4), star);
+  }
+
+  // gulls drifting across the sky by day, clear of the header text above y 120
+  if (!night)
+    for (int g = 0; g < 2; g++) {
+      int x = (int)(now / 30 + g * 260) % 540 - 40;
+      int y = 130 + g * 18 + (int)(sinf(now / 600.0f + g) * 4);
+      int up = ((now / 200 + g) & 1) ? -4 : 2;
+      uint16_t gc = lerp565(C565(0x30, 0x38, 0x48), skyAt(y), 1, 4);
+      gfx->drawLine(x - 7, y + up, x, y, gc);
+      gfx->drawLine(x, y, x + 7, y + up, gc);
+    }
+}
+
+// Forest biome, back to front: two hazy tree lines, drifting mist, a small
+// BEEDRILL and CATERPIE, two big trees on the right that sway, ferns and mushrooms on the ground, leaves
+// drifting down by day and fireflies by night. The big trees stay right of the
+// pet and below the sun and moon; the lower left is bare (poops land there, see
+// drawPoops) and the step counter covers the far left.
+// Tree-line layer: a mix of spiky pines and rounded leafy crowns, the kind and
+// height fixed per x so nothing flickers. Crowns are two overlapping circles on
+// a filled base; pines are single triangles.
+static void forestRidge(int baseY, int step, int w, int hmin, int hmax, int seed, int x0, uint16_t col) {
+  for (int x = x0; x < 480; x += step) {
+    int hsh = (x * 37 + seed * 91) & 0x7fff;
+    int ht = hmin + hsh % (hmax - hmin + 1);
+    if ((hsh / 7) % 3 == 0) {                                // pine
+      gfx->fillTriangle(x, baseY, x + w, baseY, x + w / 2, baseY - ht, col);
+    } else {                                                 // leafy crown
+      int r = ht * 2 / 5 + 4, cy = baseY - ht + r;
+      gfx->fillCircle(x + w / 2 - r / 2, cy + r / 4, r, col);
+      gfx->fillCircle(x + w / 2 + r / 2, cy, r - 1, col);
+      gfx->fillRect(x + w / 2 - r, cy, 2 * r, baseY - cy, col);
+    }
+  }
+}
+
+// Leaf canopy tones, dark to bright, by day or night.
+static void forestTones(bool night, uint16_t t[4]) {
+  if (night) { t[0] = C565(0x08, 0x18, 0x12); t[1] = C565(0x0e, 0x26, 0x1a); t[2] = C565(0x16, 0x36, 0x24); t[3] = C565(0x20, 0x46, 0x30); }
+  else       { t[0] = C565(0x24, 0x62, 0x38); t[1] = C565(0x38, 0x80, 0x44); t[2] = C565(0x5c, 0xa6, 0x4a); t[3] = C565(0x92, 0xcc, 0x58); }
+}
+
+// A leafy clump lit from the upper right: dark body, then mid, light and
+// highlight discs stepping toward the sun, with a few leaf specks.
+static void forestClump(int cx, int cy, int r, int seed, bool night) {
+  uint16_t t[4]; forestTones(night, t);
+  gfx->fillCircle(cx, cy, r, t[0]);
+  gfx->fillCircle(cx + r / 8, cy - r / 8, r * 85 / 100, t[1]);
+  gfx->fillCircle(cx + r / 4, cy - r / 4, r * 58 / 100, t[2]);
+  gfx->fillCircle(cx + r * 3 / 8, cy - r * 3 / 8, r * 30 / 100, t[3]);
+  for (int i = 0; i < 5; i++) {                              // specks of light and shade
+    int hsh = (seed * 53 + i * 29) & 0xff;
+    int dx = (hsh % (r + 1)) - r / 3, dy = ((hsh * 7) % (r + 1)) - r * 2 / 3;
+    if (dx * dx + dy * dy < r * r * 7 / 10) gfx->fillRect(cx + dx, cy + dy, 2, 2, i & 1 ? t[3] : t[0]);
+  }
+}
+
+// Broadleaf tree: flared roots, a barked trunk that forks, and a crown of
+// clumps, with Oran berries in it. The whole crown sways; each clump also
+// flutters a little on its own.
+static void forestOak(int cx, int footY, uint32_t now, float sway, bool night) {
+  uint16_t bark  = night ? C565(0x1c, 0x14, 0x12) : C565(0x5a, 0x3c, 0x28);
+  uint16_t barkD = night ? C565(0x10, 0x0c, 0x0a) : C565(0x3c, 0x26, 0x1a);
+  uint16_t barkL = night ? C565(0x2a, 0x1e, 0x1a) : C565(0x84, 0x5c, 0x3a);
+  const int FORK = footY - 74;
+  gfx->fillTriangle(cx - 16, footY + 2, cx - 6, footY - 16, cx - 6, footY + 2, bark);   // roots
+  gfx->fillTriangle(cx + 16, footY + 2, cx + 6, footY - 16, cx + 6, footY + 2, bark);
+  gfx->fillRect(cx - 7, FORK, 14, footY - FORK + 2, bark);
+  gfx->fillRect(cx + 3, FORK, 4, footY - FORK + 2, barkL);                              // lit edge
+  gfx->fillRect(cx - 7, FORK, 3, footY - FORK + 2, barkD);                              // shaded edge
+  for (int i = 0; i < 5; i++)                                                           // bark grooves
+    gfx->fillRect(cx - 2 + (i % 2) * 3, FORK + 8 + i * 13, 1, 9, barkD);
+  int csx = (int)sway, ctop = FORK - 38;                                                // crown centre
+  for (int k = 0; k < 2; k++) {                                                         // the two limbs
+    int ex = cx + (k ? 24 : -22) + csx, ey = FORK - 26;
+    for (int w = -1; w <= 1; w++) gfx->drawLine(cx + w, FORK + 2, ex + w, ey, bark);
+  }
+  static const int8_t CL[8][3] = { { -34, 26, 20 }, { 32, 28, 21 }, { -16, 6, 26 }, { 22, 4, 24 },
+                                   { 0, -18, 24 }, { -40, 4, 16 }, { 38, 2, 16 }, { 0, 30, 20 } };
+  for (int i = 0; i < 8; i++)                                                           // back to front, lower first
+    forestClump(cx + CL[i][0] + csx + (int)(sinf(now / 1100.0f + i) * 1.5f),
+                ctop + 28 + CL[i][1], CL[i][2], i + 3, night);
+  uint16_t berry = night ? C565(0x20, 0x30, 0x70) : C565(0x4a, 0x78, 0xe0);
+  static const int8_t BERRY[4][2] = { { -18, 18 }, { 14, 30 }, { 30, 14 }, { -4, 2 } };
+  for (int i = 0; i < 4; i++) {
+    int bx = cx + BERRY[i][0] + csx, by = ctop + 28 + BERRY[i][1];
+    gfx->fillCircle(bx, by, 3, berry);
+    gfx->fillRect(bx - 1, by - 1, 1, 1, night ? berry : C565(0xc8, 0xe0, 0xff));
+  }
+}
+
+// A ragged pine: trunk plus four tiers with a jagged hem, three tones, the top
+// tiers swaying most. The sun-facing (right) side is lit by day.
+static void forestPine(int cx, int footY, int h, int w, float sway, bool night) {
+  uint16_t trunk = night ? C565(0x20, 0x18, 0x14) : C565(0x5a, 0x3c, 0x28);
+  uint16_t dark  = night ? C565(0x08, 0x14, 0x0e) : C565(0x1a, 0x4c, 0x32);
+  uint16_t mid   = night ? C565(0x0c, 0x1e, 0x16) : C565(0x2a, 0x6c, 0x40);
+  uint16_t lit   = night ? C565(0x12, 0x2c, 0x20) : C565(0x44, 0x92, 0x4c);
+  int top = footY - 22 - h, tierH = h * 45 / 100, step = (h - tierH) / 3;
+  gfx->fillRect(cx - 4, footY - 26, 8, 28, trunk);
+  gfx->fillRect(cx + 1, footY - 26, 3, 28, night ? C565(0x2a, 0x1e, 0x1a) : C565(0x84, 0x5c, 0x3a));
+  for (int i = 0; i < 4; i++) {
+    int ay = top + i * step, by = ay + tierH;
+    int hw = w * (45 + 18 * i) / 200;
+    int sx = (int)(sway * (4 - i) / 4.0f);
+    gfx->fillTriangle(cx + sx, ay, cx - hw, by, cx + hw, by, dark);
+    gfx->fillTriangle(cx + sx, ay, cx + hw, by, cx - hw / 4, by, mid);
+    gfx->fillTriangle(cx + sx, ay, cx + hw, by, cx + hw / 2, by, lit);
+    for (int x = cx - hw; x < cx + hw; x += 7) {             // jagged hem: drooping boughs
+      int t = x - cx + hw;
+      uint16_t c = t > hw * 3 / 2 ? lit : (t > hw * 3 / 4 ? mid : dark);
+      gfx->fillTriangle(x, by - 1, x + 7, by - 1, x + 3, by + 5 + (x & 3), c);
+    }
+  }
+}
+
+// A low bush: three clumps.
+static void forestBush(int x, int y, int r, bool night) {
+  forestClump(x - r * 2 / 3, y, r * 3 / 4, 1, night);
+  forestClump(x + r * 2 / 3, y + 1, r * 3 / 4, 2, night);
+  forestClump(x, y - r / 3, r, 3, night);
+}
+
+// A small BEEDRILL hovers and a CATERPIE crawls far behind the pet by day; a
+// ZUBAT flutters about at night, swapped in as the hour changes. Each
+// PMD sprite (~140 KB of PSRAM) is loaded once on entering the forest and freed
+// when the biome changes.
+static PmdMon gForestBee, gForestBug, gForestBat;   // bat: ZUBAT, night only
+static bool gForestTried = false, gForestBatTried = false;
+
+static void drawForest(uint32_t now, bool night, int h, uint16_t top, uint16_t bot, uint16_t soil) {
+  auto skyAt = [&](int y) { return lerp565(top, bot, y < 0 ? 0 : y, HORIZON); };
+  uint16_t farC = lerp565(night ? C565(0x10, 0x24, 0x2c) : C565(0x4a, 0x8c, 0x6c), skyAt(HORIZON - 40), 1, 2);
+  uint16_t midC = lerp565(night ? C565(0x0c, 0x1c, 0x1c) : C565(0x2e, 0x6c, 0x4a), skyAt(HORIZON - 40), 1, 5);
+  float sway = sinf(now / 1500.0f) * 3.0f;
+
+  forestRidge(HORIZON + 2, 20, 30, 28, 50, 1, -10, farC);
+
+  // mist: long soft streaks drifting slowly along the tree line
+  uint16_t mist = lerp565(skyAt(HORIZON - 8), C565(0xff, 0xff, 0xff), 1, night ? 12 : 5);
+  for (int k = 0; k < 4; k++) {
+    int x = (int)((k * 170 + now / 70) % 640) - 140;
+    gfx->fillRoundRect(x, HORIZON - 22 + (k & 1) * 12, 130, 9, 4, mist);
+  }
+
+  forestRidge(HORIZON + 2, 26, 38, 40, 72, 2, -4, midC);
+
+  // the BEEDRILL drifts on a slow lissajous across the mid air, facing the way it
+  // is heading; the CATERPIE crawls back and forth on the ground behind the ferns
+  if (night) {                                               // day critters out, bat in
+    if (gForestBee.loaded || gForestBug.loaded) { gForestBee.unload(); gForestBug.unload(); }
+    gForestTried = false;
+    if (!gForestBatTried) { gForestBatTried = true; gForestBat.load(41, false); }
+  } else {
+    if (gForestBat.loaded) gForestBat.unload();
+    gForestBatTried = false;
+  }
+  if (night && gForestBat.loaded) {                          // erratic: two beats of different speed
+    float a = now / 3100.0f, b = now / 1300.0f;
+    int x = 190 + (int)(120.0f * sinf(a) + 30.0f * sinf(b * 1.7f));
+    int y = 178 + (int)(22.0f * sinf(b) + 8.0f * sinf(a * 3.0f));
+    uint8_t act = cosf(a) > 0 ? PMD_WALKR : PMD_WALKL;
+    if (!gForestBat.has(act)) act = PMD_IDLE;
+    drawPmdActZ(gForestBat, act, x, y, now, true, false, 1, 100, 220);
+  }
+  if (!night && !gForestTried) { gForestTried = true; gForestBee.load(15, false); gForestBug.load(10, false); }
+  if (!night && gForestBug.loaded) {
+    const uint32_t P = 26000;
+    uint32_t u = now % (2 * P);
+    bool right = u < P;
+    uint32_t tri = right ? u : 2 * P - u;
+    int x = 230 + (int)(150ULL * tri / P);
+    uint8_t act = right ? PMD_WALKR : PMD_WALKL;
+    if (!gForestBug.has(act)) act = PMD_IDLE;
+    drawPmdActZ(gForestBug, act, x, 258, now, true, false, 2, 70, 220);
+  }
+  if (!night && gForestBee.loaded) {
+    float ph = now / 5200.0f;
+    int x = 190 + (int)(130.0f * sinf(ph));
+    int y = 176 + (int)(16.0f * sinf(now / 1700.0f));
+    uint8_t act = cosf(ph) > 0 ? PMD_WALKR : PMD_WALKL;
+    if (!gForestBee.has(act)) act = PMD_IDLE;
+    drawPmdActZ(gForestBee, act, x, y, now, true, false, 1, 110, 220);
+  }
+
+  // ferns and mushrooms, to the right of the pet
+  uint16_t fern = night ? C565(0x16, 0x3a, 0x28) : C565(0x4c, 0xa0, 0x58);
+  static const int16_t FN[3][2] = { { 306, 266 }, { 322, 288 }, { 338, 262 } };
+  for (int f = 0; f < 3; f++)
+    for (int b = -2; b <= 2; b++) {
+      int ex = FN[f][0] + b * 7, ey = FN[f][1] - 16 + abs(b) * 4 + (int)(sway * 0.3f);
+      gfx->drawLine(FN[f][0], FN[f][1], ex, ey, fern);
+      gfx->drawLine(FN[f][0] + 1, FN[f][1], ex + 1, ey, fern);
+    }
+  uint16_t cap = night ? C565(0x70, 0x20, 0x28) : C565(0xe0, 0x44, 0x40);
+  uint16_t stem = night ? C565(0x80, 0x78, 0x70) : C565(0xf4, 0xec, 0xdc);
+  static const int16_t MU[3][3] = { { 360, 298, 7 }, { 376, 304, 5 }, { 346, 306, 4 } };
+  for (int m = 0; m < 3; m++) {
+    int x = MU[m][0], y = MU[m][1], r = MU[m][2];
+    gfx->fillRect(x - r / 3, y - 2, r * 2 / 3 + 1, r, stem);
+    gfx->fillRoundRect(x - r, y - r, r * 2, r + 1, r / 2 + 1, cap);
+    gfx->fillRect(x - r / 2, y - r + 2, 2, 2, stem);
+    gfx->fillRect(x + r / 3, y - r + 3, 2, 2, stem);
+  }
+
+  // the two big pines last, so they stand in front of everything else
+  forestPine(384, 262, 66, 44, sway * 0.7f, night);
+  forestOak(440, 272, now, sway, night);
+  forestBush(404, 296, 13, night);
+
+  if (!night) {  // leaves drifting down on a slow slant
+    static const uint16_t LC[3] = { C565(0x6c, 0xb8, 0x4c), C565(0xd8, 0xc0, 0x40), C565(0xd8, 0x80, 0x38) };
+    for (int i = 0; i < 6; i++) {
+      int x = (i * 83 + (int)(now / 55) + (int)(sinf(now / 600.0f + i * 2.0f) * 12)) % 520 - 30;
+      int y = (i * 47 + (int)(now / 30)) % 270 + 36;
+      gfx->fillRect(x, y, 4, 2, LC[i % 3]);
+      gfx->fillRect(x + 1, y + 2, 2, 1, LC[i % 3]);
+    }
+  } else {       // fireflies: bob about, each pulsing on its own beat
+    uint16_t glow = C565(0xd8, 0xff, 0x70);
+    for (int i = 0; i < 10; i++) {
+      float pulse = (sinf(now / 350.0f + i * 2.0f) + 1.0f) * 0.5f;
+      if (pulse < 0.25f) continue;
+      int x = 40 + (i * 97) % 400 + (int)(sinf(now / 700.0f + i) * 14);
+      int y = 170 + (i * 53) % 120 + (int)(cosf(now / 900.0f + i * 1.3f) * 10);
+      gfx->fillRect(x - 1, y, 5, 3, lerp565(soil, glow, (int)(pulse * 4), 16));   // halo
+      gfx->fillRect(x, y - 1, 3, 5, lerp565(soil, glow, (int)(pulse * 4), 16));
+      gfx->fillRect(x, y, 3, 3, lerp565(soil, glow, (int)(pulse * 16), 16));
+    }
+  }
+}
+
+// Snow biome, drawn as the POLAR ICE: a flat pale sheet under a wide cold sky,
+// a few faceted icebergs standing on it, one open lead, soft pressure ridges and
+// cracks, and a thin wind-blown snowfall. At night a full aurora: swaying
+// curtains of rays, bright at the base and fading green to cyan to violet,
+// mirrored faintly in the ice. Deliberately sparse. Critters: a PIPLUP waddling
+// slowly.
+// Keep the lower left bare (poops land there, see drawPoops) and everything below
+// the sun and moon.
+
+// scanline ellipse (the emulator's GFX has no fillEllipse, and 1 px rows are cheap here)
+static void snowEll(int cx, int cy, int rx, int ry, uint16_t c) {
+  for (int dy = -ry; dy <= ry; dy++) {
+    int w = (int)(rx * sqrtf(1.0f - (float)(dy * dy) / (float)(ry * ry)));
+    if (w > 0) gfx->fillRect(cx - w, cy + dy, 2 * w, 1, c);
+  }
+}
+
+// An iceberg: a fan of seven facets around a centre point, dark on the left to
+// bright on the lit right, a darker waterline band and a turquoise glow where it
+// meets the ice. 'haze' (0..8) fades it toward the sky for the distant ones.
+static void iceberg(int cx, int baseY, int w, int h, int haze, uint16_t sky, uint16_t soil, bool night) {
+  static const int8_t P[8][2] = {                              // x, y as percent of w, h (y up)
+    { -50, 0 }, { -34, 50 }, { -12, 68 }, { 8, 100 }, { 30, 62 }, { 50, 0 }, { 0, 0 }, { -5, 25 } };
+  uint16_t tone[4];
+  if (night) { tone[0] = C565(0x20, 0x30, 0x58); tone[1] = C565(0x30, 0x44, 0x74); tone[2] = C565(0x44, 0x5c, 0x90); tone[3] = C565(0x64, 0x80, 0xb4); }
+  else       { tone[0] = C565(0x8c, 0xb0, 0xd4); tone[1] = C565(0xb4, 0xd0, 0xe8); tone[2] = C565(0xd8, 0xea, 0xf6); tone[3] = C565(0xff, 0xff, 0xff); }
+  for (int i = 0; i < 4; i++) tone[i] = lerp565(tone[i], sky, haze, 10);
+  auto X = [&](int i) { return cx + P[i][0] * w / 100; };
+  auto Y = [&](int i) { return baseY - P[i][1] * h / 100; };
+  static const uint8_t FACE[7][3] = { { 7, 0, 1 }, { 7, 1, 2 }, { 7, 2, 3 }, { 7, 3, 4 }, { 7, 4, 5 }, { 7, 5, 6 }, { 7, 6, 0 } };
+  static const uint8_t TONE[7] = { 0, 1, 2, 3, 2, 1, 0 };
+  snowEll(cx, baseY + 2, w * 55 / 100, 4, lerp565(soil, night ? C565(0x30, 0x60, 0x90) : C565(0x70, 0xc8, 0xe0), 1, 3 + haze / 2));   // glow in the ice
+  for (int f = 0; f < 7; f++)
+    gfx->fillTriangle(X(FACE[f][0]), Y(FACE[f][0]), X(FACE[f][1]), Y(FACE[f][1]), X(FACE[f][2]), Y(FACE[f][2]), tone[TONE[f]]);
+  gfx->fillRect(cx - w / 2, baseY - 2, w, 3, lerp565(tone[0], night ? C565(0x10, 0x20, 0x50) : C565(0x40, 0x78, 0xb0), 1, 2));   // waterline band
+}
+
+// Aurora: swaying curtains of vertical rays. Each column has its own base height,
+// ray length and brightness, all moving; rays are brightest at the base, fade
+// upward, and shift green -> cyan -> violet. Two layers at different phases give
+// depth. Kept clear of the moon by dimming near it. Returns nothing; also tints
+// the ice faintly through 'glowAt' so the sky seems to light the ground.
+static void drawAurora(uint32_t now, uint16_t top, uint16_t bot, int moonX, int moonY) {
+  float t = now / 1000.0f;
+  for (int layer = 0; layer < 2; layer++)
+    for (int x = 12; x < 454; x += 4) {
+      float ph = layer * 1.9f;
+      int base = 118 + layer * 14 + (int)(20.0f * sinf(x / 71.0f + t * 0.35f + ph) + 9.0f * sinf(x / 23.0f - t * 0.9f + ph));
+      int len = 34 + (int)(24.0f * sinf(x / 43.0f + t * 0.5f + ph) + 12.0f * sinf(x / 15.0f + t * 1.3f));
+      float br = 0.55f + 0.45f * sinf(x / 19.0f + t * 1.1f + ph * 2.0f);          // flicker along the curtain
+      int dx = x - moonX, dy = base - len / 2 - moonY;
+      float d2 = (float)(dx * dx + dy * dy);
+      if (d2 < 3600.0f) continue;                                                    // inside 60 px of the moon: leave it alone
+      if (d2 < 10000.0f) br *= (d2 - 3600.0f) / 6400.0f;                             // fade in out to 100 px
+      if (len < 8 || br < 0.12f) continue;
+      for (int j = 0; j < len; j += 6) {
+        float f = (float)j / len;                                                    // 0 at the base, 1 at the tip
+        int a = (int)(br * (1.0f - f) * (1.0f - f * 0.3f) * 20.0f) + 1;              // brighter at the base
+        uint16_t c = f < 0.5f ? lerp565(C565(0x40, 0xff, 0x98), C565(0x40, 0xd8, 0xff), (int)(f * 20), 10)
+                              : lerp565(C565(0x40, 0xd8, 0xff), C565(0xb0, 0x60, 0xff), (int)((f - 0.5f) * 20), 10);
+        int y = base - j - 6;
+        if (y < 18) break;
+        gfx->fillRect(x, y, 4, 6, lerp565(lerp565(top, bot, y, HORIZON), c, a, 28));
+      }
+    }
+}
+
+// small walker (PIPLUP, or SEEL without the Sinnoh pack). The sprite is resident
+// only while the biome is on screen (~110 KB of PSRAM).
+static PmdMon gSnowMon;
+static int16_t gSnowMonDex = 0;
+
+static void drawSnow(uint32_t now, bool night, int h, uint16_t top, uint16_t bot, uint16_t soil) {
+  auto skyAt = [&](int y) { return lerp565(top, bot, y < 0 ? 0 : y, HORIZON); };
+  const int B = HORIZON + 2;
+  uint16_t sW = night ? C565(0x98, 0xaa, 0xd0) : C565(0xf6, 0xfb, 0xff);
+  uint16_t haze = skyAt(HORIZON - 30);
+
+  if (night) drawAurora(now, top, bot, 360, 122);
+
+  // distant icebergs on the horizon, hazed toward the sky
+  iceberg(92, B, 120, 62, 3, haze, soil, night);
+  iceberg(300, B, 80, 40, 4, haze, soil, night);
+  gfx->fillRect(0, B - 1, 466, 3, lerp565(soil, haze, 1, 3));            // soft horizon line
+
+  // the ice sheet: faint aurora glow in it at night, soft ridges, cracks, one open lead
+  if (night) {
+    float t = now / 1000.0f;
+    for (int x = 0; x < 466; x += 8) {
+      int a = 1 + (int)((sinf(x / 40.0f + t * 0.5f) + 1.0f) * 2.5f);
+      gfx->fillRect(x, B + 2, 8, 22, lerp565(soil, C565(0x40, 0xe0, 0x98), a, 40));
+    }
+  }
+  uint16_t shade = night ? C565(0x30, 0x40, 0x70) : C565(0xc0, 0xd4, 0xea);
+  uint16_t lite = night ? C565(0x78, 0x8c, 0xb8) : C565(0xff, 0xff, 0xff);
+  snowEll(240, 256, 84, 4, shade);                                      // two long, low pressure ridges
+  snowEll(244, 254, 80, 3, lite);
+  snowEll(150, 284, 60, 3, shade);
+  snowEll(153, 283, 56, 2, lite);
+  uint16_t crack = night ? C565(0x28, 0x38, 0x68) : C565(0x88, 0xa8, 0xd0);
+  static const int16_t CK[2][6][2] = { { { 296, 246 }, { 312, 258 }, { 306, 270 }, { 330, 282 }, { 326, 296 }, { -1, 0 } },
+                                       { { 100, 248 }, { 118, 256 }, { 112, 266 }, { -1, 0 } } };
+  for (int c = 0; c < 2; c++)
+    for (int i = 0; CK[c][i + 1][0] >= 0; i++)
+      gfx->drawLine(CK[c][i][0], CK[c][i][1], CK[c][i + 1][0], CK[c][i + 1][1], crack);
+  uint16_t water = night ? C565(0x10, 0x20, 0x4c) : C565(0x3c, 0x6c, 0x9c);   // the open lead, ice-rimmed
+  snowEll(398, 272, 62, 6, night ? C565(0x70, 0x84, 0xb0) : C565(0xe8, 0xf2, 0xfa));
+  snowEll(398, 272, 56, 4, water);
+  snowEll(404, 271, 28, 1, lerp565(water, sW, 1, 3));                    // sky reflected in it
+  iceberg(418, 276, 56, 42, 1, haze, soil, night);                       // one nearer berg beside it
+
+  // sparkles on the ice: a few fixed spots, each twinkling on its own beat
+  for (int i = 0; i < 8; i++) {
+    int x = 130 + volNoise(i, 23) % 320, y = 244 + volNoise(i, 24) % 54;
+    if (x < 200 && y > 262) continue;                        // poops land bottom left
+    if ((now / 260 + i * 3) % 8 != 0) continue;
+    gfx->fillRect(x, y, 2, 2, sW);
+    gfx->fillRect(x - 2, y, 6, 1, lerp565(soil, sW, 1, 2));
+    gfx->fillRect(x, y - 2, 1, 6, lerp565(soil, sW, 1, 2));
+  }
+
+  // the walker: a PIPLUP waddling slowly behind the pet at any hour (SEEL
+  // instead if the Sinnoh pack is not on the card, so it is not left empty)
+  if (!gSnowMonDex) {
+    gSnowMonDex = 393;
+    if (!gSnowMon.load(393, false)) { gSnowMonDex = 86; gSnowMon.load(86, false); }
+  }
+  if (gSnowMon.loaded) {
+    const uint32_t P = 30000;
+    uint32_t u = now % (2 * P);
+    bool right = u < P;
+    uint32_t tri = right ? u : 2 * P - u;
+    int x = 250 + (int)(80ULL * tri / P);
+    uint8_t act = right ? PMD_WALKR : PMD_WALKL;
+    if (!gSnowMon.has(act)) act = PMD_IDLE;
+    drawPmdActZ(gSnowMon, act, x, 262, now, true, false, 2, 70, 220);
+  }
+
+  // heavy snowfall in three depths, blown sideways by the wind: many small far
+  // flakes, fewer big near ones, each with its own speed and a little wobble
+  for (int d = 0; d < 3; d++) {
+    int n = 46 - d * 12, sz = 2 + d, drift = 22 - d * 5, fall = 60 + d * 25;
+    for (int i = 0; i < n; i++) {
+      int x = (i * 71 + d * 37 + 466 + (int)(now / drift) + (int)(sinf(now / 700.0f + i) * 5.0f)) % 466;
+      int y = (i * 53 + d * 29 + (int)(now / (38 - d * 9 - i % 3 * 3))) % (HORIZON + fall) - 10;
+      if (night) { gfx->fillRect(x, y, sz, sz, d == 0 ? lerp565(skyAt(y), sW, 2, 3) : sW); continue; }
+      uint16_t tint = C565(0xa8, 0xc4, 0xe4);                // by day white-on-pale is invisible: tint, plus a shadow
+      if (d == 0) { gfx->fillRect(x, y, sz, sz, lerp565(skyAt(y), tint, 2, 3)); continue; }
+      gfx->fillRect(x + 1, y + 1, sz, sz, tint);
+      gfx->fillRect(x, y, sz, sz, C565(0xff, 0xff, 0xff));
+    }
+  }
+}
+
+// Meadow biome: an open flower meadow of tall grass in the wind. Layered rolling
+// hills behind; in front, seven rows of long curved blades whose tips sway in a
+// wave that travels across the field (brighter where it crests, stronger in
+// gusts), with wildflowers standing above the grass and seed fluff drifting.
+// Day: a small BUTTERFREE overhead and a RATTATA scurrying through the grass;
+// night: fireflies and a VENOMOTH, everything darker. Kept calm. The lower left
+// stays short and bare (poops land there, see drawPoops), the sun and moon clear.
+
+// small residents: a flyer (BUTTERFREE by day, VENOMOTH at night) and a RATTATA
+// by day, each loaded only while wanted and freed when the biome changes.
+static PmdMon gMeadowFly, gMeadowWalk;
+static int16_t gMeadowFlyDex = 0;
+static bool gMeadowWalkTried = false;
+
+static void drawMeadow(uint32_t now, bool night, int h, uint16_t top, uint16_t bot, uint16_t soil) {
+  auto skyAt = [&](int y) { return lerp565(top, bot, y < 0 ? 0 : y, HORIZON); };
+  const int B = HORIZON + 2;
+  float gust = 1.0f + 0.6f * sinf(now / 3300.0f);             // 0.4..1.6: the wind comes and goes
+
+  // layered hills: pale and hazy far away, richer green near, tiny bushes on the middle one
+  uint16_t farH = lerp565(night ? C565(0x18, 0x34, 0x34) : C565(0x6c, 0xaa, 0x8c), skyAt(HORIZON - 30), 1, 3);
+  uint16_t midH = night ? C565(0x14, 0x38, 0x2a) : C565(0x4c, 0x98, 0x58);
+  snowEll(70, B, 150, 26, farH);
+  snowEll(330, B, 170, 22, farH);
+  snowEll(455, B, 100, 30, farH);
+  snowEll(190, B + 2, 165, 18, midH);
+  snowEll(425, B + 2, 125, 20, midH);
+  forestBush(150, B - 14, 9, night);
+  forestBush(322, B - 12, 8, night);
+  forestBush(262, B - 8, 6, night);
+
+  // residents: the flyer by day/night (the rattata is drawn mid-grass below)
+  int16_t wantFly = night ? 49 : 12;
+  if (gMeadowFlyDex != wantFly) { gMeadowFly.unload(); gMeadowFlyDex = wantFly; gMeadowFly.load(wantFly, false); }
+  if (gMeadowFly.loaded) {
+    float ph = now / 6200.0f;
+    int x = 200 + (int)(120.0f * sinf(ph)), y = 188 + (int)(14.0f * sinf(now / 1500.0f));
+    uint8_t act = cosf(ph) > 0 ? PMD_WALKR : PMD_WALKL;
+    if (!gMeadowFly.has(act)) act = PMD_IDLE;
+    drawPmdActZ(gMeadowFly, act, x, y, now, true, false, 1, 110, 220);
+  }
+  if (night) { if (gMeadowWalk.loaded) gMeadowWalk.unload(); gMeadowWalkTried = false; }
+  else if (!gMeadowWalkTried) { gMeadowWalkTried = true; gMeadowWalk.load(19, false); }
+
+  // grass tones, dark to bright, and the flower palette (day / night)
+  uint16_t gT[4];
+  if (night) { gT[0] = C565(0x0e, 0x24, 0x1a); gT[1] = C565(0x18, 0x38, 0x28); gT[2] = C565(0x26, 0x50, 0x36); gT[3] = C565(0x5a, 0x7c, 0x5a); }
+  else       { gT[0] = C565(0x34, 0x7c, 0x3c); gT[1] = C565(0x4c, 0x9c, 0x46); gT[2] = C565(0x70, 0xbc, 0x54); gT[3] = C565(0xdc, 0xf2, 0x8c); }
+  static const uint16_t FC[2][4] = {
+    { C565(0xff, 0xff, 0xff), C565(0xe8, 0x40, 0x3c), C565(0x58, 0x88, 0xf0), C565(0xff, 0xd8, 0x3c) },
+    { C565(0xa0, 0xa8, 0xc0), C565(0x80, 0x34, 0x40), C565(0x34, 0x4c, 0x90), C565(0xa0, 0x90, 0x40) } };
+  uint16_t lav = night ? C565(0x58, 0x40, 0x80) : C565(0xa8, 0x70, 0xe0);
+
+  // seven rows of grass, back to front, each with the flowers that stand in it
+  for (int r = 0; r < 7; r++) {
+    int y0 = 238 + r * 11, len = 10 + r * 4, sp = 9 + r / 2;
+    float amp = 2.0f + r * 0.8f;
+    gfx->fillRect(0, y0 - 2, 466, 8, lerp565(soil, gT[0], 1, 3));        // shadowed root band under the blades
+    if (r == 3 && gMeadowWalk.loaded && !night) {                         // the rattata runs through the middle of the grass
+      const uint32_t P = 22000;
+      uint32_t u = now % (2 * P);
+      bool right = u < P;
+      uint32_t tri = right ? u : 2 * P - u;
+      int rx = 236 + (int)(90ULL * tri / P);
+      uint8_t act = right ? PMD_WALKR : PMD_WALKL;
+      if (!gMeadowWalk.has(act)) act = PMD_IDLE;
+      drawPmdActZ(gMeadowWalk, act, rx, 262, now, true, false, 2, 70, 220);
+    }
+    for (int i = -1; i * sp < 480; i++) {
+      int x = i * sp + volNoise(i + r * 17, 45) % sp;
+      if (x < 170 && y0 > 262) continue;                                  // keep the poop corner short and bare
+      float wv = sinf(now / 560.0f + x / 48.0f + r * 0.5f);              // the travelling wave
+      int off = (int)(wv * amp * gust) + volNoise(i + r * 7, 46) % 5 - 2;
+      int bl = len - volNoise(i + r * 11, 47) % (len / 3 + 1);
+      int mx = x + off * 2 / 5, my = y0 - bl * 55 / 100, tx = x + off, ty = y0 - bl;
+      uint16_t c = gT[volNoise(i + r * 5, 48) % 3];
+      uint16_t tip = (wv * gust > 0.8f) ? gT[3] : lerp565(c, gT[3], 1, 4); // crests glint
+      gfx->drawLine(x, y0 + 4, mx, my, c);
+      gfx->drawLine(mx, my, tx, ty, tip);
+      if (r >= 3) { gfx->drawLine(x + 1, y0 + 4, mx + 1, my, c); gfx->drawLine(mx + 1, my, tx + 1, ty, tip); }
+    }
+    for (int f = 0; f < 44; f++) {                                       // wildflowers rooted in this row
+      int fy = 240 + volNoise(f, 42) % 66;
+      if (fy < y0 || fy >= y0 + 11) continue;
+      int fx = 14 + volNoise(f, 43) % 440;
+      if (fx < 170 && fy > 262) continue;
+      float wv = sinf(now / 560.0f + fx / 48.0f + r * 0.5f);
+      int sw = (int)(wv * (amp + 1.0f) * gust), fl = len + 8 + volNoise(f, 49) % 8;
+      int hx = fx + sw, hy = fy - fl, kind = volNoise(f, 44) % 6;
+      gfx->drawLine(fx, fy + 2, fx + sw / 2, fy - fl / 2, gT[1]);
+      gfx->drawLine(fx + sw / 2, fy - fl / 2, hx, hy, gT[1]);
+      if (kind == 5) {                                                    // lavender: a tall violet spike
+        gfx->fillRect(hx - 1, hy - 7, 3, 9, lav);
+        gfx->fillRect(hx - 2, hy - 4, 5, 2, lav);
+      } else {
+        uint16_t fc = FC[night][kind % 4];
+        if (kind == 1) { gfx->fillRect(hx - 3, hy - 2, 7, 5, fc); gfx->fillRect(hx - 1, hy - 1, 3, 3, night ? C565(0x20, 0x10, 0x14) : C565(0x30, 0x20, 0x20)); }   // poppy
+        else if (kind == 3) { gfx->fillRect(hx - 2, hy - 2, 5, 5, fc); gfx->fillRect(hx - 1, hy - 2, 2, 1, C565(0xff, 0xf4, 0xa0)); }                              // buttercup
+        else { gfx->fillRect(hx - 3, hy - 1, 7, 3, fc); gfx->fillRect(hx - 1, hy - 3, 3, 7, fc); gfx->fillRect(hx - 1, hy - 1, 3, 3, night ? C565(0x80, 0x70, 0x30) : C565(0xff, 0xc0, 0x20)); }   // daisy / cornflower
+      }
+    }
+  }
+
+  if (!night) {  // seed fluff and pollen carried along on the wind
+    for (int i = 0; i < 10; i++) {
+      int x = (i * 53 + (int)(now / 14) + (int)(sinf(now / 600.0f + i) * 6.0f)) % 520 - 30;
+      int y = 190 + (i * 11) % 90 + (int)(sinf(now / 450.0f + i * 1.7f) * 5.0f);
+      gfx->fillRect(x, y, 2, 2, C565(0xff, 0xf6, 0xd0));
+      gfx->fillRect(x + 2, y - 1, 1, 1, C565(0xff, 0xff, 0xff));
+    }
+  } else {       // fireflies: bob about, each pulsing on its own beat
+    uint16_t glow = C565(0xd8, 0xff, 0x70);
+    for (int i = 0; i < 10; i++) {
+      float pulse = (sinf(now / 350.0f + i * 2.0f) + 1.0f) * 0.5f;
+      if (pulse < 0.25f) continue;
+      int x = 40 + (i * 97) % 400 + (int)(sinf(now / 700.0f + i) * 14);
+      int y = 200 + (i * 53) % 100 + (int)(cosf(now / 900.0f + i * 1.3f) * 10);
+      gfx->fillRect(x - 1, y, 5, 3, lerp565(soil, glow, (int)(pulse * 4), 16));
+      gfx->fillRect(x, y - 1, 3, 5, lerp565(soil, glow, (int)(pulse * 4), 16));
+      gfx->fillRect(x, y, 3, 3, lerp565(soil, glow, (int)(pulse * 16), 16));
+    }
+  }
+}
+
+// Mountain biome: high alpine country. Back to front: a hazy range, a mid range,
+// one big near peak on the left (all faceted fans with snow caps and ragged snow
+// hems, lit from the right), drifting fog banks, a rocky cliff on the right with
+// a waterfall into a misty pool, one small pine, boulders and scree. Day: a
+// FEAROW soaring and a GEODUDE trundling behind the pet; night: a GOLBAT and a
+// CUBONE. The peaks stay below the sun and moon; the lower left is bare (poops
+// land there, see drawPoops).
+
+// A peak: a fan of eight facets around a centre point, dark on the left to bright
+// on the lit right, then a snow cap (shaded left, lit right) with a ragged hem.
+// 'haze' (0..10) fades it toward the sky for the far ones; snowPct is how far down
+// the cap reaches.
+static void mtnPeak(int cx, int baseY, int w, int H, int seed, int haze, uint16_t sky, int snowPct, bool night) {
+  static const int8_t V[8][2] = { { -100, 0 }, { -52, 46 }, { -26, 70 }, { 0, 100 }, { 24, 72 }, { 50, 44 }, { 100, 0 }, { 12, 0 } };
+  uint16_t tone[4], sW, sS;
+  if (night) { tone[0] = C565(0x14, 0x18, 0x2c); tone[1] = C565(0x1e, 0x24, 0x40); tone[2] = C565(0x2c, 0x34, 0x54); tone[3] = C565(0x40, 0x4a, 0x70); sW = C565(0xa0, 0xb0, 0xd8); sS = C565(0x5c, 0x6c, 0x9c); }
+  else       { tone[0] = C565(0x4a, 0x4e, 0x6a); tone[1] = C565(0x6a, 0x6e, 0x86); tone[2] = C565(0x8a, 0x8e, 0xa4); tone[3] = C565(0xb4, 0xb6, 0xc8); sW = C565(0xf8, 0xfc, 0xff); sS = C565(0xc0, 0xd0, 0xea); }
+  for (int i = 0; i < 4; i++) tone[i] = lerp565(tone[i], sky, haze, 10);
+  sW = lerp565(sW, sky, haze, 12); sS = lerp565(sS, sky, haze, 12);
+  int px[8], py[8];
+  for (int i = 0; i < 8; i++) {
+    int jx = volNoise(i, seed) % 9 - 4, jy = (i == 0 || i == 6 || i == 7) ? 0 : volNoise(i + 9, seed) % 7 - 3;
+    px[i] = cx + (V[i][0] + jx) * w / 100;
+    py[i] = baseY - (V[i][1] + jy) * H / 100;
+  }
+  int ccx = cx, ccy = baseY - 34 * H / 100;
+  static const uint8_t TN[8] = { 0, 1, 2, 3, 2, 1, 0, 0 };         // tone of the facet starting at vertex i
+  for (int i = 0; i < 8; i++) {
+    int j = (i + 1) & 7;
+    gfx->fillTriangle(ccx, ccy, px[i], py[i], px[j], py[j], tone[TN[i]]);
+  }
+  // snow cap, a fraction of the way down each ridge from the summit
+  auto lx = [&](int a, int b) { return px[3] + (px[a] - px[3]) * snowPct / 100; };
+  auto ly = [&](int a, int b) { return py[3] + (py[a] - py[3]) * snowPct / 100; };
+  int sx[5] = { lx(1, 0), lx(2, 0), px[3], lx(4, 0), lx(5, 0) };    // lower edge of the cap, left to right
+  int sy[5] = { ly(1, 0), ly(2, 0), py[3] + (baseY - py[3]) * snowPct / 160, ly(4, 0), ly(5, 0) };
+  gfx->fillTriangle(px[3], py[3], sx[0], sy[0], sx[1], sy[1], sS);
+  gfx->fillTriangle(px[3], py[3], sx[1], sy[1], sx[2], sy[2], sS);
+  gfx->fillTriangle(px[3], py[3], sx[2], sy[2], sx[3], sy[3], sW);
+  gfx->fillTriangle(px[3], py[3], sx[3], sy[3], sx[4], sy[4], sW);
+  for (int k = 0; k < 4; k++)                                        // ragged hem: teeth hanging off the lower edge
+    for (int t = 0; t < 3; t++) {
+      int ax = sx[k] + (sx[k + 1] - sx[k]) * t / 3, ay = sy[k] + (sy[k + 1] - sy[k]) * t / 3;
+      int bx = sx[k] + (sx[k + 1] - sx[k]) * (t + 1) / 3, by = sy[k] + (sy[k + 1] - sy[k]) * (t + 1) / 3;
+      gfx->fillTriangle(ax, ay, bx, by, (ax + bx) / 2, (ay + by) / 2 + 3 + volNoise(k * 3 + t, seed + 3) % 6, k < 2 ? sS : sW);
+    }
+}
+
+// A grey boulder with a lit upper right, shaded lower left, and a tuft on top.
+static void mtnBoulder(int cx, int cy, int r, int seed, bool night) {
+  uint16_t t[4];
+  if (night) { t[0] = C565(0x18, 0x1c, 0x2c); t[1] = C565(0x28, 0x2e, 0x44); t[2] = C565(0x3a, 0x42, 0x5c); t[3] = C565(0x50, 0x5a, 0x78); }
+  else       { t[0] = C565(0x5c, 0x58, 0x5c); t[1] = C565(0x7c, 0x78, 0x78); t[2] = C565(0x9c, 0x96, 0x92); t[3] = C565(0xc0, 0xb8, 0xae); }
+  const int N = 8;
+  int vx[N + 1], vy[N + 1];
+  for (int i = 0; i < N; i++) {
+    float an = i * 6.2832f / N;
+    int rr = r * (80 + volNoise(i, seed) % 26) / 100;
+    vx[i] = cx + (int)(cosf(an) * rr * 1.25f);
+    vy[i] = cy + (int)(sinf(an) * rr * 0.8f);
+  }
+  vx[N] = vx[0]; vy[N] = vy[0];
+  for (int i = 0; i < N; i++) {
+    float an = (i + 0.5f) * 6.2832f / N, lit = cosf(an) * 0.6f - sinf(an) * 0.8f;
+    gfx->fillTriangle(cx, cy - r / 6, vx[i], vy[i], vx[i + 1], vy[i + 1], lit > 0.75f ? t[3] : (lit > 0.2f ? t[2] : (lit > -0.4f ? t[1] : t[0])));
+  }
+  uint16_t g = night ? C565(0x1c, 0x3a, 0x2c) : C565(0x58, 0x9c, 0x4c);                // moss on top
+  gfx->fillRect(cx - r / 3, cy - r * 4 / 5, r * 2 / 3, 2, g);
+  gfx->fillRect(cx - r / 4, cy - r * 4 / 5 - 2, r / 2, 2, g);
+}
+
+static PmdMon gMtnFly, gMtnWalk;
+static int16_t gMtnDay = -1;   // which set is loaded: 1 day, 0 night, -1 none
+
+static void drawMountain(uint32_t now, bool night, int h, uint16_t top, uint16_t bot, uint16_t soil) {
+  auto skyAt = [&](int y) { return lerp565(top, bot, y < 0 ? 0 : y, HORIZON); };
+  const int B = HORIZON + 2;
+  float sway = sinf(now / 1500.0f) * 3.0f;
+  uint16_t sW = night ? C565(0xa0, 0xb0, 0xd8) : C565(0xf8, 0xfc, 0xff);
+
+  // three ranges, back to front: hazy and low, mid, then the big near peak on the left
+  uint16_t hz = skyAt(HORIZON - 50);
+  for (int i = 0; i < 6; i++)
+    mtnPeak(10 + i * 88, B, 56 + volNoise(i, 61) % 30, 46 + volNoise(i, 62) % 34, 61 + i, 7, hz, 42, night);
+  mtnPeak(60, B, 110, 78, 71, 4, hz, 40, night);
+  mtnPeak(300, B, 90, 52, 72, 4, hz, 44, night);                 // below the sun and moon
+  mtnPeak(430, B, 80, 48, 73, 4, hz, 44, night);
+  mtnPeak(172, B, 124, 118, 81, 0, hz, 44, night);                // the big one, lit from the right
+
+  // fog banks drifting across the ranges
+  uint16_t fog = lerp565(skyAt(HORIZON - 20), C565(0xff, 0xff, 0xff), 1, night ? 9 : 4);
+  for (int k = 0; k < 3; k++) {
+    int x = (int)((k * 190 + now / 90) % 640) - 150;
+    snowEll(x, HORIZON - 18 + k * 9, 100 + k * 14, 4, fog);
+    snowEll(x + 30, HORIZON - 21 + k * 9, 60, 3, fog);
+  }
+
+  // the cliff on the right: ragged-edged strata, shaded left edge, lit right side, grass on top
+  uint16_t rc[4];
+  if (night) { rc[0] = C565(0x14, 0x18, 0x28); rc[1] = C565(0x20, 0x26, 0x3c); rc[2] = C565(0x2e, 0x36, 0x50); rc[3] = C565(0x42, 0x4c, 0x6c); }
+  else       { rc[0] = C565(0x4c, 0x44, 0x48); rc[1] = C565(0x6c, 0x62, 0x60); rc[2] = C565(0x88, 0x7c, 0x74); rc[3] = C565(0xa8, 0x98, 0x88); }
+  const int CT = 178, CB = 266;                                     // cliff top and foot
+  for (int y = CT; y < CB; y += 2) {
+    int xl = 376 + volNoise(y / 4, 63) % 9 - (y - CT) / 14;          // ragged, flaring out toward the foot
+    int band = (y / 12 + volNoise(y / 12, 64) % 2) % 3;               // strata
+    gfx->fillRect(xl, y, 12, 2, rc[0]);
+    gfx->fillRect(xl + 12, y, 466 - xl - 12, 2, rc[band == 2 ? 2 : 1]);
+    gfx->fillRect(430, y, 40, 2, rc[band == 0 ? 2 : 3]);             // the lit side
+    if (volNoise(y, 65) < 50) gfx->fillRect(xl + 14 + volNoise(y, 66) % 40, y, 3, 2, rc[0]);   // cracks and pits
+  }
+  uint16_t gTop = night ? C565(0x1c, 0x3c, 0x2a) : C565(0x58, 0xa0, 0x4c);
+  uint16_t gTopL = night ? C565(0x2a, 0x54, 0x38) : C565(0x86, 0xcc, 0x58);
+  gfx->fillRect(372, CT - 5, 100, 6, gTop);
+  gfx->fillRect(420, CT - 5, 50, 3, gTopL);
+  for (int x = 374; x < 466; x += 6)                                 // grass hanging over the edge
+    gfx->fillTriangle(x, CT, x + 6, CT, x + 3, CT + 4 + volNoise(x, 67) % 5, gTop);
+
+  // the waterfall: a pale ribbon from a notch in the lip to a misty pool, with bright
+  // streaks racing down it and spray rising at the foot
+  const int WX = 414;
+  uint16_t wt = night ? C565(0x70, 0x90, 0xc8) : C565(0xb8, 0xdc, 0xf4);
+  gfx->fillRect(WX - 5, CT - 3, 10, 6, lerp565(rc[0], wt, 1, 2));    // the notch
+  for (int y = CT + 2; y < CB + 6; y += 2) {
+    int wob = (int)(sinf(y / 14.0f + now / 500.0f) * 1.0f);
+    gfx->fillRect(WX - 4 + wob, y, 8, 2, wt);
+    gfx->fillRect(WX + 2 + wob, y, 2, 2, lerp565(wt, C565(0x30, 0x58, 0x88), 1, 4));   // shaded edge
+  }
+  int wlen = CB - CT;
+  for (int k = 0; k < 5; k++) {
+    int yy = CT + 4 + (int)((now / 9 + k * 37) % wlen);
+    gfx->fillRect(WX - 3 + (k * 3) % 5, yy, 2, 8, C565(0xff, 0xff, 0xff));
+  }
+  snowEll(WX + 4, 270, 46, 8, night ? C565(0x3a, 0x4a, 0x70) : C565(0x78, 0x9c, 0xc0));            // pool rim
+  snowEll(WX + 4, 270, 42, 6, night ? C565(0x1a, 0x2c, 0x58) : C565(0x4c, 0x80, 0xb4));            // water
+  for (int k = 0; k < 3; k++) {                                                                      // ripples spreading out from the splash
+    int r = (int)((now / 40 + k * 14) % 42);
+    gfx->fillRect(WX + 4 - r, 270, 1, 1, lerp565(C565(0x4c, 0x80, 0xb4), sW, 2, 3));
+    gfx->fillRect(WX + 4 + r, 270, 1, 1, lerp565(C565(0x4c, 0x80, 0xb4), sW, 2, 3));
+  }
+  for (int k = 0; k < 6; k++) {                                                                      // spray: puffs rising and thinning
+    int life = (int)((now / 26 + k * 40) % 120);
+    int px = WX + (int)(sinf(k * 2.1f + now / 400.0f) * (8 + life / 8)), py = 266 - life / 3;
+    gfx->fillCircle(px, py, 3 + life / 24, lerp565(skyAt(py), C565(0xff, 0xff, 0xff), 8 - life / 18, 14));
+  }
+
+  // an alpine pine at the cliff foot, boulders around it; tufts and scree on the ground
+  forestPine(380, 270, 52, 34, sway * 0.6f, night);
+  mtnBoulder(352, 292, 12, 1, night);
+  mtnBoulder(300, 300, 10, 2, night);
+  mtnBoulder(460, 296, 11, 3, night);
+  uint16_t gD = night ? C565(0x14, 0x30, 0x24) : C565(0x4c, 0x86, 0x44);
+  for (int i = 0; i < 16; i++) {
+    int x = 190 + volNoise(i, 68) % 220, y = 250 + volNoise(i, 69) % 50;
+    if (x > 372 && y < 270) continue;
+    int sw = (int)(sinf(now / 600.0f + x / 40.0f) * 1.5f);
+    gfx->drawLine(x, y, x - 3 + sw, y - 6, gD);
+    gfx->drawLine(x + 1, y, x + 1 + sw, y - 8, gD);
+    gfx->drawLine(x + 2, y, x + 5 + sw, y - 5, gD);
+  }
+  for (int i = 0; i < 26; i++) {                                    // scree: scattered pebbles
+    int x = 140 + volNoise(i, 70) % 320, y = 240 + volNoise(i, 71) % 62;
+    if ((x < 200 && y > 262) || (x > 366 && y < 274)) continue;
+    gfx->fillRect(x, y, 2 + i % 2, 2, night ? C565(0x2a, 0x30, 0x48) : (i & 1 ? C565(0x84, 0x7c, 0x78) : C565(0xb8, 0xae, 0xa0)));
+  }
+  static const int16_t EW[5][2] = { { 268, 262 }, { 318, 278 }, { 232, 296 }, { 340, 258 }, { 280, 292 } };   // edelweiss
+  for (int i = 0; i < 5; i++) {
+    int x = EW[i][0], y = EW[i][1];
+    gfx->drawLine(x, y + 2, x, y - 4, gD);
+    gfx->fillRect(x - 2, y - 6, 5, 3, night ? C565(0x90, 0xa0, 0xc0) : C565(0xff, 0xff, 0xf0));
+    gfx->fillRect(x, y - 5, 1, 1, C565(0xe0, 0xc0, 0x40));
+  }
+
+  // residents: FEAROW soars by day / GOLBAT at night, a GEODUDE or CUBONE trundles behind the pet
+  int16_t day = night ? 0 : 1;
+  if (gMtnDay != day) {
+    gMtnFly.unload(); gMtnWalk.unload(); gMtnDay = day;
+    gMtnFly.load(day ? 22 : 42, false);
+    gMtnWalk.load(day ? 74 : 104, false);
+  }
+  if (gMtnFly.loaded) {                                            // a long slow glide, turning at each end, clear of the moon
+    const uint32_t P = 20000;
+    uint32_t u = now % (2 * P);
+    bool right = u < P;
+    uint32_t tri = right ? u : 2 * P - u;
+    int x = 60 + (int)(250ULL * tri / P), y = 168 + (int)(sinf(now / 1400.0f) * 8.0f);
+    uint8_t act = right ? PMD_WALKR : PMD_WALKL;
+    if (!gMtnFly.has(act)) act = PMD_IDLE;
+    drawPmdActZ(gMtnFly, act, x, y, now, true, false, 1, 100, 220);
+  }
+  if (gMtnWalk.loaded) {
+    const uint32_t P = 26000;
+    uint32_t u = now % (2 * P);
+    bool right = u < P;
+    uint32_t tri = right ? u : 2 * P - u;
+    int x = 240 + (int)(80ULL * tri / P);
+    uint8_t act = right ? PMD_WALKR : PMD_WALKL;
+    if (!gMtnWalk.has(act)) act = PMD_IDLE;
+    drawPmdActZ(gMtnWalk, act, x, 262, now, true, false, 2, 70, 220);
+  }
+}
+
+// Graveyard biome for ghost types: always dusky, never cheerful. Back to front:
+// bare gnarled trees on the horizon, a haunted house with flickering windows on a
+// far hill, drifting fog, an iron fence, weathered gravestones (round, cross,
+// obelisk, slab) with moss and carved lines, scattered bones, more fog, and a few
+// will-o'-wisps. A small GASTLY (HAUNTER at night) drifts about; at night two bats
+// cross the sky. The lower left is bare (poops land there, see
+// drawPoops), and the sun and moon stay clear.
+
+// One gravestone, lit cold from the upper right: a stone body per 'kind', a lit
+// right edge, a shadowed left, moss at the foot, a hairline crack, carved lines.
+// kind: 0 rounded, 1 cross, 2 obelisk, 3 slab (leaning by 'lean' px).
+static void graveStone(int cx, int footY, int kind, int w, int h, int lean, int seed, bool night) {
+  uint16_t stL = night ? C565(0x5c, 0x64, 0x88) : C565(0xa8, 0xa2, 0xb8);
+  uint16_t stM = night ? C565(0x40, 0x48, 0x68) : C565(0x84, 0x7e, 0x98);
+  uint16_t stD = night ? C565(0x26, 0x2c, 0x48) : C565(0x5a, 0x56, 0x6c);
+  uint16_t moss = night ? C565(0x1e, 0x3a, 0x34) : C565(0x5c, 0x8c, 0x58);
+  uint16_t earth = night ? C565(0x1c, 0x1a, 0x2a) : C565(0x44, 0x40, 0x52);
+  snowEll(cx, footY + 1, w * 70 / 100, 4, earth);                              // the mound it stands in
+  int x0 = cx - w / 2, top = footY - h;
+  if (kind == 0) {                                                            // rounded headstone
+    gfx->fillRect(x0, top + w / 2, w, h - w / 2, stM);
+    gfx->fillCircle(cx, top + w / 2, w / 2, stM);
+    gfx->fillRect(x0 + w - 3, top + w / 2, 3, h - w / 2, stL);
+    gfx->fillRect(x0, top + w / 2, 3, h - w / 2, stD);
+    gfx->fillRect(cx - 2, top + 4, 4, 5, stD);                                // a small carved cross
+    gfx->fillRect(cx - 1, top + 2, 2, 9, stD);
+  } else if (kind == 1) {                                                     // a cross
+    int bw = w / 3;
+    gfx->fillRect(cx - bw / 2, top, bw, h, stM);
+    gfx->fillRect(x0, top + h / 4, w, bw, stM);
+    gfx->fillRect(cx + bw / 2 - 2, top, 2, h, stL);
+    gfx->fillRect(x0 + w - 2, top + h / 4, 2, bw, stL);
+    gfx->fillRect(cx - bw / 2, top + h / 4 + bw, 2, h - h / 4 - bw, stD);
+  } else if (kind == 2) {                                                     // an obelisk on a plinth
+    int pw = w, ph = h / 5;
+    gfx->fillRect(cx - pw / 2, footY - ph, pw, ph, stM);
+    gfx->fillRect(cx - pw / 2, footY - ph, pw, 2, stL);
+    int bw = w * 60 / 100;
+    gfx->fillRect(cx - bw / 2, top + bw, bw, h - ph - bw, stM);
+    gfx->fillTriangle(cx - bw / 2, top + bw, cx + bw / 2, top + bw, cx, top, stL);
+    gfx->fillRect(cx + bw / 2 - 3, top + bw, 3, h - ph - bw, stL);
+    gfx->fillRect(cx - bw / 2, top + bw, 3, h - ph - bw, stD);
+  } else {                                                                    // a slab, leaning, a corner chipped off
+    for (int y = 0; y < h; y += 2) {
+      int xo = x0 + lean * (h - y) / h;
+      gfx->fillRect(xo, top + y, w, 2, stM);
+      gfx->fillRect(xo + w - 3, top + y, 3, 2, stL);
+      gfx->fillRect(xo, top + y, 3, 2, stD);
+    }
+    gfx->fillTriangle(x0 + w - 5 + lean, top, x0 + w + lean, top, x0 + w + lean, top + 5, earth);
+  }
+  gfx->fillRect(cx - w / 2, footY - 4, w, 4, moss);                           // moss creeping up the foot
+  for (int i = 0; i < 4; i++) gfx->fillRect(cx - w / 2 + volNoise(i, seed) % w, footY - 4 - volNoise(i + 5, seed) % 5, 2, 2, moss);
+  gfx->drawLine(cx - 2, top + h / 2, cx + 3, top + h * 3 / 4, stD);           // a hairline crack
+  if (kind != 1) for (int i = 0; i < 2; i++) gfx->fillRect(cx - w / 4, top + h / 2 + i * 4 - 2, w / 2, 1, stD);   // carved lines
+}
+
+// A will-o'-wisp: a flickering teardrop flame, violet outside, white-hot inside.
+static void graveWisp(int x, int y, uint32_t now, int seed, bool night) {
+  float fl = sinf(now / 90.0f + seed * 2.3f);
+  int r = 3 + (fl > 0.3f);
+  uint16_t out = night ? C565(0x90, 0x70, 0xe8) : C565(0xa8, 0x98, 0xd0);
+  gfx->fillTriangle(x - r, y, x + r, y, x + (int)(fl * 2), y - r * 3, out);
+  gfx->fillCircle(x, y + 1, r, out);
+  gfx->fillTriangle(x - r / 2, y, x + r / 2, y, x + (int)(fl * 1.5f), y - r * 2, C565(0xe4, 0xd8, 0xff));
+  gfx->fillRect(x - 1, y, 2, 2, C565(0xff, 0xff, 0xff));
+}
+
+// Bones for the graveyard floor. Ivory, lit on the upper right, shaded below.
+static void graveBoneCols(bool night, uint16_t c[3]) {
+  if (night) { c[0] = C565(0xb4, 0xbc, 0xd4); c[1] = C565(0x7c, 0x86, 0xa4); c[2] = C565(0x2a, 0x30, 0x4c); }
+  else       { c[0] = C565(0xf0, 0xe8, 0xd0); c[1] = C565(0xbc, 0xb0, 0x94); c[2] = C565(0x60, 0x56, 0x4a); }
+}
+
+// A long bone (femur): a shaded shaft with a lit edge and a knobbed pair at each end.
+static void graveFemur(int x0, int y0, int x1, int y1, bool night) {
+  uint16_t c[3]; graveBoneCols(night, c);
+  gfx->drawLine(x0, y0 + 1, x1, y1 + 1, c[1]);
+  gfx->drawLine(x0, y0, x1, y1, c[0]);
+  int dx = x1 - x0, dy = y1 - y0, len = (int)sqrtf((float)(dx * dx + dy * dy));
+  if (len < 1) return;
+  int px = -dy * 2 / len, py = dx * 2 / len;                                 // perpendicular, 2 px
+  for (int e = 0; e < 2; e++) {
+    int ex = e ? x1 : x0, ey = e ? y1 : y0;
+    gfx->fillCircle(ex + px, ey + py, 2, c[0]);
+    gfx->fillCircle(ex - px, ey - py, 2, c[1]);
+  }
+}
+
+// A skull, optionally sunk into the ground up to the jaw.
+static void graveSkull(int x, int y, int r, bool buried, bool night, uint16_t earth) {
+  uint16_t c[3]; graveBoneCols(night, c);
+  gfx->fillCircle(x, y, r, c[0]);
+  gfx->fillCircle(x - r / 4, y + r / 4, r * 3 / 4, c[1]);                    // shaded lower left
+  gfx->fillCircle(x + r / 5, y - r / 5, r * 3 / 4, c[0]);                    // lit upper right
+  gfx->fillRect(x - r * 2 / 3, y + r / 2, r * 4 / 3, r / 2 + 1, c[1]);       // jaw
+  for (int t = 0; t < 4; t++) gfx->fillRect(x - r / 2 + t * (r / 3 + 1), y + r / 2 + 1, 1, r / 3, c[2]);   // teeth
+  gfx->fillRect(x - r / 2 - 1, y - r / 6, r * 2 / 5 + 2, r / 2 + 1, c[2]);   // eye sockets
+  gfx->fillRect(x + r / 10, y - r / 6, r * 2 / 5 + 2, r / 2 + 1, c[2]);
+  gfx->fillTriangle(x - 1, y + r / 3, x + 2, y + r / 3, x, y + r / 6, c[2]);   // nose
+  if (buried) snowEll(x, y + r, r + 3, r / 2 + 1, earth);
+}
+
+// Half a ribcage: a short spine with curved ribs both sides, shrinking toward the bottom.
+static void graveRibs(int x, int y, bool night) {
+  uint16_t c[3]; graveBoneCols(night, c);
+  gfx->drawLine(x, y, x, y + 20, c[1]);
+  gfx->drawLine(x + 1, y, x + 1, y + 20, c[0]);
+  for (int k = 0; k < 5; k++)
+    for (int side = -1; side <= 1; side += 2) {
+      int ry = y + 2 + k * 4, w = 11 - k;
+      gfx->drawLine(x, ry, x + side * w, ry + 3, side > 0 ? c[0] : c[1]);
+      gfx->drawLine(x + side * w, ry + 3, x + side * (w - 2), ry + 8, side > 0 ? c[0] : c[1]);
+    }
+}
+
+// A row of vertebrae curving across the ground.
+static void graveSpine(int x, int y, bool night) {
+  uint16_t c[3]; graveBoneCols(night, c);
+  for (int i = 0; i < 7; i++) {
+    int vx = x + i * 5, vy = y + (int)(sinf(i * 0.7f) * 3.0f);
+    gfx->fillRect(vx, vy, 4, 3, c[i & 1 ? 1 : 0]);
+    gfx->fillRect(vx + 1, vy - 2, 2, 2, c[1]);                              // the spinous process
+  }
+}
+
+static PmdMon gGhostMon;
+static int16_t gGhostDex = 0;
+
+static void drawGraveyard(uint32_t now, bool night, int h, uint16_t top, uint16_t bot, uint16_t soil) {
+  auto skyAt = [&](int y) { return lerp565(top, bot, y < 0 ? 0 : y, HORIZON); };
+  const int B = HORIZON + 2;
+  uint16_t hz = skyAt(HORIZON - 30);
+  uint16_t dark = night ? C565(0x0c, 0x0a, 0x1c) : C565(0x30, 0x2a, 0x40);
+
+  // bare gnarled trees along the horizon, hazed toward the sky
+  uint16_t farT = lerp565(dark, hz, 1, 3);
+  for (int i = 0; i < 9; i++) {
+    int x = 14 + i * 56 + volNoise(i, 81) % 20, ht = 34 + volNoise(i, 82) % 30;
+    gfx->drawLine(x, B, x + volNoise(i, 83) % 5 - 2, B - ht, farT);
+    gfx->drawLine(x + 1, B, x + 1 + volNoise(i, 83) % 5 - 2, B - ht, farT);
+    for (int b = 0; b < 4; b++) {                                              // crooked branches, alternating sides
+      int by = B - ht * (30 + b * 18) / 100, dir = (b & 1) ? 1 : -1, len = 8 + volNoise(i + b, 84) % 10;
+      gfx->drawLine(x, by, x + dir * len, by - len / 2 - 3, farT);
+      gfx->drawLine(x + dir * len, by - len / 2 - 3, x + dir * (len + 5), by - len - 4, farT);
+    }
+  }
+
+  // the haunted house on a far hill: a main block, a roof with a gable, a tower, lit windows
+  snowEll(280, B, 100, 12, lerp565(dark, hz, 1, 4));
+  uint16_t hs = lerp565(dark, hz, 1, 5);
+  gfx->fillRect(246, B - 40, 70, 40, hs);                                      // main block
+  gfx->fillTriangle(240, B - 40, 322, B - 40, 281, B - 62, hs);               // roof
+  gfx->fillRect(252, B - 66, 16, 26, hs);                                      // tower
+  gfx->fillTriangle(249, B - 66, 271, B - 66, 260, B - 88, hs);               // its spire
+  gfx->fillRect(300, B - 58, 6, 14, hs);                                       // chimney
+  uint16_t win = night ? C565(0xff, 0xd0, 0x70) : C565(0xd8, 0xc0, 0x80);
+  static const int16_t WN[5][2] = { { 256, 56 }, { 262, 28 }, { 274, 24 }, { 290, 24 }, { 303, 24 } };   // x, height above the base
+  for (int i = 0; i < 5; i++) {
+    int flick = volNoise((int)(now / 160) + i * 7, 85);                         // some windows flicker out for a beat
+    if (flick < (night ? 26 : 90)) continue;
+    gfx->fillRect(WN[i][0], B - WN[i][1], 5, 7, i == 1 ? C565(0xa8, 0x80, 0xff) : win);
+  }
+
+  // low fog behind the fence
+  uint16_t fog = lerp565(soil, C565(0xd0, 0xc8, 0xf0), 1, night ? 7 : 4);
+  for (int k = 0; k < 3; k++) {
+    int x = (int)((k * 220 + now / (60 + k * 17)) % 700) - 170;
+    snowEll(x, B + 6 + k * 6, 110 + k * 10, 5, fog);
+  }
+
+  // iron fence along the back: pointed bars between two rails, with taller posts
+  uint16_t fc = night ? C565(0x10, 0x10, 0x20) : C565(0x2e, 0x2a, 0x3c);
+  uint16_t fl = night ? C565(0x34, 0x3c, 0x60) : C565(0x6c, 0x66, 0x80);
+  gfx->fillRect(0, B + 6, 466, 2, fc);
+  gfx->fillRect(0, B + 16, 466, 2, fc);
+  for (int x = 4; x < 466; x += 9) {
+    gfx->fillRect(x, B, 2, 22, fc);
+    gfx->fillTriangle(x - 1, B, x + 3, B, x + 1, B - 5, fc);
+    gfx->fillRect(x + 1, B + 1, 1, 18, fl);                                    // lit edge
+  }
+  for (int x = 40; x < 466; x += 117) {                                          // taller posts with ball tops
+    gfx->fillRect(x, B - 8, 5, 30, fc);
+    gfx->fillCircle(x + 2, B - 10, 4, fc);
+    gfx->fillRect(x + 3, B - 6, 2, 26, fl);
+  }
+
+  // gravestones: three rows back to front, nothing in the poop corner
+  graveStone(196, B + 20, 0, 22, 28, 0, 1, night);
+  graveStone(262, B + 18, 1, 26, 34, 0, 2, night);
+  graveStone(330, B + 20, 2, 22, 40, 0, 3, night);
+  graveStone(404, B + 22, 3, 24, 28, 4, 4, night);
+  graveStone(300, B + 40, 3, 26, 28, -5, 5, night);
+  graveStone(372, B + 46, 0, 30, 36, 0, 6, night);
+  graveStone(442, B + 40, 1, 26, 32, 0, 7, night);
+
+  // bones scattered about the ground, clear of the poop corner
+  {
+    uint16_t earth = night ? C565(0x1c, 0x1a, 0x2a) : C565(0x44, 0x40, 0x52);
+    graveSpine(178, 274, night);
+    graveFemur(288, 268, 312, 261, night);
+    graveSkull(356, 262, 6, true, night, earth);
+    graveSkull(330, 284, 8, false, night, earth);
+    graveFemur(380, 288, 406, 280, night);
+    graveFemur(388, 280, 402, 292, night);                                  // the two cross in the middle
+    graveRibs(422, 262, night);
+  }
+
+  // fog drifting in front of the stones
+  for (int k = 0; k < 3; k++) {
+    int x = (int)((k * 240 + 200 + now / (45 + k * 13)) % 720) - 180;
+    snowEll(x, 286 + k * 8, 130 + k * 12, 6, lerp565(soil, C565(0xd0, 0xc8, 0xf0), 1, night ? 6 : 4));
+  }
+
+  // wisps drifting among the graves, more of them at night
+  for (int i = 0; i < (night ? 5 : 2); i++) {
+    int x = 190 + (int)(sinf(now / 2100.0f + i * 1.9f) * 80.0f) + i * 36;
+    int y = 262 - (int)((sinf(now / 1300.0f + i * 2.4f) + 1.0f) * 12.0f) - i * 4;
+    if (x < 170 && y > 250) continue;
+    graveWisp(x, y, now, i, night);
+  }
+
+  // the small ghost: GASTLY by day, HAUNTER at night, drifting about the upper air
+  int16_t want = night ? 93 : 92;
+  if (gGhostDex != want) { gGhostMon.unload(); gGhostDex = want; gGhostMon.load(want, false); }
+  if (gGhostMon.loaded) {
+    float ph = now / 7400.0f;
+    int x = 180 + (int)(110.0f * sinf(ph)), y = 176 + (int)(12.0f * sinf(now / 1900.0f));
+    uint8_t act = cosf(ph) > 0 ? PMD_WALKR : PMD_WALKL;
+    if (!gGhostMon.has(act)) act = PMD_IDLE;
+    drawPmdActZ(gGhostMon, act, x, y, now, true, false, 1, night ? 80 : 100, 220);
+  }
+
+  // two bats crossing the night sky
+  if (night)
+    for (int g = 0; g < 2; g++) {
+      int x = 520 - (int)(now / 22 + g * 300) % 640, y = 96 + g * 30 + (int)(sinf(now / 500.0f + g * 2.0f) * 8.0f);
+      int up = ((now / 110 + g) & 1) ? -5 : 3;
+      uint16_t bc = C565(0x0a, 0x08, 0x14);
+      gfx->fillRect(x - 1, y - 1, 3, 3, bc);
+      gfx->drawLine(x - 8, y + up, x - 1, y, bc);
+      gfx->drawLine(x + 1, y, x + 8, y + up, bc);
+      gfx->drawLine(x - 8, y + up, x - 5, y + up + 3, bc);
+      gfx->drawLine(x + 8, y + up, x + 5, y + up + 3, bc);
+    }
 }
 
 void drawScene(uint8_t biome, uint32_t now, bool night) {
   int h = sceneHour();
   uint16_t top, bot;
   if (night)            { top = C565(0x0c, 0x12, 0x24); bot = C565(0x1e, 0x26, 0x46); }
-  else if (h < 8)       { top = C565(0xd1, 0x6a, 0x86); bot = C565(0xf3, 0xb8, 0x7c); }  // amanecer
-  else if (h < 18)      { top = C565(0x8f, 0xc8, 0xea); bot = C565(0xdc, 0xee, 0xe6); }  // dia
-  else                  { top = C565(0xc7, 0x5a, 0x4a); bot = C565(0xf0, 0xae, 0x64); }  // atardecer
+  else if (h < 8)       { top = C565(0xd1, 0x6a, 0x86); bot = C565(0xf3, 0xb8, 0x7c); }
+  else if (h < 18)      { top = C565(0x8f, 0xc8, 0xea); bot = C565(0xdc, 0xee, 0xe6); }
+  else                  { top = C565(0xc7, 0x5a, 0x4a); bot = C565(0xf0, 0xae, 0x64); }
 
-  // cielo en bandas
   for (int y = 0; y < HORIZON; y += 8)
     gfx->fillRect(0, y, 466, 8, lerp565(top, bot, y, HORIZON));
 
-  // sol o luna
   if (night) {
-    gfx->fillCircle(360, 78, 24, C565(0xe8, 0xee, 0xf5));
-    gfx->fillCircle(370, 72, 22, lerp565(top, bot, 78, HORIZON));  // creciente
-    for (auto &st : STARS) gfx->fillRect(st[0], st[1], 4, 4, UI_WHITE);
+    const int moonY = 122;
+    drawStars(now, top, bot, HORIZON - 10);
+    drawMoon(360, moonY, lerp565(top, bot, moonY, HORIZON));
   } else if (h < 18) {
-    gfx->fillCircle(360, 84, 26, h < 8 ? C565(0xff, 0xd9, 0x8a) : C565(0xff, 0xe7, 0x9f));
-    drawClouds(now, C565(0xff, 0xff, 0xff));
+    drawSun(360, 84, 24, h < 8 ? C565(0xff, 0xc8, 0x6a) : C565(0xff, 0xd9, 0x5c),
+            lerp565(top, bot, 84, HORIZON), now);
+    drawClouds(now, biome == BIOME_VOLCANO ? C565(0xc8, 0x9c, 0x90) : C565(0xff, 0xff, 0xff),
+               lerp565(top, bot, 150, HORIZON));
   } else {
-    gfx->fillCircle(233, HORIZON - 6, 34, C565(0xff, 0xf1, 0xc8));  // sol poniente
+    drawSun(233, biome == BIOME_BEACH ? SEA_TOP : HORIZON - 6, 32, C565(0xff, 0xe6, 0xa0),
+            lerp565(top, bot, biome == BIOME_BEACH ? SEA_TOP : HORIZON - 6, HORIZON), now);
   }
 
-  // mar de la playa: una franja de agua sobre la arena
-  uint16_t soil = BIOME_SOIL[biome < 6 ? biome : 0];
+  uint16_t soil = BIOME_SOIL[biome < BIOME_COUNT ? biome : 0];
   if (night) soil = lerp565(soil, C565(0x16, 0x1c, 0x30), 9, 16);
-  if (biome == 1) {
-    uint16_t sea = night ? C565(0x1c, 0x34, 0x52) : C565(0x4f, 0x96, 0xc4);
-    gfx->fillRect(0, HORIZON - 26, 466, 26, sea);
-    for (int i = 0; i < 3; i++) {
-      int wy = HORIZON - 22 + i * 7;
-      uint16_t fc = night ? C565(0x3a, 0x58, 0x78) : C565(0xbf, 0xe6, 0xf5);
-      gfx->fillRect(60 + ((now / 60 + i * 30) % 60), wy, 26, 2, fc);
-      gfx->fillRect(300 - ((now / 60 + i * 20) % 60), wy, 26, 2, fc);
-    }
+  if (biome != BIOME_BEACH && (gBeachMon.loaded || gBeachTried || gBeachBird.loaded || gBeachBirdTried)) {
+    gBeachMon.unload(); gBeachTried = false;
+    gBeachBird.unload(); gBeachBirdTried = false;
+  }
+  if (biome != BIOME_GRAVEYARD && (gGhostMon.loaded || gGhostDex)) { gGhostMon.unload(); gGhostDex = 0; }
+  if (biome != BIOME_MOUNTAIN && (gMtnFly.loaded || gMtnWalk.loaded || gMtnDay != -1)) {
+    gMtnFly.unload(); gMtnWalk.unload(); gMtnDay = -1;
+  }
+  if (biome != BIOME_MEADOW && (gMeadowFly.loaded || gMeadowWalk.loaded || gMeadowFlyDex || gMeadowWalkTried)) {
+    gMeadowFly.unload(); gMeadowWalk.unload(); gMeadowFlyDex = 0; gMeadowWalkTried = false;
+  }
+  if (biome != BIOME_SNOW && (gSnowMon.loaded || gSnowMonDex)) { gSnowMon.unload(); gSnowMonDex = 0; }
+  if (biome != BIOME_VOLCANO && (gVolcanoMon.loaded || gVolcanoTried)) { gVolcanoMon.unload(); gVolcanoTried = false; }
+  if (biome != BIOME_FOREST && (gForestBee.loaded || gForestBug.loaded || gForestBat.loaded || gForestTried || gForestBatTried)) {
+    gForestBee.unload(); gForestBug.unload(); gForestBat.unload();
+    gForestTried = gForestBatTried = false;
+  }
+  if (biome == BIOME_BEACH) {
+    drawBeach(now, night, h, top, bot, soil);
+    return;
   }
 
-  // suelo
   gfx->fillRect(0, HORIZON, 466, 466 - HORIZON, soil);
   uint16_t hill = lerp565(soil, night ? C565(0x0c, 0x12, 0x24) : C565(0xff, 0xff, 0xff), 3, 16);
   gfx->fillRoundRect(-60, HORIZON - 14, 586, 60, 30, hill);
 
-  // detalles del bioma
   uint16_t dk = lerp565(soil, C565(0x10, 0x18, 0x20), night ? 11 : 7, 16);
-  if (biome == 2) {  // bosque: coniferas en silueta
-    for (int tx : { 60, 150, 360, 416 }) {
-      gfx->fillTriangle(tx, HORIZON - 46, tx - 16, HORIZON, tx + 16, HORIZON, dk);
-      gfx->fillTriangle(tx, HORIZON - 60, tx - 12, HORIZON - 28, tx + 12, HORIZON - 28, dk);
-    }
-  } else if (biome == 3) {  // volcan: rocas y brasas
-    gfx->fillTriangle(70, HORIZON, 40, HORIZON + 30, 100, HORIZON + 30, dk);
-    gfx->fillTriangle(400, HORIZON + 4, 372, HORIZON + 30, 430, HORIZON + 30, dk);
-    if (!night)
-      for (int e = 0; e < 4; e++)
-        gfx->fillRect(120 + e * 70, HORIZON + 8 + (e % 2) * 6, 4, 4, C565(0xff, 0x9b, 0x3a));
-  } else if (biome == 4) {  // montana: cumbres al fondo
-    gfx->fillTriangle(140, HORIZON - 50, 60, HORIZON, 220, HORIZON, dk);
-    gfx->fillTriangle(330, HORIZON - 38, 250, HORIZON, 410, HORIZON, dk);
-  } else if (biome == 5 && !night) {  // nieve: copos cayendo
-    for (int f = 0; f < 10; f++) {
-      int fx = (f * 53 + now / 40) % 466;
-      int fy = (f * 90 + now / 18) % HORIZON;
-      gfx->fillRect(fx, fy, 3, 3, UI_WHITE);
-    }
-  } else if (biome == 0) {  // pradera: matas de hierba
-    for (int gx : { 80, 175, 300, 395 })
-      for (int b = -1; b <= 1; b++)
-        gfx->fillRect(gx + b * 5, HORIZON + 6, 2, 8 + (b == 0 ? 4 : 0), dk);
+  (void)dk;
+  if (biome == BIOME_FOREST) {
+    drawForest(now, night, h, top, bot, soil);
+  } else if (biome == BIOME_VOLCANO) {
+    drawVolcano(now, night, top, bot);
+  } else if (biome == BIOME_MOUNTAIN) {
+    drawMountain(now, night, h, top, bot, soil);
+  } else if (biome == BIOME_SNOW) {
+    drawSnow(now, night, h, top, bot, soil);
+  } else if (biome == BIOME_GRAVEYARD) {
+    drawGraveyard(now, night, h, top, bot, soil);
+  } else if (biome == BIOME_MEADOW) {
+    drawMeadow(now, night, h, top, bot, soil);
   }
 }
 
@@ -3429,7 +4882,7 @@ void exploreStepRegion(int8_t step) {
 void renderExplore() {
   int h = sceneHour();
   gNight = pet.sleeping || h < 6 || h >= 20;
-  drawScene(pet.isEgg() ? 0 : DEX_TBL[pet.speciesId].biome, millis(), gNight);
+  drawScene(sceneBiome(), millis(), gNight);
 
   gfx->fillRoundRect(78, 28, 310, 54, 14, UI_BG_DAY);
   gfx->drawRoundRect(78, 28, 310, 54, 14, UI_INK);
@@ -3643,7 +5096,7 @@ void render() {
   gNight = pet.sleeping || h < 6 || h >= 20;
   // drawScene cubre los 466x466 completos: sin fillScreen(NEGRO) previo para
   // que un flush DMA solapado nunca capture negro a medias (anti-parpadeo)
-  drawScene(pet.isEgg() ? 0 : DEX_TBL[pet.speciesId].biome, millis(), gNight);
+  drawScene(sceneBiome(), millis(), gNight);
 
   if (pet.ceremony) {
     const DexEntry &d = DEX_TBL[pet.speciesId];
@@ -4003,9 +5456,9 @@ void drawGameScene() {
   for (int y = 0; y < hor; y += 8)
     gfx->fillRect(0, y, 466, 8, lerp565(top, bot, y, hor));
   if (night)
-    for (auto &st : STARS) gfx->fillRect(st[0], st[1], 4, 4, UI_WHITE);
-  uint8_t bio = pet.isEgg() ? 0 : DEX_TBL[pet.speciesId].biome;
-  uint16_t soil = BIOME_SOIL[bio < 6 ? bio : 0];
+    drawStars(millis(), top, bot, 225);
+  uint8_t bio = sceneBiome();
+  uint16_t soil = BIOME_SOIL[bio < BIOME_COUNT ? bio : 0];
   if (night) soil = lerp565(soil, C565(0x16, 0x1c, 0x30), 9, 16);
   gfx->fillRect(0, hor, 466, 466 - hor, soil);
 }
@@ -4984,8 +6437,8 @@ static void drawBack(const BackScene &b, int y0) {
 static void drawBattleBack() {
   int16_t dex = btlFoe.dex;
   if (dex < 1 || dex > DEX_COUNT) { gfx->fillCircle(CX, CY, 231, UI_BG_DAY); return; }
-  uint8_t bi = DEX_TBL[dex].biome;
-  if (bi >= BACK_BIOMES) bi = 0;
+  uint8_t bi = speciesBiome(dex);
+  if (bi >= BACK_BIOMES) bi = (bi == BIOME_GRAVEYARD) ? BIOME_FOREST : BIOME_MEADOW;
   bool night = sceneHour() < 6 || sceneHour() >= 20;
   drawBack(BACKS[bi][night ? 1 : 0], 30);
 }
@@ -9045,7 +10498,8 @@ uint8_t pmdFrameAt(const PmdAct &a, uint32_t t, bool loop) {
 
 // dibuja una accion anclada por la base (centro-x, suelo) y devuelve su escala
 // dibuja una accion de un PmdMon concreto (m); drawPmdAct usa el global pmd
-void drawPmdActM(PmdMon &m, uint8_t actId, int cx, int groundY, uint32_t t, bool loop, bool sil, uint8_t maxS) {
+void drawPmdActZ(PmdMon &m, uint8_t actId, int cx, int groundY, uint32_t t, bool loop, bool sil,
+                 uint8_t maxS, uint16_t zoom100, uint16_t maxPx) {
   const PmdAct &a = m.acts[actId];
   if (!a.frames) return;
   uint8_t sBase = m.acts[PMD_IDLE].h ? 170 / m.acts[PMD_IDLE].h : 5;
@@ -9053,19 +10507,24 @@ void drawPmdActM(PmdMon &m, uint8_t actId, int cx, int groundY, uint32_t t, bool
   if (sBase > maxS) sBase = maxS;
   uint8_t s = sBase;
   while (s > 2 && a.h * s > 250) s--;  // acciones con frame grande (ataque)
+  uint32_t sc = (uint32_t)s * zoom100;
+  if (zoom100 > 100 && a.h * sc > (uint32_t)maxPx * 100) sc = (uint32_t)maxPx * 100 / a.h;
   uint8_t fi = pmdFrameAt(a, t, loop);
   const uint8_t *fr = a.data + (uint32_t)fi * a.w * a.h;
-  // anclar por los pies (a.base), no por el alto del lienzo: asi las acciones
-  // con padding distinto (Hurt, Eat...) quedan todas a la misma altura de suelo
-  int x0 = cx - a.w * s / 2, y0 = groundY - (a.base ? a.base : a.h) * s;
+  int x0 = cx - (int)(a.w * sc / 200), y0 = groundY - (int)((a.base ? a.base : a.h) * sc / 100);
   for (int r = 0; r < a.h; r++) {
     const uint8_t *row = fr + r * a.w;
+    int ya = y0 + (int)(r * sc / 100), yb = y0 + (int)((r + 1) * sc / 100);
     for (int c = 0; c < a.w; c++) {
       uint8_t idx = row[c];
       if (idx == 0xFF) continue;
-      gfx->fillRect(x0 + c * s, y0 + r * s, s, s, sil ? INK_K : m.pal[idx]);
+      int xa = x0 + (int)(c * sc / 100), xb = x0 + (int)((c + 1) * sc / 100);
+      gfx->fillRect(xa, ya, xb - xa, yb - ya, sil ? INK_K : m.pal[idx]);
     }
   }
+}
+void drawPmdActM(PmdMon &m, uint8_t actId, int cx, int groundY, uint32_t t, bool loop, bool sil, uint8_t maxS) {
+  drawPmdActZ(m, actId, cx, groundY, t, loop, sil, maxS, 100, 0);
 }
 void drawPmdAct(uint8_t actId, int cx, int groundY, uint32_t t, bool loop, bool sil, uint8_t maxS) {
   drawPmdActM(pmd, actId, cx, groundY, t, loop, sil, maxS);

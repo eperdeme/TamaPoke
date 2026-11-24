@@ -416,6 +416,7 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "--lvl") && i + 1 < argc) shotLvl = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--iv") && i + 1 < argc) shotIv = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--dex") && i + 1 < argc) shotDex = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--biome") && i + 1 < argc) { extern int8_t gBiomeOverride; gBiomeOverride = (int8_t)atoi(argv[++i]); }
     else if (!strcmp(argv[i], "--sprites") && i + 1 < argc) emuSetSpriteDir(argv[++i]);
     else if (!strcmp(argv[i], "--wipe")) { remove(save); }
   }
