@@ -9,6 +9,7 @@
   ],
   "host": {
     "battery_test": "Pure battery-curve and power-policy logic",
+    "blit_test": "Pure horizontal-run sprite blitting equivalence (blit.h)",
     "anim_test": "Synthetic framebuffer, PMD animation and UI-loop controls",
     "audio_test": "Resumable audio task with host queue and I2S doubles; board codec not modeled",
     "box_test": "Injected partial/refused NVS writes for atomic party/box tests",
