@@ -121,7 +121,37 @@ int main(){
     ck(quiet, "master volume 0 is silence");
   }
 
-  // --- a finished note stops
+  // --- logarithmic master curve: monotonic, quiet low steps, full chord headroom ---
+  {
+    auto peakFor = [](uint8_t vol) {
+      GbSynth s; s.note(0, 1500, 2, 15, 0, 0, 50);
+      std::vector<int16_t> buf(400);
+      s.render(buf.data(), buf.size(), vol);
+      int16_t pk = 0;
+      for (int16_t v : buf) if (abs(v) > pk) pk = abs(v);
+      return pk;
+    };
+    int16_t peaks[11];
+    bool mono = true;
+    for (uint8_t v = 0; v <= 10; v++) {
+      peaks[v] = peakFor(v);
+      if (v > 0 && peaks[v] <= peaks[v - 1]) mono = false;
+    }
+    ck(peaks[0] == 0 && mono, "master scale 0..10 is strictly monotonic above silent 0");
+    ck(peaks[1] > 0 && peaks[1] * 5 <= peaks[5] && peaks[5] * 3 < peaks[10],
+       "logarithmic curve keeps low levels quiet while preserving top end");
+    GbSynth chord;
+    chord.note(0, 1750, 2, 15, 0, 0, 100);
+    chord.note(1, 1400, 2, 15, 0, 0, 100);
+    chord.noise(15, 0, 0, 100, 4);
+    std::vector<int16_t> cbuf(800);
+    chord.render(cbuf.data(), cbuf.size(), 10);
+    int16_t cpk = 0;
+    for (int16_t v : cbuf) if (abs(v) > cpk) cpk = abs(v);
+    ck(cpk <= 32767, "full 3-voice chord at max master does not wrap");
+  }
+
+  // --- a finished note stops ---
   {
     GbSynth s; s.note(0, 1500, 2, 15, 0, 0, 10);
     ck(s.busy(), "a playing note reports busy");

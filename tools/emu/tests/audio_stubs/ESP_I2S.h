@@ -12,8 +12,13 @@ constexpr int I2S_DATA_BIT_WIDTH_16BIT = 16;
 constexpr int I2S_SLOT_MODE_STEREO = 2;
 constexpr int I2S_STD_SLOT_BOTH = 3;
 
+inline int g_emuPaVal = 0;
+inline int g_emuPaHighs = 0;
 inline uint32_t pdMS_TO_TICKS(uint32_t ms) { return ms; }
-inline void digitalWrite(int, int) {}
+inline void digitalWrite(int, int val) {
+  g_emuPaVal = val;
+  if (val == HIGH) g_emuPaHighs++;
+}
 QueueHandle_t xQueueCreate(size_t count, size_t itemSize);
 int xQueueSend(QueueHandle_t queue, const void *item, uint32_t wait);
 int xQueueReceive(QueueHandle_t queue, void *item, uint32_t wait);
