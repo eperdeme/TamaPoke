@@ -41,6 +41,7 @@
 #include "uifont.h"
 #include "audio.h"
 #include "power.h"
+#include "blit.h"
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
@@ -5551,12 +5552,11 @@ void renderGame() {
     uint16_t fi = (millis() / fm) % mon.frames;
     const uint8_t *fr = mon.data + (uint32_t)fi * mon.w * mon.h;
     int px = (int)gamePetX - w / 2, py = 394 - h;
-    for (int r = 0; r < mon.h; r++)
-      for (int c = 0; c < mon.w; c++) {
-        uint8_t idx = fr[r * mon.w + c];
-        if (idx == 0xFF) continue;
-        gfx->fillRect(px + c * s, py + r * s, s, s, mon.pal[idx]);
-      }
+    for (int r = 0; r < mon.h; r++) {
+      const uint8_t *row = fr + r * mon.w;
+      forRuns(mon.w, [&](int c) { return indexedKey(row[c], false); },
+              [&](int c0, int len, int k) { gfx->fillRect(px + c0 * s, py + r * s, len * s, s, mon.pal[k]); });
+    }
   }
 
   // anillo de impacto que se expande y desvanece (feedback suave del golpe)
@@ -9956,12 +9956,12 @@ void drawThumb(const uint8_t *b, int x, int y, int s, bool sil) {
   int ox = x + (GAL_CELL - w * s) / 2;
   int oy = y + (GAL_CELL - h * s) / 2;
   for (int r = 0; r < h; r++) {
-    for (int c = 0; c < w; c++) {
-      uint8_t idx = d[r * w + c];
-      if (idx == 0xFF) continue;
-      uint16_t col = sil ? INK_K : (uint16_t)(pal[idx * 2] | (pal[idx * 2 + 1] << 8));
-      gfx->fillRect(ox + c * s, oy + r * s, s, s, col);
-    }
+    const uint8_t *row = d + r * w;
+    forRuns(w, [&](int c) { return indexedKey(row[c], sil); },
+            [&](int c0, int len, int k) {
+              uint16_t col = sil ? INK_K : (uint16_t)(pal[k * 2] | (pal[k * 2 + 1] << 8));
+              gfx->fillRect(ox + c0 * s, oy + r * s, len * s, s, col);
+            });
   }
 }
 
@@ -10610,12 +10610,11 @@ void drawPmdActZ(PmdMon &m, uint8_t actId, int cx, int groundY, uint32_t t, bool
   for (int r = 0; r < a.h; r++) {
     const uint8_t *row = fr + r * a.w;
     int ya = y0 + (int)(r * sc / 100), yb = y0 + (int)((r + 1) * sc / 100);
-    for (int c = 0; c < a.w; c++) {
-      uint8_t idx = row[c];
-      if (idx == 0xFF) continue;
-      int xa = x0 + (int)(c * sc / 100), xb = x0 + (int)((c + 1) * sc / 100);
-      gfx->fillRect(xa, ya, xb - xa, yb - ya, sil ? INK_K : m.pal[idx]);
-    }
+    forRuns(a.w, [&](int c) { return indexedKey(row[c], sil); },
+            [&](int c0, int len, int k) {
+              int xa = x0 + (int)(c0 * sc / 100), xb = x0 + (int)((c0 + len) * sc / 100);
+              gfx->fillRect(xa, ya, xb - xa, yb - ya, sil ? INK_K : m.pal[k]);
+            });
   }
 }
 void drawPmdActM(PmdMon &m, uint8_t actId, int cx, int groundY, uint32_t t, bool loop, bool sil, uint8_t maxS) {
@@ -10718,11 +10717,8 @@ void drawPetSD() {
   const uint8_t *fr = mon.data + (uint32_t)fi * mon.w * mon.h;
   for (int r = 0; r < mon.h; r++) {
     const uint8_t *row = fr + r * mon.w;
-    for (int c = 0; c < mon.w; c++) {
-      uint8_t idx = row[c];
-      if (idx == 0xFF) continue;
-      gfx->fillRect(x + c * s, y + r * s, s, s, sil ? INK_K : mon.pal[idx]);
-    }
+    forRuns(mon.w, [&](int c) { return indexedKey(row[c], sil); },
+            [&](int c0, int len, int k) { gfx->fillRect(x + c0 * s, y + r * s, len * s, s, sil ? INK_K : mon.pal[k]); });
   }
 
   // emotes en vez de expresiones (los sprites importados no tienen anclas)
@@ -10914,20 +10910,17 @@ const char *statusMsg() {
 // An 8bpp indexed avatar, same shape as the badge art: 0xFF is transparent.
 void drawAvatar(uint8_t which, int x, int y, int s) {
   const AvatarArt &a = AVATARS[which % AVATAR_COUNT];
-  for (int r = 0; r < AVATAR_PX; r++)
-    for (int c = 0; c < AVATAR_PX; c++) {
-      uint8_t v = a.idx[r * AVATAR_PX + c];
-      if (v == 0xFF) continue;
-      gfx->fillRect(x + c * s, y + r * s, s, s, a.pal[v]);
-    }
+  for (int r = 0; r < AVATAR_PX; r++) {
+    const uint8_t *row = a.idx + r * AVATAR_PX;
+    forRuns(AVATAR_PX, [&](int c) { return indexedKey(row[c], false); },
+            [&](int c0, int len, int k) { gfx->fillRect(x + c0 * s, y + r * s, len * s, s, a.pal[k]); });
+  }
 }
 
 void drawMap(const char *const *map, int n, int x, int y, int s, bool silhouette) {
   for (int r = 0; r < n; r++) {
-    for (int c = 0; c < n; c++) {
-      char ch = map[r][c];
-      if (ch == '.') continue;
-      gfx->fillRect(x + c * s, y + r * s, s, s, silhouette ? INK_K : spriteColor(ch));
-    }
+    const char *row = map[r];
+    forRuns(n, [&](int c) { return charKey(row[c], silhouette); },
+            [&](int c0, int len, int k) { gfx->fillRect(x + c0 * s, y + r * s, len * s, s, silhouette ? INK_K : spriteColor((char)k)); });
   }
 }
