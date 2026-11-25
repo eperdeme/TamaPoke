@@ -234,6 +234,7 @@ async function loadEditions() {
     description: currentConfig.description || 'The build currently hosted by this GitHub Pages site.',
     notes: currentConfig.notes || 'This build has not been published as an immutable GitHub Release yet.',
     releaseUrl: `https://github.com/${config.repository || 'eperdeme/TamaPoke'}/releases`,
+    prerelease: true,
   };
 
   let released = [];
@@ -255,7 +256,9 @@ async function loadEditions() {
       current.description = 'GitHub Releases could not be reached, so older versions are not listed.';
     }
   }
-  editions = hasCurrentRelease ? released : [...released, current];
+  editions = hasCurrentRelease ? released : (
+    released.length ? [released[0], current, ...released.slice(1)] : [current]
+  );
   const recommended = editions.find((edition) => !edition.prerelease) || editions[0] || current;
 
   const host = byId('editions');
