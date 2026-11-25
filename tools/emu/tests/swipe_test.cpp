@@ -544,6 +544,72 @@ int main(){
     jukeOpen = false;
   }
 
+  // Every multi-page picker and card renders the rim scrollbar (at 3 o'clock,
+  // x = CX + RIM_BAR_R = 455, y = CY = 233) rather than legacy horizontal dots.
+  {
+    extern Arduino_Canvas *gfx;
+    extern bool evoPickOpen;
+    extern uint8_t evoPickPage;
+    auto checkRimChromeOnly = [&](const char *label, int dotY) {
+      render();
+      const uint16_t *fb = gfx->buffer();
+      const uint16_t bg = fb[18 * 466 + 233];
+      const uint16_t rimPx = fb[233 * 466 + 455];
+      if (uiRimPages() < 2) {
+        printf("FAIL  scrollbar  %s only has %u page(s)\n", label, uiRimPages());
+        bad++;
+        return;
+      }
+      if (rimPx == bg) {
+        printf("FAIL  scrollbar  %s did not draw the rim scrollbar at (455, 233)\n", label);
+        bad++;
+      } else {
+        printf("PASS  scrollbar  %s draws the rim scrollbar\n", label);
+      }
+      bool dotsDrawn = false;
+      for (int x = 180; x <= 286; x++) {
+        if (fb[dotY * 466 + x] != bg) { dotsDrawn = true; break; }
+      }
+      if (dotsDrawn) {
+        printf("FAIL  scrollbar  %s still draws legacy page dots at y=%d\n", label, dotY);
+        bad++;
+      } else {
+        printf("PASS  scrollbar  %s has no legacy page dots at y=%d\n", label, dotY);
+      }
+    };
+
+    clearAll();
+    evoPickOpen = false;
+    pet.dbgHatchAs(6, false);
+    pet.ageMinutes = 60UL * 60;
+    pet.relearnFromLevel();
+    while (pet.hasLearnOffer()) pet.declineLearn();
+    movePickOpen = true; movePickParty = 0; movePickSlot = 0; movePickPage = 0;
+    checkRimChromeOnly("movepick", 380);
+    movePickOpen = false;
+
+    clearAll();
+    pickTrainer = 7; pickHard = false; pickDefault(squadCap(7, false));
+    pickPage = 0; pickOpen = true;
+    checkRimChromeOnly("teampick", 332);
+    pickOpen = false;
+
+    clearAll();
+    gRegionArt = 0xFFFF;
+    pet.dbgHatchAs(133, false);
+    pet.ageMinutes = 40UL * MINUTES_PER_LEVEL;
+    pet.fullness = pet.joy = pet.energy = pet.hygiene = 100;
+    while (pet.hasLearnOffer()) pet.declineLearn();
+    evoPickPage = 0; evoPickOpen = true;
+    checkRimChromeOnly("evopick", 382);
+    evoPickOpen = false;
+
+    clearAll();
+    cardPage = 0; cardOpen = true;
+    checkRimChromeOnly("card", 374);
+    cardOpen = false;
+  }
+
   printf("%s\n", bad?"FAILURES":"every paged screen pages");
   return bad?1:0;
 }

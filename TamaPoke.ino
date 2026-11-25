@@ -6588,14 +6588,11 @@ void renderMovePick() {
     // is obvious rather than a guess
     drawMoveRow(MOVE_PICK_Y(i), all[idx], all[idx] == pickTargetMoves()[movePickSlot], pickTargetDex());
   }
-  for (uint8_t i = 0; i < pages && pages > 1; i++) {
-    if (i == movePickPage) gfx->fillCircle(CX - (pages - 1) * 13 + i * 26, 380, 5, UI_INK);
-    else gfx->drawCircle(CX - (pages - 1) * 13 + i * 26, 380, 4, UI_INK);
-  }
   gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(2);
   gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 402);
   gfx->print(T(S_BACK));
+  uiChrome();
   gfx->flush();
 }
 
@@ -6628,11 +6625,6 @@ void renderEvoPick() {
     gfx->setCursor(CX - (int)strlen(entry.name) * 6, y + (h - 16) / 2);
     gfx->print(entry.name);
     if (!pet.isRegistered(options[index])) gfx->fillCircle(x + 22, y + h / 2, 6, text);
-  }
-  for (uint8_t i = 0; i < pages && pages > 1; i++) {
-    const int x = CX - (pages - 1) * 13 + i * 26;
-    if (i == evoPickPage) gfx->fillCircle(x, 382, 5, UI_INK);
-    else gfx->drawCircle(x, 382, 4, UI_INK);
   }
   gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(2);
@@ -8545,13 +8537,6 @@ void renderPick() {
     drawPickCell(n, PICK_X(drawn), PICK_Y(drawn), top);
     drawn++;
   }
-  uint8_t pages = (pickCandidates() + PICK_PER_PAGE - 1) / PICK_PER_PAGE;
-  if (!pages) pages = 1;
-  for (uint8_t i = 0; i < pages && pages > 1; i++) {
-    int dx = CX - (pages - 1) * 13 + i * 26;
-    if (i == pickPage) gfx->fillCircle(dx, 332, 5, UI_INK);
-    else gfx->drawCircle(dx, 332, 4, UI_INK);
-  }
 
   bool ok = pickChosen() > 0 && pickChosen() <= cap;
   gfx->fillRoundRect(PICK_BACK_X, PICK_GO_Y, PICK_BTN_W, PICK_BTN_H, 12, UI_TRACK);
@@ -8569,6 +8554,7 @@ void renderPick() {
   gfx->setCursor(PICK_GO_X + (PICK_BTN_W - (int)strlen(T(S_FIGHT)) * 12) / 2,
                  PICK_GO_Y + 14);
   gfx->print(T(S_FIGHT));
+  uiChrome();
   gfx->flush();
 }
 
@@ -9242,12 +9228,6 @@ void renderCard() {
   else if (cardPage == 2) renderCardMoves();
   else renderCardProgress();
 
-  // indicador de paginas + ayuda
-  for (int i = 0; i < CARD_PAGES; i++) {
-    int dx = CX - (CARD_PAGES - 1) * 13 + i * 26;
-    if (i == cardPage) gfx->fillCircle(dx, 374, 5, UI_INK);
-    else gfx->drawCircle(dx, 374, 4, UI_INK);
-  }
   gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(2);
   gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 398);

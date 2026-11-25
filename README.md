@@ -49,9 +49,9 @@ Pokedex is empty.
 
 ### Raising one
 
-| Your creature | Its egg | Moves it knows |
-|---|---|---|
-| <img src="docs/screens/main.png" width="240"> | <img src="docs/screens/egg.png" width="240"> | <img src="docs/screens/moves.png" width="240"> |
+| Your creature | Its egg | Moves it knows | Changing a move |
+|---|---|---|---|
+| <img src="docs/screens/main.png" width="180"> | <img src="docs/screens/egg.png" width="180"> | <img src="docs/screens/moves.png" width="180"> | <img src="docs/screens/movepick.png" width="180"> |
 
 The egg carries a **region pill** — pick which of the nine regions it hatches
 from, or ALL for the mixed pool. Switching keeps the rarity it was granted and

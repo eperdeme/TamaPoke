@@ -272,7 +272,11 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
   }
   else if (!strcmp(screen, "train"))   trainOpen = true;
   else if (!strcmp(screen, "moves"))   { cardOpen = true; cardPage = 2; }
-  else if (!strcmp(screen, "movepick")) { movePickOpen = true; }
+  else if (!strcmp(screen, "movepick")) {
+    if (lvl <= 1) pet.ageMinutes = 49UL * MINUTES_PER_LEVEL;
+    while (pet.hasLearnOffer()) pet.declineLearn();
+    movePickOpen = true;
+  }
   else if (!strcmp(screen, "evopick")) {
     pet.dbgHatchAs(133, false);
     pet.ageMinutes = 40UL * MINUTES_PER_LEVEL;
