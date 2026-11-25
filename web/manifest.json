@@ -1,6 +1,6 @@
 {
   "name": "TamaPoke",
-  "version": "4.4.0",
+  "version": "5.0.0",
   "new_install_prompt_erase": true,
   "builds": [
     {
@@ -19,7 +19,7 @@
           "offset": 57344
         },
         {
-          "path": "firmware/app.bin?v=291e6bf69b9d38ab",
+          "path": "firmware/app.bin?v=fb925f124fae770a",
           "offset": 65536
         }
       ]

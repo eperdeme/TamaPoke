@@ -47,7 +47,7 @@
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
-#define FW_VERSION "4.4.0"
+#define FW_VERSION "5.0.0"
 
 // Antialiased bold Fredoka UI font renderer (uifont.h, SIL OFL 1.1; adapted from
 // crenberries428/TamaPoke, MIT). Overrides write(buf, len) on Arduino_Canvas so
