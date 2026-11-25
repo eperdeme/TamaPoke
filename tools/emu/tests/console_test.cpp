@@ -79,6 +79,10 @@ int main(){
   last.dex = 1025; last.level = 88;
   party.box[BOX_SLOTS-1] = last;
   party.boxSave();
+  pet.tunes |= (uint16_t)((1u << TUNE_PALLET) | (1u << TUNE_GYM));
+  pet.setClock(1767225600UL + 3600);
+  pet.setStepsToday(3456);
+  runConsole({"STEPS OFF"});
   pet.renameTrainer("ASH");        // persists everything above
 
   // Model an append-only PartyMon growth without changing today's firmware
@@ -147,11 +151,17 @@ int main(){
 
   Pet p2; Party q2;
   p2.begin(); q2.begin();
+  p2.setClock(1767225600UL + 7200);
+  stepCounterLoad();
   ck(!strcmp(p2.trainerName,"ASH"), "the trainer name came back");
   ck(p2.speciesId==59 && p2.ageMinutes==61UL*MINUTES_PER_LEVEL,
      "so did the creature and its age");
   ck(p2.ivAtk==29 && p2.ivHp==13 && p2.badges==0x0055 && p2.streak==8,
      "and the IVs, badges and streak");
+  ck(p2.tuneUnlocked(TUNE_PALLET) && p2.tuneUnlocked(TUNE_GYM),
+     "and the jukebox unlocks survived EXPORT -> IMPORT");
+  ck(p2.stepsToday() == 3456 && !gStepCounterEnabled,
+     "and today's step count and stepen=0 setting survived EXPORT -> IMPORT");
   ck(q2.count()==3 && q2.slots[1].dex==101 && q2.slots[1].level==45,
      "and the party");
   ck(q2.box[BOX_SLOTS-1].dex == 1025 && q2.box[BOX_SLOTS-1].level == 88,
@@ -287,6 +297,30 @@ int main(){
     // must have WRITTEN it.
     { Pet r; r.begin();
       ck(r.ivAtk == 31 && r.level() == MAX_LEVEL, "MAX survives a reload"); }
+  }
+
+  // ---- Serial STEPS, MUSIC, TUNES commands
+  {
+    runConsole({"STEPS ON"});
+    stepCounterLoad();
+    ck(gStepCounterEnabled, "STEPS ON enables and persists stepen=1");
+
+    pet.setClock(1767225600UL + 7200);
+    std::string sout = runConsole({"STEPS 1234", "STEPS"});
+    ck(sout.find("steps=1234") != std::string::npos && sout.find("enabled=1") != std::string::npos,
+       "STEPS <n> and STEPS report updated step state");
+    { Pet r; r.begin(); r.setClock(1767225600UL + 7200);
+      ck(r.stepsToday() == 1234, "STEPS <n> persists across reload"); }
+
+    std::string mout = runConsole({"MUSIC", "MUSIC 0", "MUSIC OFF"});
+    ck(mout.find("playing ") != std::string::npos, "MUSIC 0 starts track playback");
+
+    std::string tout = runConsole({"TUNES ALL", "TUNES"});
+    ck(tout.find("OPEN") != std::string::npos && tout.find("locked") == std::string::npos,
+       "TUNES ALL unlocks every jukebox track");
+    { Pet r; r.begin();
+      ck(r.tuneUnlocked(TUNE_PALLET) && r.tuneUnlocked(TUNE_ROUTE1),
+         "TUNES ALL persists across reload"); }
   }
 
   printf("%s\n", bad?"FAILURES":"all good");

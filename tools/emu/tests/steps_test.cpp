@@ -3,6 +3,7 @@
 #include "Preferences.h"
 #include "pet.h"
 #include "steps.h"
+#include "power.h"
 #include <cstdio>
 #include <cmath>
 
@@ -50,6 +51,7 @@ int main() {
   // 1. a real walk is counted across cadences, sample rates, and orientations
   struct { float hz; int dt; int axis; } cases[] = {
     {1.6f, 16, 2}, {2.0f, 16, 2}, {2.5f, 16, 2},
+    {2.5f, POWER_STEP_SLEEP_MS, 2},
     {2.0f, 50, 2}, {2.0f, 100, 2},
     {2.0f, 16, 0}, {2.0f, 16, 1},
   };

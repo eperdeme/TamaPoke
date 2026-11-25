@@ -99,6 +99,10 @@ void setup() {
     Serial0.println("MILESTONE native-real-nvs-legacy-migration");
     pet.winBadge(1, 2, true);
     require(bag.add(IT_MASTERBALL, 2) == 2, "inventory reward failed");
+    pet.tunes |= (uint16_t)(1u << TUNE_PALLET);
+    pet.setClock(1767225600UL + 3600);
+    pet.setStepsToday(1234);
+    stepCounterSet(false);
     pet.saveNow();
     Preferences poison;
     require(poison.begin("tamapoke", false), "poison namespace failed");
@@ -114,6 +118,10 @@ void setup() {
   }
   require(pet.badgeMask(1, true) == (1 << 2) && bag.count(IT_MASTERBALL) == 2,
           "native rewards lost across reboot");
+  stepCounterLoad();
+  pet.setClock(1767225600UL + 7200);
+  require(pet.tuneUnlocked(TUNE_PALLET) && pet.stepsToday() == 1234 && !gStepCounterEnabled,
+          "native jukebox tunes, steps or stepen lost across reboot");
   auto *backup = static_cast<uint8_t *>(saveAlloc(SAVE_TRANSFER_MAX));
   require(backup && saveExport(backup, SAVE_TRANSFER_MAX) > 0,
           "native checkpoint backup unavailable");

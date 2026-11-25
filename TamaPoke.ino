@@ -1494,7 +1494,8 @@ void loop() {
     float ax, ay, az;
     if (imuReadAccel(ax, ay, az)) pet.addSteps(stepper.feed(ax, ay, az, now));
     uint8_t stepMs = pet.claimSteps();
-    if (stepMs) sfxPlay(stepMs >= STEP_MS_COUNT ? SFX_MEDAL : SFX_HEART);
+    if (stepMs && !screenOff && !pet.sleeping)
+      sfxPlay(stepMs >= STEP_MS_COUNT ? SFX_MEDAL : SFX_HEART);
   } else {
     stepper.reset();
   }
@@ -1579,6 +1580,7 @@ void loop() {
   pc.usb = usbPresent();
   pc.charging = batCharging();
   pc.batPct = batPercent();
+  pc.stepActive = gStepCounterEnabled && imuPresent();
   uint32_t period = frameIntervalMs(pc);
   if (screenOff && !battleOpen) period = 500;   // dark panel: the frame stretches, it does not stop (see above)
   if (period == 0) period = 500;
@@ -1591,7 +1593,7 @@ void loop() {
   } else if (!transferMode() && !battleOpen && lightSleepAllowed(pc) && !usbPresentNow()) {
     // Battery only, screen dark or nearly: sleep the CPU between frames. A touch (TP_INT)
     // or the timer wakes it. Never on USB (the serial port would vanish) or mid-transfer.
-    cpuLightSleep(POWER_SLEEP_MS);
+    cpuLightSleep(lightSleepMs(pc));
   } else {
     delay(idleDelayMs(pc));
   }

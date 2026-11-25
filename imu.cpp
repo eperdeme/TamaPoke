@@ -19,6 +19,8 @@ bool imuBegin() {
   return true;
 }
 
+bool imuPresent() { return imuOk; }
+
 void imuSetEnabled(bool on) {
   imuActive = on;
   if (!imuOk) return;

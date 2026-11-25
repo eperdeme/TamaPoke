@@ -14,8 +14,11 @@
 #include "pet.h"
 #include "party.h"
 #include "sdmon.h"
+#include "adpcm.h"
 #include <cstdio>
 #include <cstring>
+#include <sys/stat.h>
+#include <unistd.h>
 uint32_t g_seed=7; FakeSerial Serial; FakeESP ESP; FakeWire Wire;
 volatile int g_touchX=0,g_touchY=0; volatile bool g_touchDown=false;
 uint32_t millis(){return 0;}
@@ -89,6 +92,54 @@ int main(){
     ck(!m.load(0, false), "dex 0 loads nothing");
     ck(!m.load(-1, false), "nor a negative dex");
     ck(!m.load(9999, false), "nor one past the table");
+  }
+
+  // ---- Disk-backed Tier 1 ADPCM cries (sdLoadCry)
+  {
+    char tmpl[] = "/tmp/tamapoke-cry-XXXXXX";
+    char *root = mkdtemp(tmpl);
+    ck(root != nullptr, "temp dir created for cry SD test");
+    if (root) {
+      std::string monsDir = std::string(root) + "/mons";
+      std::string criesDir = std::string(root) + "/cries";
+      mkdir(monsDir.c_str(), 0700);
+      mkdir(criesDir.c_str(), 0700);
+      emuSetSpriteDir(monsDir.c_str());
+
+      int16_t pcm[160];
+      for (int i = 0; i < 160; i++) pcm[i] = (int16_t)((i % 20 - 10) * 1500);
+      uint8_t adp[CRY_ADPCM_HDR + 80];
+      size_t adpLen = adpcmEncode(pcm, 160, adp, sizeof(adp));
+      ck(adpLen == sizeof(adp), "ADPCM test cry encodes cleanly");
+
+      std::string okPath = criesDir + "/c025.adp";
+      FILE *f = fopen(okPath.c_str(), "wb");
+      if (f) { fwrite(adp, 1, adpLen, f); fclose(f); }
+
+      std::string badPath = criesDir + "/c026.adp";
+      f = fopen(badPath.c_str(), "wb");
+      if (f) { const char badHdr[16] = "NOPE"; fwrite(badHdr, 1, sizeof(badHdr), f); fclose(f); }
+
+      uint8_t *buf = nullptr;
+      uint32_t len = 0;
+      ck(sdLoadCry(25, &buf, &len) && buf && len == adpLen,
+         "sdLoadCry loads valid Tier 1 TCRY cry from /cries/c025.adp");
+      AdpcmDec dec;
+      int16_t out[160];
+      ck(buf && dec.init(buf, len) && dec.decode(out, 160, 10) == 160,
+         "loaded cry decodes cleanly through AdpcmDec");
+      free(buf); buf = nullptr;
+
+      ck(!sdLoadCry(26, &buf, &len) && !buf, "sdLoadCry rejects corrupt cry header");
+      ck(!sdLoadCry(27, &buf, &len) && !buf, "sdLoadCry returns false when cry file is absent");
+
+      emuSetSpriteDir(SPRITE_DIR);
+      unlink(okPath.c_str());
+      unlink(badPath.c_str());
+      rmdir(criesDir.c_str());
+      rmdir(monsDir.c_str());
+      rmdir(root);
+    }
   }
 
   printf("%s\n", bad?"FAILURES":"all good");

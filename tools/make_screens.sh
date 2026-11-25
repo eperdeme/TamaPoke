@@ -16,7 +16,7 @@ trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$OUT"
 
 # Keep this list in step with the tables in README.md § Screens.
-SHOTS="main region starter starterj btlmenu btlmoves gympick gymsj dexpick gallery gallery2 player player2 box egg lanready pick moves evopick win explore wild today medals quiz"
+SHOTS="main region starter starterj jukebox dance steps settings game btlmenu btlmoves gympick gymsj dexpick gallery gallery2 player player2 box egg lanready pick moves evopick win explore wild today medals quiz"
 
 # THE SPRITES HAVE TO BE THERE. tools/sdcard/mons/*.bin is gitignored -- it is a
 # build intermediate -- so a fresh checkout renders every creature as a bare dex
@@ -52,7 +52,25 @@ for s in $SHOTS; do
   elif command -v convert >/dev/null; then
     convert "$TMP/$s.ppm" "$OUT/$s.png"
   else
-    echo "need sips (macOS) or ImageMagick to convert"; exit 1
+    python3 - "$TMP/$s.ppm" "$OUT/$s.png" <<'PY'
+import struct, sys, zlib
+with open(sys.argv[1], "rb") as f:
+    magic = f.readline().strip()
+    assert magic == b"P6", f"unsupported PPM {magic!r}"
+    line = f.readline()
+    while line.startswith(b"#"):
+        line = f.readline()
+    w, h = map(int, line.split())
+    maxv = int(f.readline())
+    assert maxv == 255
+    rgb = f.read(w * h * 3)
+def chunk(tag, data):
+    return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+raw = b"".join(b"\x00" + rgb[y * w * 3:(y + 1) * w * 3] for y in range(h))
+png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b"")
+with open(sys.argv[2], "wb") as f:
+    f.write(png)
+PY
   fi
   printf '  %-12s %s KB\n' "$s" "$(( $(wc -c < "$OUT/$s.png") / 1024 ))"
 done

@@ -49,6 +49,11 @@ int main() {
   { PowerCtx c = ctx(0); ck(!lightSleepAllowed(c), "no light sleep in use");
     c.idleMs = 400000; ck(lightSleepAllowed(c), "light sleep when nearly off");
     c.usb = true; ck(!lightSleepAllowed(c), "never on USB"); }
+  { PowerCtx c = ctx(400000);
+    ck(POWER_STEP_SLEEP_MS <= 100, "step light-sleep cadence stays >=10 Hz for brisk walks");
+    ck(lightSleepMs(c) == POWER_SLEEP_MS, "standard light sleep uses 200 ms when step counter is idle");
+    c.stepActive = true;
+    ck(lightSleepMs(c) == POWER_STEP_SLEEP_MS, "active pedometer shortens light sleep to catch pocket steps"); }
   printf("%s\n", bad ? "FAILURES" : "battery and power policy hold");
   return bad ? 1 : 0;
 }

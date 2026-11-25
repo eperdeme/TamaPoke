@@ -384,6 +384,116 @@ int main(){
     ck(p.quizHi == 0, "and the newer quiz record also starts empty");
   }
 
+  // ---- Direct v4.4.0 (PLAYER_FIXED_V4 = 52) -> current (PLAYER_FIXED = 72) upgrade
+  // Verifies the shipped v4.4.0 checkpoint migrates every scalar, badge ladder,
+  // and all 6 Pokédex bitmaps intact while cleanly zero-initializing v5 (Jukebox)
+  // and v6 (Step counter) fields.
+  {
+    Preferences pr;
+    pr.begin("tamapoke", false);
+    pr.remove("plyA");
+    pr.remove("plyB");
+
+    const size_t FIXED_V4 = 52;
+    const size_t dexBytes = (DEX_COUNT + 7) / 8;
+    const size_t badgeN = GYM_REGIONS - 1;
+    const size_t regionN = REGION_COUNT;
+    const size_t nameN = 12;
+    const size_t body = FIXED_V4 + 6 * dexBytes + 4 * badgeN + 2 * regionN + nameN;
+    std::vector<uint8_t> b(body + 2, 0);
+    memcpy(b.data() + 0, "TKY1", 4);
+    uint16_t v = 1;           memcpy(b.data() + 4, &v, 2);
+    uint16_t tot = (uint16_t)b.size(); memcpy(b.data() + 6, &tot, 2);
+    uint32_t gen = 11;        memcpy(b.data() + 8, &gen, 4);
+    uint16_t db = (uint16_t)dexBytes; memcpy(b.data() + 12, &db, 2);
+    b[14] = (uint8_t)regionN;
+    b[15] = (uint8_t)badgeN;
+    b[16] = (uint8_t)nameN;
+    b[17] = 3;                // avatar
+    b[18] = 1;                // region JOHTO
+    b[19] = (uint8_t)FIXED_V4;
+    uint16_t badg = 0x00AA;   memcpy(b.data() + 20, &badg, 2);
+    uint16_t badh = 0x0005;   memcpy(b.data() + 22, &badh, 2);
+    uint16_t strk = 12;       memcpy(b.data() + 24, &strk, 2);
+    uint16_t bstk = 30;       memcpy(b.data() + 26, &bstk, 2);
+    uint32_t cday = 20100;    memcpy(b.data() + 28, &cday, 4);
+    uint16_t tmed = 9;        memcpy(b.data() + 32, &tmed, 2);
+    uint16_t mstn = 7;        memcpy(b.data() + 34, &mstn, 2);
+    uint16_t ghi = 42;        memcpy(b.data() + 36, &ghi, 2);
+    uint16_t shi = 55;        memcpy(b.data() + 38, &shi, 2);
+    uint16_t qhi = 19;        memcpy(b.data() + 40, &qhi, 2);
+    uint16_t mhi = 11;        memcpy(b.data() + 42, &mhi, 2);
+    b[44] = 4;                // calmToday
+    uint32_t calmDay = 20100; memcpy(b.data() + 46, &calmDay, 4);
+    uint16_t quizHi = 14;     memcpy(b.data() + 50, &quizHi, 2);
+
+    size_t at = FIXED_V4;
+    b[at + ((25 - 1) >> 3)] |= 1u << ((25 - 1) & 7);             // dexReg: PIKACHU
+    at += dexBytes;
+    b[at + ((6 - 1) >> 3)] |= 1u << ((6 - 1) & 7);               // dexShinyReg: CHARIZARD
+    at += dexBytes;
+    uint16_t jx = 0x000F; memcpy(b.data() + at, &jx, 2);         // badgesX[0] (Johto)
+    uint16_t px = 0x0003; memcpy(b.data() + at + 2 * (badgeN - 1), &px, 2); // badgesX[last] (Paldea)
+    at += 2 * badgeN;
+    uint16_t jhx = 0x0001; memcpy(b.data() + at, &jhx, 2);       // badgesHardX[0]
+    at += 2 * badgeN;
+    at += 2 * regionN;                                           // eggByRegion
+    memcpy(b.data() + at, "V440PRO", 7);                         // trainerName
+    at += nameN;
+    b[at + ((152 - 1) >> 3)] |= 1u << ((152 - 1) & 7);           // dexHatched: CHIKORITA
+    at += dexBytes;
+    b[at + ((384 - 1) >> 3)] |= 1u << ((384 - 1) & 7);           // dexShinyCaught: RAYQUAZA
+    at += dexBytes;
+    b[at + ((258 - 1) >> 3)] |= 1u << ((258 - 1) & 7);           // dexCaught: MUDKIP
+    at += dexBytes;
+    b[at + ((493 - 1) >> 3)] |= 1u << ((493 - 1) & 7);           // dexHatchedShiny: ARCEUS
+
+    uint16_t crc = 0xFFFF;
+    for (size_t i = 0; i + 2 < b.size(); i++) {
+      crc ^= (uint16_t)b[i] << 8;
+      for (int k = 0; k < 8; k++)
+        crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021) : (uint16_t)(crc << 1);
+    }
+    memcpy(b.data() + b.size() - 2, &crc, 2);
+    pr.putBytes("plyA", b.data(), b.size());
+    pr.end();
+
+    Pet p; p.begin();
+    ck(!strcmp(p.trainerName, "V440PRO") && p.avatar == 3 && p.region == 1,
+       "v4.4.0 checkpoint keeps trainer name, avatar and region");
+    ck(p.badges == 0x00AA && p.badgesHard == 0x0005 &&
+       p.badgeMask(1, false) == 0x000F && p.badgeMask(1, true) == 0x0001 &&
+       p.badgeMask(GYM_REGIONS - 1, false) == 0x0003,
+       "v4.4.0 easy and hard badges across Kanto..Paldea survive");
+    ck(p.streak == 12 && p.bestStreak == 30 && p.totalMedals == 9 &&
+       p.gameHi == 42 && p.strHi == 55 && p.spdHi == 19 &&
+       p.memoHi == 11 && p.quizHi == 14,
+       "all v1..v4 scalars survive a direct v4.4.0 upgrade");
+    ck(p.isRegistered(25) && p.isShinyRegistered(6) &&
+       p.inDex(DEXV_HATCHED, false, 152) && p.inDex(DEXV_CAUGHT, false, 258) &&
+       p.inDex(DEXV_CAUGHT, true, 384) && p.inDex(DEXV_HATCHED, true, 493),
+       "all 6 Pokedex bitmaps align cleanly after v4.4.0 upgrade");
+    ck(p.tuneUnlocked(TUNE_TITLE) && p.tuneUnlocked(TUNE_GYM) &&
+       p.tuneUnlocked(TUNE_PALLET) && p.tuneUnlocked(TUNE_ROUTE1) &&
+       !p.tuneUnlocked(TUNE_LAVENDER),
+       "v4.4.0 upgrade retroactively unlocks qualified jukebox tunes and leaves unearned locked");
+    ck(p.listenMin == 0 && p.listenDay == 0 &&
+       p.stepCount == 0 && p.stepDay == 0 && p.stepClaim == 0,
+       "v5/v6 listen and step fields zero-initialize on v4.4.0 upgrade");
+
+    p.tunes |= (uint16_t)(1u << TUNE_LAVENDER);
+    p.setClock(1767225600UL + 3600);
+    p.setStepsToday(777);
+    p.saveNow();
+
+    Pet reloaded; reloaded.begin();
+    reloaded.setClock(1767225600UL + 7200);
+    ck(!strcmp(reloaded.trainerName, "V440PRO") && reloaded.isRegistered(25) &&
+       reloaded.quizHi == 14 && reloaded.tuneUnlocked(TUNE_LAVENDER) &&
+       reloaded.stepsToday() == 777,
+       "resaving a migrated v4.4.0 save preserves both old progress and v5/v6 state");
+  }
+
   printf("%s\n", bad?"FAILURES":"all good");
   return bad?1:0;
 }
