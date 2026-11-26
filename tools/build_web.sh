@@ -130,14 +130,19 @@ for name in modules:
 installer.write_text(src)
 
 installer_key = key('web/installer.js')
+manifest_key = key('web/manifest.json')
 index = pathlib.Path('web/index.html')
 html = index.read_text()
 html, n = re.subn(r'(src="installer\.js)(?:\?v=[0-9a-f]+)?"',
                   lambda m: f'{m.group(1)}?v={installer_key}"', html)
 if n != 1:
     raise SystemExit(f"expected exactly one installer.js script tag, found {n}")
+html, nm = re.subn(r'(manifest="manifest\.json)(?:\?v=[0-9a-f]+)?"',
+                   lambda m: f'{m.group(1)}?v={manifest_key}"', html)
+if nm != 1:
+    raise SystemExit(f"expected exactly one manifest.json attribute, found {nm}")
 index.write_text(html)
-print(f"js cache keys -> {', '.join(modules)}, installer {installer_key}")
+print(f"js cache keys -> {', '.join(modules)}, installer {installer_key}, manifest {manifest_key}")
 PYEOF
 
 # Fails the build if anything the manifest writes would land on the save.

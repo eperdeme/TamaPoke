@@ -61,7 +61,7 @@
              slotted button is the only element whose click can reach it -- clicking
              the host does nothing at all. check_installer.py refuses a build that
              loses it, and installer.js says why at length. -->
-        <esp-web-install-button id="flash-button" manifest="manifest.json">
+        <esp-web-install-button id="flash-button" manifest="manifest.json?v=0a6a6fdf04cf5774">
           <button class="button button-secondary" id="flash-activate" slot="activate">
             <i data-lucide="cpu" aria-hidden="true"></i>
             <span>Install firmware</span>
@@ -239,6 +239,6 @@
        this package, and check_installer.py reads the copy that ships. -->
   <script type="module" src="vendor/esp-web-tools-10.4.0/install-button.js"></script>
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script type="module" src="installer.js?v=952b881986c02b23"></script>
+  <script type="module" src="installer.js?v=96fbb1b37a00eb33"></script>
 </body>
 </html>

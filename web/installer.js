@@ -176,6 +176,17 @@ async function loadReleaseVersions(config) {
   return checked.filter(Boolean);
 }
 
+function manifestBuildKey(manifest) {
+  for (const build of manifest?.builds || []) {
+    for (const part of build.parts || []) {
+      if (typeof part.path === 'string' && part.path.startsWith('firmware/app.bin?v=')) {
+        return part.path.split('?v=')[1] || '';
+      }
+    }
+  }
+  return '';
+}
+
 function appendEditionCard(host, edition, selected) {
   const option = document.createElement('div');
   option.className = `edition-option${selected ? ' selected' : ''}`;
@@ -203,7 +214,9 @@ function appendEditionCard(host, edition, selected) {
   description.textContent = edition.description;
   const version = document.createElement('span');
   version.className = 'pack-version';
-  version.textContent = `v${edition.version}`;
+  version.textContent = edition.buildKey
+    ? `v${edition.version} \u00b7 ${edition.buildKey.slice(0, 8)}`
+    : `v${edition.version}`;
   title.append(name, channel);
   copy.append(title, description, version);
   label.append(input, control, copy);
@@ -221,15 +234,17 @@ async function loadEditions() {
   }
 
   const currentConfig = config.current || {};
-  const currentManifestPath = currentConfig.manifest || 'manifest.json';
+  const currentManifestPath = (currentConfig.manifest || 'manifest.json').split('?')[0];
   let currentManifest = { version: 'unknown' };
   try { currentManifest = await loadJson(currentManifestPath); }
   catch (error) { log(`Current firmware manifest unavailable: ${error.message}`); }
+  const buildKey = manifestBuildKey(currentManifest);
   const current = {
     id: 'current',
     name: currentConfig.name || 'Current Pages build',
     channel: currentConfig.channel || 'Unreleased',
-    manifest: currentManifestPath,
+    manifest: buildKey ? `${currentManifestPath}?v=${buildKey}` : currentManifestPath,
+    buildKey,
     version: normalizeVersion(currentManifest.version) || 'unknown',
     description: currentConfig.description || 'The build currently hosted by this GitHub Pages site.',
     notes: currentConfig.notes || 'This build has not been published as an immutable GitHub Release yet.',
