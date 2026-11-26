@@ -960,34 +960,93 @@ int uiSafeHalfWidthFor(int y0, int y1) {
   return a < b ? a : b;
 }
 
-// An arc segment: Arduino_GFX has no arc primitive. The band is built from
-// solid quads (two triangles per slice, edges ~3 px long) so it is one even
-// stroke, with a round cap at each end. Stamping overlapping dots instead left
-// a scalloped, patchy edge that read as "drawn in" (issue #23).
+// An arc segment: Arduino_GFX has no arc primitive, and building the band out
+// of fillTriangle slices left 1 px diagonal seam cracks on ESP32 hardware.
+// Rasterize the annular wedge + round endcaps directly into the canvas buffer
+// over its tight bounding box so every arc is watertight on board and emulator.
 // Angles are degrees clockwise from 12 o'clock.
 void uiArc(int cx, int cy, int r, int a0, int a1, int w, uint16_t col) {
   if (a1 < a0) { int t = a0; a0 = a1; a1 = t; }
   int rad = w / 2;
   if (rad < 1) rad = 1;
-  int ri = r - rad, ro = r + rad;
-  int n = (int)(((a1 - a0) * 0.01745329f * r) / 3.0f) + 1;   // ~3 px per slice
-  float step = (float)(a1 - a0) / (float)n;
-  int px0 = 0, py0 = 0, px1 = 0, py1 = 0;
-  for (int i = 0; i <= n; i++) {
-    float ang = ((float)a0 + step * (float)i - 90.0f) * 0.01745329f;
-    float c = cosf(ang), s = sinf(ang);
-    int x0 = cx + (int)lroundf(c * ri), y0 = cy + (int)lroundf(s * ri);
-    int x1 = cx + (int)lroundf(c * ro), y1 = cy + (int)lroundf(s * ro);
-    if (i > 0) {
-      gfx->fillTriangle(px0, py0, px1, py1, x1, y1, col);
-      gfx->fillTriangle(px0, py0, x1, y1, x0, y0, col);
+  int ri = r - rad;
+  if (ri < 0) ri = 0;
+  int ro = r + rad;
+  const int ri2 = ri * ri, ro2 = ro * ro;
+  const int capLo2 = (ri > 1) ? (ri - 1) * (ri - 1) : 0;
+  const int capHi2 = (ro + 1) * (ro + 1);
+  const int32_t rad2_256 = (int32_t)rad * rad * 256;
+
+  float e0 = ((float)a0 - 90.0f) * 0.01745329f;
+  float e1 = ((float)a1 - 90.0f) * 0.01745329f;
+  float c0 = cosf(e0), s0 = sinf(e0);
+  float c1 = cosf(e1), s1 = sinf(e1);
+  const int32_t ic0 = (int32_t)lroundf(c0 * 16384.0f), is0 = (int32_t)lroundf(s0 * 16384.0f);
+  const int32_t ic1 = (int32_t)lroundf(c1 * 16384.0f), is1 = (int32_t)lroundf(s1 * 16384.0f);
+  const int32_t cap0x16 = (int32_t)lroundf(c0 * (float)r * 16.0f);
+  const int32_t cap0y16 = (int32_t)lroundf(s0 * (float)r * 16.0f);
+  const int32_t cap1x16 = (int32_t)lroundf(c1 * (float)r * 16.0f);
+  const int32_t cap1y16 = (int32_t)lroundf(s1 * (float)r * 16.0f);
+
+  float minX = c0 * ri, maxX = minX, minY = s0 * ri, maxY = minY;
+  auto expand = [&](float px, float py) {
+    if (px < minX) minX = px;
+    if (px > maxX) maxX = px;
+    if (py < minY) minY = py;
+    if (py > maxY) maxY = py;
+  };
+  expand(c0 * ro, s0 * ro);
+  expand(c1 * ri, s1 * ri);
+  expand(c1 * ro, s1 * ro);
+  for (int k = -8; k <= 8; k++) {
+    int ak = k * 90;
+    if (a0 <= ak && ak <= a1) {
+      float ek = ((float)ak - 90.0f) * 0.01745329f;
+      expand(cosf(ek) * ro, sinf(ek) * ro);
     }
-    px0 = x0; py0 = y0; px1 = x1; py1 = y1;
   }
-  // round caps
-  float e0 = ((float)a0 - 90.0f) * 0.01745329f, e1 = ((float)a1 - 90.0f) * 0.01745329f;
-  gfx->fillCircle(cx + (int)lroundf(cosf(e0) * r), cy + (int)lroundf(sinf(e0) * r), rad, col);
-  gfx->fillCircle(cx + (int)lroundf(cosf(e1) * r), cy + (int)lroundf(sinf(e1) * r), rad, col);
+  int bx0 = cx + (int)floorf(minX) - rad - 2;
+  int bx1 = cx + (int)ceilf(maxX) + rad + 2;
+  int by0 = cy + (int)floorf(minY) - rad - 2;
+  int by1 = cy + (int)ceilf(maxY) + rad + 2;
+  if (bx0 < 0) bx0 = 0;
+  if (by0 < 0) by0 = 0;
+  if (bx1 >= LCD_WIDTH) bx1 = LCD_WIDTH - 1;
+  if (by1 >= LCD_HEIGHT) by1 = LCD_HEIGHT - 1;
+
+  const int span = a1 - a0;
+  const bool reflex = span > 180;
+  const bool full = span >= 360;
+  uint16_t *fb = gfx->getFramebuffer();
+  for (int y = by0; y <= by1; y++) {
+    const int32_t dy = y - cy;
+    const int32_t dy16 = dy * 16;
+    uint16_t *row = fb + (size_t)y * LCD_WIDTH;
+    for (int x = bx0; x <= bx1; x++) {
+      const int32_t dx = x - cx;
+      const int d2 = (int)(dx * dx + dy * dy);
+      bool hit = false;
+      if (span > 0 && d2 >= ri2 && d2 <= ro2) {
+        if (full) {
+          hit = true;
+        } else {
+          bool ge0 = (ic0 * dy - is0 * dx) >= 0;
+          bool le1 = (ic1 * dy - is1 * dx) <= 0;
+          hit = reflex ? (ge0 || le1) : (ge0 && le1);
+        }
+      }
+      if (!hit && d2 >= capLo2 && d2 <= capHi2) {
+        int32_t dx0 = dx * 16 - cap0x16, dy0 = dy16 - cap0y16;
+        if (dx0 * dx0 + dy0 * dy0 <= rad2_256) {
+          hit = true;
+        } else {
+          int32_t dx1 = dx * 16 - cap1x16, dy1 = dy16 - cap1y16;
+          if (dx1 * dx1 + dy1 * dy1 <= rad2_256) hit = true;
+        }
+      }
+      if (hit) row[x] = col;
+    }
+  }
 }
 
 // The gesture model. Its tables and handlers live down beside uiCurrentScreen(),
@@ -4904,11 +4963,18 @@ void uiDrawTileDots() {
     char left[28], right[24];
     snprintf(left, sizeof(left), "< %s", T(S_PARTY));
     snprintf(right, sizeof(right), "%s >", T(S_EXPLORE));
+    const size_t lLen = strlen(left), rLen = strlen(right);
+    const int lMono = (int)lLen * 12, rMono = (int)rLen * 12;
+    const int lW = UiCanvas::measureUi(UIF_SMALL, (const uint8_t *)left, lLen);
+    const int rW = UiCanvas::measureUi(UIF_SMALL, (const uint8_t *)right, rLen);
+    const int gap = 16;
+    const int xLeft = CX - (lW + gap + rW) / 2;
+    const int xRight = xLeft + lW + gap;
     gfx->setTextColor(ink);
     gfx->setTextSize(2);
-    gfx->setCursor(CX - 8 - (int)strlen(left) * 12, 408);
+    gfx->setCursor(xLeft - (lMono - lW) / 2, 408);
     gfx->print(left);
-    gfx->setCursor(CX + 8, 408);
+    gfx->setCursor(xRight - (rMono - rW) / 2, 408);
     gfx->print(right);
   }
   for (int i = 0; i < TILE_COUNT; i++) {
@@ -11137,7 +11203,12 @@ int uiHeaderNameBottom() { return HEADER_NAME_Y + HEADER_NAME_H; }
 static void drawCareArc(int i, const char *label, uint8_t val) {
   int a0 = CARE_ARC[i][0], a1 = CARE_ARC[i][1];
   uiArc(CX, CY, CARE_R, a0, a1, CARE_W, UI_TRACK);
-  if (val) uiArc(CX, CY, CARE_R, a0, a0 + (a1 - a0) * val / 100, CARE_W, CARE_COL[i]);
+  if (val) {
+    int span = (a1 - a0) * (int)val / 100;
+    int fa0 = (i < 2) ? a0 : (a1 - span);
+    int fa1 = (i < 2) ? (a0 + span) : a1;
+    uiArc(CX, CY, CARE_R, fa0, fa1, CARE_W, CARE_COL[i]);
+  }
   float mid = ((float)(a0 + a1) / 2.0f - 90.0f) * 0.01745329f;
   int ly = CY + (int)(sinf(mid) * CARE_LBL_R);
   const int innerR = CARE_R - CARE_W / 2;

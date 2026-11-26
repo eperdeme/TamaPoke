@@ -581,7 +581,7 @@ int main(){
     stepCounterSet(false);
     pet.fullness = pet.joy = pet.energy = pet.hygiene = 10;
 
-    int overlap = 0, missing = 0;
+    int overlap = 0, missing = 0, footerUncentered = 0;
     const Lang savedLang = gLang;
     for (int l = 0; l < LANG_COUNT; l++) {
       setLang((Lang)l);
@@ -600,10 +600,73 @@ int main(){
         }
       }
       for (int i = 0; i < 4; i++) if (count[i] < 10) missing++;
+
+      int minX = 466, maxX = -1;
+      for (int y = 410; y <= 425; y++) {
+        for (int x = 0; x < 466; x++) {
+          int dx = x - 233, dy = y - 233;
+          if (dx * dx + dy * dy >= 226 * 226) continue;
+          if (fb[y * 466 + x] == UI_INK) {
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+          }
+        }
+      }
+      if (maxX < minX || abs((minX + maxX) - 466) > 4) footerUncentered++;
     }
     setLang(savedLang);
     ck(overlap == 0, "care labels stay clear of the status arcs in all 7 languages");
     ck(missing == 0, "all four care labels render inside the arc ring in all 7 languages");
+    ck(footerUncentered == 0, "< PARTY   EXPLORE > footer stays centered in all 7 languages");
+
+    // Bottom-up fill verification on all 4 status arcs (right-side ENE/HYG used to fill top-down).
+    pet.fullness = pet.joy = pet.energy = pet.hygiene = 30;
+    render();
+    {
+      const uint16_t *fb = gfx->buffer();
+      const uint16_t cols[4] = { UI_CARE_FOOD, UI_CARE_JOY, UI_CARE_ENE, UI_CARE_HYG };
+      long long fillY[4] = {0, 0, 0, 0}, trackY[4] = {0, 0, 0, 0};
+      int fillN[4] = {0, 0, 0, 0}, trackN[4] = {0, 0, 0, 0};
+      for (int y = 90; y <= 310; y++) {
+        for (int x = 0; x < 466; x++) {
+          int dx = x - 233, dy = y - 233;
+          int d2 = dx * dx + dy * dy;
+          if (d2 < 208 * 208 || d2 > 224 * 224) continue;
+          int idx = (x < 233) ? (y > 233 ? 0 : 1) : (y < 233 ? 2 : 3);
+          uint16_t px = fb[y * 466 + x];
+          if (px == cols[idx]) { fillY[idx] += y; fillN[idx]++; }
+          else if (px == UI_TRACK) { trackY[idx] += y; trackN[idx]++; }
+        }
+      }
+      int badFill = 0;
+      for (int i = 0; i < 4; i++) {
+        if (fillN[i] < 50 || trackN[i] < 50 ||
+            (double)fillY[i] / fillN[i] <= (double)trackY[i] / trackN[i]) badFill++;
+      }
+      ck(badFill == 0, "all four status arcs fill from the bottom upward");
+    }
+
+    // Watertight arc fill verification: no interior pinholes inside filled care arcs.
+    pet.fullness = pet.joy = pet.energy = pet.hygiene = 100;
+    render();
+    {
+      const uint16_t *fb = gfx->buffer();
+      auto isCareCol = [](uint16_t p) {
+        return p == UI_CARE_FOOD || p == UI_CARE_JOY || p == UI_CARE_ENE || p == UI_CARE_HYG;
+      };
+      int pinholes = 0;
+      for (int y = 95; y <= 305; y++) {
+        for (int x = 8; x < 458; x++) {
+          if (isCareCol(fb[y * 466 + x])) continue;
+          int n = (isCareCol(fb[(y - 1) * 466 + x]) ? 1 : 0) +
+                  (isCareCol(fb[(y + 1) * 466 + x]) ? 1 : 0) +
+                  (isCareCol(fb[y * 466 + x - 1]) ? 1 : 0) +
+                  (isCareCol(fb[y * 466 + x + 1]) ? 1 : 0);
+          if (n >= 3) pinholes++;
+        }
+      }
+      ck(pinholes == 0, "care status arcs render solid with zero interior pinholes");
+    }
   }
 done:
 
