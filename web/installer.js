@@ -346,13 +346,35 @@ function refreshFlashAdvice() {
 async function loadPacks() {
   try {
     const catalogue = await loadJson('paks.json');
-    packs = catalogue.regions || {};
+    packs = {};
+    const regions = catalogue.regions || {};
+    for (const [region, meta] of Object.entries(regions)) {
+      packs[region] = {
+        ...meta,
+        title: titleCase(region),
+        file: meta.file || `sprites-${region}.pak`,
+        isCries: false,
+      };
+    }
+    const regionCount = Object.keys(regions).length;
+    let totalBytes = Object.values(regions).reduce((total, pack) => total + pack.bytes, 0);
+    if (catalogue.cries && catalogue.cries.bytes) {
+      const c = catalogue.cries;
+      packs.cries = {
+        ...c,
+        title: 'Pokemon Cries',
+        file: c.file || 'cries.pak',
+        sprites: c.files,
+        isCries: true,
+      };
+      totalBytes += c.bytes;
+    }
     renderPacks();
-    const count = Object.keys(packs).length;
-    const bytes = Object.values(packs).reduce((total, pack) => total + pack.bytes, 0);
-    byId('catalogue-summary').textContent = `${count} published region${count === 1 ? '' : 's'}, ${MB(bytes)} total.`;
+    byId('catalogue-summary').textContent = catalogue.cries
+      ? `${regionCount} regions + Pokemon Cries, ${MB(totalBytes)} total.`
+      : `${regionCount} published region${regionCount === 1 ? '' : 's'}, ${MB(totalBytes)} total.`;
   } catch (error) {
-    byId('regions').innerHTML = '<p class="muted">The region catalogue could not be loaded.</p>';
+    byId('regions').innerHTML = '<p class="muted">The pack catalogue could not be loaded.</p>';
     byId('catalogue-summary').textContent = error.message;
     log(`Pack catalogue failed: ${error.message}`);
   }
@@ -366,6 +388,7 @@ function renderPacks() {
   const host = byId('regions');
   host.textContent = '';
   for (const [region, meta] of sortedPacks()) {
+    const labelName = meta.title || titleCase(region);
     const option = document.createElement('div');
     option.className = 'pack-option';
     option.dataset.region = region;
@@ -374,7 +397,7 @@ function renderPacks() {
         <input type="checkbox" data-region="${region}" disabled>
         <span class="choice-control" aria-hidden="true"></span>
         <span class="option-copy">
-          <span class="option-title"><span>${titleCase(region)}</span><span class="pack-state">Not checked</span></span>
+          <span class="option-title"><span>${labelName}</span><span class="pack-state">Not checked</span></span>
           <p>${meta.sprites} files / ${MB(meta.bytes)}</p>
           <span class="pack-version">web ${meta.crc32}</span>
         </span>
@@ -588,6 +611,9 @@ function statusFor(meta) {
   if (!writer) return { text: 'Connect to inspect', kind: '', needed: false };
   if (!packProtocol) return { text: 'Version unknown', kind: 'update', needed: false };
   if (!sdAvailable) return { text: 'No SD card', kind: 'update', needed: false };
+  if (meta.isCries && !installedPacks.has(meta.index)) {
+    return { text: 'Optional pack', kind: 'update', needed: false };
+  }
   const installed = installedPacks.get(meta.index) || 'missing';
   if (packIsCurrent(meta, installed)) return { text: 'Current', kind: 'current', needed: false };
   if (installed === 'legacy') return { text: 'Installed / unversioned', kind: 'update', needed: false };
@@ -622,7 +648,7 @@ function refreshSelection() {
   const selected = selectedPacks();
   const bytes = selected.reduce((total, entry) => total + entry[1].bytes, 0);
   byId('selection-title').textContent = selected.length
-    ? `${selected.length} region${selected.length === 1 ? '' : 's'} selected`
+    ? `${selected.length} pack${selected.length === 1 ? '' : 's'} selected`
     : 'No packs selected';
   byId('selection-detail').textContent = selected.length
     ? `${MB(bytes)}, ${transferEstimate(bytes)} over USB.`
@@ -826,14 +852,15 @@ async function fetchExact(url, expected, init, onProgress) {
 // Pages lets a browser keep a file for 10 minutes, so right after a release a
 // cached old pack failed its checksum. The one retry bypasses the cache outright.
 async function downloadPak(region, meta, signal, onProgress) {
-  const url = `sprites-${region}.pak?v=${meta.crc32}`;
+  const name = meta.title || titleCase(region);
+  const url = `${meta.file || `sprites-${region}.pak`}?v=${meta.crc32}`;
   try {
     const buffer = await fetchExact(url, meta.bytes, { signal }, onProgress);
     verifyPak(meta, buffer);
     return buffer;
   } catch (error) {
     if (signal.aborted) throw error;
-    log(`${titleCase(region)} did not download cleanly (${error.message}); trying again without the cache...`);
+    log(`${name} did not download cleanly (${error.message}); trying again without the cache...`);
   }
   try {
     const buffer = await fetchExact(url, meta.bytes, { signal, cache: 'reload' }, onProgress);
@@ -841,7 +868,7 @@ async function downloadPak(region, meta, signal, onProgress) {
     return buffer;
   } catch (error) {
     if (signal.aborted) throw error;
-    throw new Error(`the ${region} pack did not download cleanly (${error.message}). `
+    throw new Error(`the ${name} pack did not download cleanly (${error.message}). `
       + 'The site may be mid-update; try again in a few minutes');
   }
 }
@@ -880,16 +907,18 @@ function batchDetail(batch) {
 }
 
 async function sendRegion(region, meta, buffer, batch, where) {
-  const items = parsePak(buffer);
-  log(`${titleCase(region)} verified (${meta.crc32}); ${items.length} files ready.`);
-  if (packProtocol && !await expectDone(`PACK BEGIN ${meta.index}`)) {
-    throw new Error(`the board refused to begin the ${region} pack`);
+  const name = meta.title || titleCase(region);
+  const items = meta.isCries ? parseCryPak(buffer) : parsePak(buffer);
+  const useMarker = packProtocol && (!meta.isCries || installedPacks.has(meta.index));
+  log(`${name} verified (${meta.crc32}); ${items.length} files ready.`);
+  if (useMarker && !await expectDone(`PACK BEGIN ${meta.index}`)) {
+    throw new Error(`the board refused to begin the ${name} pack`);
   }
   let skipped = 0;
   batch.since = performance.now();
   try {
     for (const item of items) {
-      const label = `${where} \u00b7 ${item.name.replace('mons/', '')}`;
+      const label = `${where} \u00b7 ${item.name.replace(/^(?:mons|cries)\//, '')}`;
       const started = performance.now();
       const result = await installFile(packIo, item, {
         sums: Boolean(sumSupported),
@@ -911,16 +940,16 @@ async function sendRegion(region, meta, buffer, batch, where) {
     batch.usbMs += performance.now() - batch.since;
     batch.since = 0;
   }
-  if (packProtocol) {
+  if (useMarker) {
     if (!await expectDone(`PACK COMMIT ${meta.index} ${meta.crc32}`, PACK_COMMIT_TIMEOUT_MS)) {
-      throw new Error(`files arrived but the board could not validate the ${region} pack`);
+      throw new Error(`files arrived but the board could not validate the ${name} pack`);
     }
     installedPacks.set(meta.index, meta.crc32.toLowerCase());
     verifiedPacks.set(meta.index, meta.crc32.toLowerCase());
   }
   const checked = sumSupported ? ', every file read back from the card' : '';
   const already = skipped ? `; ${skipped} of ${items.length} files were already there` : '';
-  log(`${titleCase(region)} is installed${checked}${already}.`);
+  log(`${name} is installed${checked}${already}.`);
 }
 
 async function installRegions(selected) {
@@ -944,7 +973,7 @@ async function installRegions(selected) {
     let job = startDownload(selected[0], aborter.signal);
     for (let i = 0; i < selected.length; i++) {
       const [region, meta] = selected[i];
-      const where = `${titleCase(region)} (${i + 1} of ${selected.length})`;
+      const where = `${meta.title || titleCase(region)} (${i + 1} of ${selected.length})`;
       const buffer = await awaitDownload(job, where);
       job = selected[i + 1] ? startDownload(selected[i + 1], aborter.signal) : null;
       await sendRegion(region, meta, buffer, batch, where);
@@ -959,12 +988,12 @@ async function installRegions(selected) {
     // Firmware that reports fw= also reloads thumbs.bin by itself; older firmware
     // shows the new thumbnails only after a restart.
     const restart = boardFw ? '' : ' Restart the board so the gallery shows the new thumbnails.';
-    log(`All ${completed} selected regions are ready.`);
-    setStatus('pack', 'ok', `${completed} region${completed === 1 ? '' : 's'} installed`
+    log(`All ${completed} selected packs are ready.`);
+    setStatus('pack', 'ok', `${completed} pack${completed === 1 ? '' : 's'} installed`
       + `${sumSupported ? ' and read back from the card' : ''}.${restart}`);
   } catch (error) {
     failedRegions = selected.slice(completed);
-    log(`Install stopped after ${completed} of ${selected.length} regions: ${error.message}`);
+    log(`Install stopped after ${completed} of ${selected.length} packs: ${error.message}`);
     if (writer && packProtocol) {
       try { await queryInstalledPacks(); } catch { /* the connection may have gone with the failure */ }
     }
@@ -1458,7 +1487,9 @@ byId('files').addEventListener('change', async (event) => {
   clearStatus('pack');
   try {
     if (packProtocol) {
-      for (const [, meta] of sortedPacks()) await expectDone(`PACK BEGIN ${meta.index}`);
+      for (const [, meta] of sortedPacks()) {
+        if (!meta.isCries) await expectDone(`PACK BEGIN ${meta.index}`);
+      }
     }
     if (sumSupported === null) sumSupported = await probeSum(packIo);
     const items = [];
@@ -1505,6 +1536,9 @@ byId('cry-pack-files').addEventListener('change', async (event) => {
         items.push({ name, data });
       }
     }
+    if (packProtocol && packs.cries && installedPacks.has(packs.cries.index)) {
+      await expectDone(`PACK BEGIN ${packs.cries.index}`);
+    }
     if (sumSupported === null) sumSupported = await probeSum(packIo);
     const total = items.reduce((sum, item) => sum + item.data.length, 0);
     let done = 0;
@@ -1524,6 +1558,9 @@ byId('cry-pack-files').addEventListener('change', async (event) => {
     log(`Cry upload finished: ${sent} written, ${skipped} already up to date.`);
     setStatus('pack', 'ok', `${items.length} cry file${items.length === 1 ? '' : 's'} ready `
       + `(${sent} uploaded, ${skipped} skipped).`);
+    if (packProtocol && packs.cries && installedPacks.has(packs.cries.index)) {
+      await queryInstalledPacks();
+    }
   } catch (error) {
     report('pack', 'Cry pack upload failed', error);
   } finally {

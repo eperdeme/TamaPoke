@@ -264,11 +264,30 @@ void SdMon::unload() {
 // ---------------------------------------------------------------------------
 
 static void packMarkerPath(uint8_t region, char *path, size_t cap) {
-  snprintf(path, cap, "/mons/.pack-%u", (unsigned)region);
+  if (region == PACK_CRIES_INDEX) snprintf(path, cap, "/cries/.pack-cries");
+  else snprintf(path, cap, "/mons/.pack-%u", (unsigned)region);
 }
 
 static bool validPackRegion(int region) {
-  return region >= 0 && region < REGION_COUNT && region != REGION_ALL;
+  return (region >= 0 && region < REGION_COUNT && region != REGION_ALL) ||
+         region == PACK_CRIES_INDEX;
+}
+
+static bool anyCryOnCard() {
+  if (SD_MMC.exists("/cries/c001.adp") || SD_MMC.exists("/cries/c025.adp")) return true;
+  File dir = SD_MMC.open("/cries");
+  if (!dir || !dir.isDirectory()) { if (dir) dir.close(); return false; }
+  bool found = false;
+  File e;
+  while ((e = dir.openNextFile())) {
+    const char *n = e.name();
+    size_t nl = n ? strlen(n) : 0;
+    bool isAdp = nl > 4 && !strcmp(n + nl - 4, ".adp");
+    e.close();
+    if (isAdp) { found = true; break; }
+  }
+  dir.close();
+  return found;
 }
 
 static int8_t activePackRegion = -1;
@@ -332,8 +351,13 @@ bool sdSerialCommand(const String &line) {
     if (!path.startsWith("/")) path = "/" + path;
     if (!sdTransferAt || millis() - sdTransferAt >= SD_TRANSFER_IDLE_MS) sdTransferFiles = 0;
     const bool isCry = path.startsWith("/cries/");
-    if (isCry) SD_MMC.mkdir("/cries");
-    else invalidatePackForPath(path);
+    if (isCry) {
+      SD_MMC.mkdir("/cries");
+      if (activePackRegion != PACK_CRIES_INDEX && SD_MMC.exists("/cries/.pack-cries"))
+        SD_MMC.remove("/cries/.pack-cries");
+    } else {
+      invalidatePackForPath(path);
+    }
     File f = SD_MMC.open(path, FILE_WRITE);
     if (!f) {
       Serial.println("ERR");
@@ -419,6 +443,15 @@ bool sdSerialCommand(const String &line) {
       const char *state = marked ? crc : ((gRegionArt & (1u << r)) ? "legacy" : "missing");
       Serial.printf("PACK %u %s\n", (unsigned)r, state);
     }
+    {
+      char path[28], crc[9] = {0};
+      packMarkerPath(PACK_CRIES_INDEX, path, sizeof(path));
+      File f = SD_MMC.open(path, FILE_READ);
+      bool marked = f && f.size() == 8 && f.read((uint8_t *)crc, 8) == 8;
+      if (f) f.close();
+      const char *state = marked ? crc : (anyCryOnCard() ? "legacy" : "missing");
+      Serial.printf("PACK %u %s\n", (unsigned)PACK_CRIES_INDEX, state);
+    }
     Serial.println("DONE");
     return true;
   } else if (line.startsWith("PACK BEGIN ")) {
@@ -427,6 +460,7 @@ bool sdSerialCommand(const String &line) {
       Serial.println("ERR");
       return true;
     }
+    if (region == PACK_CRIES_INDEX) SD_MMC.mkdir("/cries");
     char path[28];
     packMarkerPath((uint8_t)region, path, sizeof(path));
     if (SD_MMC.exists(path) && !SD_MMC.remove(path)) {
@@ -452,8 +486,14 @@ bool sdSerialCommand(const String &line) {
       Serial.println("ERR");
       return true;
     }
-    sdScanRegionArt(false);
-    if (!(gRegionArt & (1u << region))) {
+    bool present = false;
+    if (region == PACK_CRIES_INDEX) {
+      present = anyCryOnCard();
+    } else {
+      sdScanRegionArt(false);
+      present = (gRegionArt & (1u << region)) != 0;
+    }
+    if (!present) {
       activePackRegion = -1;
       Serial.println("ERR");
       return true;

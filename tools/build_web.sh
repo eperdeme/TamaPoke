@@ -144,6 +144,17 @@ PYEOF
 echo "Checking the installer cannot erase a save..."
 python3 tools/check_installer.py || { echo "installer would wipe saves -- refusing"; exit 1; }
 
+echo "Empaquetando sprites..."
+if compgen -G "tools/sdcard/mons/*.bin" >/dev/null; then
+    python3 tools/pack_bundle.py
+else
+    echo "Sin fuentes de sprites; conservando los .pak y regenerando su indice..."
+    python3 - <<'PYEOF'
+from tools.pack_bundle import write_index
+write_index()
+PYEOF
+fi
+
 # The page's save backup and pack upload, tested. Gated on node so a machine
 # without it can still build; check_release.py runs them regardless, so a tag
 # cannot ship them untested -- a backup whose verification is untested is worse
@@ -154,15 +165,4 @@ if command -v node >/dev/null; then
   node tools/check_packs.mjs >/dev/null || { echo "web/packs.js FAILED its tests -- refusing"; exit 1; }
 else
   echo "node not installed; SKIPPING the web tests (check_release.py will not)"
-fi
-
-echo "Empaquetando sprites..."
-if compgen -G "tools/sdcard/mons/*.bin" >/dev/null; then
-    python3 tools/pack_bundle.py
-else
-    echo "Sin fuentes de sprites; conservando los .pak y regenerando su indice..."
-    python3 - <<'PYEOF'
-from tools.pack_bundle import write_index
-write_index()
-PYEOF
 fi

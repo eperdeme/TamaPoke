@@ -10,12 +10,16 @@ Accepts <id>.ogg / <id>.wav / c<id>.wav / c<id>.ogg for dex numbers 1..1025
 (matching PokeAPI/cries layout) and requires ffmpeg on PATH unless --self-test.
 """
 import argparse
+import ctypes
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import glob
 import math
 import os
 import re
+import shutil
 import struct
 import subprocess
+import tempfile
 import urllib.request
 
 CRY_SAMPLE_RATE = 16000
@@ -112,13 +116,101 @@ def pack_tpak(entries):
     return bytes(out)
 
 
+def _decode_libsndfile(path: str) -> bytes:
+    """Decode audio file to 16 kHz mono s16le using libsndfile + libsamplerate."""
+    sf = ctypes.CDLL('libsndfile.so.1')
+    sr = ctypes.CDLL('libsamplerate.so.0')
+
+    class SfInfo(ctypes.Structure):
+        _fields_ = [
+            ('frames', ctypes.c_int64),
+            ('samplerate', ctypes.c_int),
+            ('channels', ctypes.c_int),
+            ('format', ctypes.c_int),
+            ('sections', ctypes.c_int),
+            ('seekable', ctypes.c_int),
+        ]
+
+    class SrcData(ctypes.Structure):
+        _fields_ = [
+            ('data_in', ctypes.POINTER(ctypes.c_float)),
+            ('data_out', ctypes.POINTER(ctypes.c_float)),
+            ('input_frames', ctypes.c_long),
+            ('output_frames', ctypes.c_long),
+            ('input_frames_used', ctypes.c_long),
+            ('output_frames_gen', ctypes.c_long),
+            ('end_of_input', ctypes.c_int),
+            ('src_ratio', ctypes.c_double),
+        ]
+
+    sf.sf_open.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.POINTER(SfInfo)]
+    sf.sf_open.restype = ctypes.c_void_p
+    sf.sf_readf_float.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_float), ctypes.c_int64]
+    sf.sf_readf_float.restype = ctypes.c_int64
+    sf.sf_close.argtypes = [ctypes.c_void_p]
+    sr.src_simple.argtypes = [ctypes.POINTER(SrcData), ctypes.c_int, ctypes.c_int]
+    sr.src_simple.restype = ctypes.c_int
+
+    info = SfInfo()
+    handle = sf.sf_open(path.encode('utf-8'), 0x10, ctypes.byref(info))
+    if not handle:
+        raise RuntimeError(f'libsndfile failed to open {path}')
+    try:
+        max_in = int(info.samplerate * 3.8) + 128
+        frames = min(int(info.frames), max_in) if info.frames > 0 else max_in
+        buf = (ctypes.c_float * (frames * info.channels))()
+        got = sf.sf_readf_float(handle, buf, frames)
+    finally:
+        sf.sf_close(handle)
+    if got <= 0:
+        raise ValueError(f'no audio frames decoded from {path}')
+
+    if info.channels > 1:
+        mono = (ctypes.c_float * got)()
+        ch = info.channels
+        for i in range(got):
+            s = 0.0
+            base = i * ch
+            for c in range(ch):
+                s += buf[base + c]
+            mono[i] = s / ch
+    else:
+        mono = buf
+
+    if info.samplerate != CRY_SAMPLE_RATE:
+        ratio = float(CRY_SAMPLE_RATE) / float(info.samplerate)
+        out_cap = min(int(math.ceil(got * ratio)) + 16, int(CRY_SAMPLE_RATE * 3.8))
+        out_buf = (ctypes.c_float * out_cap)()
+        sd = SrcData(
+            data_in=mono,
+            data_out=out_buf,
+            input_frames=got,
+            output_frames=out_cap,
+            src_ratio=ratio,
+        )
+        err = sr.src_simple(ctypes.byref(sd), 1, 1)  # SRC_SINC_MEDIUM_QUALITY
+        if err:
+            raise RuntimeError(f'libsamplerate failed ({err}) for {path}')
+        samples_f = out_buf
+        n = min(int(sd.output_frames_gen), int(CRY_SAMPLE_RATE * 3.8))
+    else:
+        samples_f = mono
+        n = min(int(got), int(CRY_SAMPLE_RATE * 3.8))
+
+    ints = [max(-32768, min(32767, int(round(samples_f[i] * 32767.0)))) for i in range(n)]
+    return struct.pack(f'<{n}h', *ints)
+
+
 def convert_file(path: str) -> bytes:
-    cmd = [
-        'ffmpeg', '-v', 'error', '-i', path,
-        '-ac', '1', '-ar', str(CRY_SAMPLE_RATE),
-        '-t', '3.8', '-f', 's16le', '-',
-    ]
-    pcm = subprocess.check_output(cmd)
+    if shutil.which('ffmpeg'):
+        cmd = [
+            'ffmpeg', '-v', 'error', '-i', path,
+            '-ac', '1', '-ar', str(CRY_SAMPLE_RATE),
+            '-t', '3.8', '-f', 's16le', '-',
+        ]
+        pcm = subprocess.check_output(cmd)
+    else:
+        pcm = _decode_libsndfile(path)
     return encode_tcry(pcm)
 
 
@@ -145,6 +237,8 @@ def main():
     ap = argparse.ArgumentParser(description='Build cries.pak for TamaPoke microSD')
     ap.add_argument('--src', help='Directory containing <id>.ogg/.wav files')
     ap.add_argument('--fetch', action='store_true', help='Download latest/*.ogg from PokeAPI/cries')
+    ap.add_argument('--cache-dir', default=os.path.join(tempfile.gettempdir(), 'tamapoke_cries_cache'),
+                    help='Cache directory for fetched .ogg files')
     ap.add_argument('--out', default='cries.pak', help='Output .pak path (default: cries.pak)')
     ap.add_argument('--max-dex', type=int, default=1025, help='Max dex id when fetching (default: 1025)')
     ap.add_argument('--self-test', action='store_true', help='Run built-in ADPCM/TPAK check')
@@ -156,16 +250,29 @@ def main():
 
     entries = []
     if args.fetch:
-        os.makedirs('build_cries_cache', exist_ok=True)
-        for dex in range(1, args.max_dex + 1):
-            dst = os.path.join('build_cries_cache', f'{dex}.ogg')
-            if not os.path.exists(dst):
+        os.makedirs(args.cache_dir, exist_ok=True)
+
+        def fetch_one(dex):
+            dst = os.path.join(args.cache_dir, f'{dex}.ogg')
+            if not os.path.exists(dst) or os.path.getsize(dst) == 0:
                 url = f'https://raw.githubusercontent.com/PokeAPI/cries/main/cries/pokemon/latest/{dex}.ogg'
                 try:
                     urllib.request.urlretrieve(url, dst)
                 except Exception:
-                    continue
-            entries.append((f'cries/c{dex:03d}.adp', convert_file(dst)))
+                    if os.path.exists(dst):
+                        os.remove(dst)
+                    return None
+            return dex, convert_file(dst)
+
+        results = {}
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            futs = [pool.submit(fetch_one, d) for d in range(1, args.max_dex + 1)]
+            for fut in as_completed(futs):
+                res = fut.result()
+                if res is not None:
+                    dex, data = res
+                    results[dex] = data
+        entries = [(f'cries/c{dex:03d}.adp', results[dex]) for dex in sorted(results)]
     elif args.src:
         found = {}
         for path in sorted(glob.glob(os.path.join(args.src, '*'))):

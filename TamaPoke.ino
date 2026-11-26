@@ -6338,7 +6338,7 @@ void drawCelebration() {
     l1 = T(S_GREAT);
     l2 = buf;
   }
-  if (!l1) return;
+  if (!l1 || !l2) return;
   gfx->fillRoundRect(73, 150, 320, 96, 16, UI_BAR_WARN);
   gfx->drawRoundRect(73, 150, 320, 96, 16, UI_INK);
   gfx->setTextColor(UI_INK);
@@ -11139,11 +11139,20 @@ static void drawCareArc(int i, const char *label, uint8_t val) {
   uiArc(CX, CY, CARE_R, a0, a1, CARE_W, UI_TRACK);
   if (val) uiArc(CX, CY, CARE_R, a0, a0 + (a1 - a0) * val / 100, CARE_W, CARE_COL[i]);
   float mid = ((float)(a0 + a1) / 2.0f - 90.0f) * 0.01745329f;
-  int lx = CX + (int)(cosf(mid) * CARE_LBL_R);
   int ly = CY + (int)(sinf(mid) * CARE_LBL_R);
+  const int innerR = CARE_R - CARE_W / 2;
+  int dy0 = abs((ly - 9) - CY), dy1 = abs((ly + 9) - CY);
+  int maxDy = dy0 > dy1 ? dy0 : dy1;
+  int dxIn = (maxDy < innerR) ? (int)sqrtf((float)(innerR * innerR - maxDy * maxDy)) : 0;
+  size_t len = strlen(label);
+  int monoW = (int)len * 12;
+  int propW = UiCanvas::measureUi(UIF_SMALL, (const uint8_t *)label, len);
+  int pad = (monoW - propW) / 2;
+  const int gap = 10;
+  int visualLeft = (i < 2) ? (CX - dxIn + gap) : (CX + dxIn - gap - propW);
   gfx->setTextColor(val < CARE_LOW ? UI_BAR_BAD : inkColor());
   gfx->setTextSize(2);
-  gfx->setCursor(lx - (int)strlen(label) * 6, ly - 8);
+  gfx->setCursor(visualLeft - pad, ly - 8);
   gfx->print(label);
 }
 

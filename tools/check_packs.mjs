@@ -84,14 +84,26 @@ const bytes = (n, seed) => Uint8Array.from({ length: n }, (_, i) => (i * 31 + se
 // A pack that actually ships, against the CRC and count paks.json publishes: the
 // Python writer, the index and this reader have to agree, not just this file.
 {
-  const catalogue = JSON.parse(readFileSync(join(root, 'web/paks.json'), 'utf8')).regions;
-  const [region, meta] = Object.entries(catalogue).sort((a, b) => a[1].bytes - b[1].bytes)[0];
+  const catalogue = JSON.parse(readFileSync(join(root, 'web/paks.json'), 'utf8'));
+  const [region, meta] = Object.entries(catalogue.regions).sort((a, b) => a[1].bytes - b[1].bytes)[0];
   const blob = readFileSync(join(root, `web/sprites-${region}.pak`));
   const buffer = blob.buffer.slice(blob.byteOffset, blob.byteOffset + blob.byteLength);
   let ok = true;
   try { verifyPak(meta, buffer); } catch { ok = false; }
   ck(ok, `the committed ${region} pack matches paks.json's CRC and length`);
   ck(parsePak(buffer).length === meta.sprites, `and holds the ${meta.sprites} files paks.json says`);
+
+  ck(Boolean(catalogue.cries), 'paks.json publishes the cries pack');
+  {
+    const cmeta = catalogue.cries;
+    const cblob = readFileSync(join(root, `web/${cmeta.file || 'cries.pak'}`));
+    const cbuf = cblob.buffer.slice(cblob.byteOffset, cblob.byteOffset + cblob.byteLength);
+    let cok = true;
+    try { verifyPak(cmeta, cbuf); } catch { cok = false; }
+    ck(cok, 'the committed cries pack matches paks.json CRC and length');
+    ck(parseCryPak(cbuf).length === cmeta.files,
+       `and holds the ${cmeta.files} validated TCRY files paks.json says`);
+  }
 }
 
 // ---- which marker counts as current

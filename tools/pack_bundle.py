@@ -88,8 +88,21 @@ def write_index(equivalent=None):
             same = old.get('equivalent', []) if old.get('crc32') == crc else []
         if same:
             regions[name]['equivalent'] = same
+    payload = {'schema': 1, 'regions': regions}
+    cries_path = os.path.join(WEB, 'cries.pak')
+    if os.path.exists(cries_path):
+        cblob = open(cries_path, 'rb').read()
+        if cblob[:4] == b'TPAK' and len(cblob) >= 6:
+            ccount = struct.unpack('<H', cblob[4:6])[0]
+            payload['cries'] = {
+                'index': 99,
+                'file': 'cries.pak',
+                'bytes': len(cblob),
+                'crc32': crc_of(cblob),
+                'files': ccount,
+            }
     with open(INDEX, 'w') as f:
-        json.dump({'schema': 1, 'regions': regions}, f, indent=2)
+        json.dump(payload, f, indent=2)
         f.write('\n')
     print(f'{os.path.normpath(INDEX)}: {len(regions)} regions indexed')
     return regions

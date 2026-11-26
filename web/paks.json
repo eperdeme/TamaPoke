@@ -76,5 +76,12 @@
       "crc32": "1d700be9",
       "sprites": 198
     }
+  },
+  "cries": {
+    "index": 99,
+    "file": "cries.pak",
+    "bytes": 9658353,
+    "crc32": "199cb96b",
+    "files": 1025
   }
 }
