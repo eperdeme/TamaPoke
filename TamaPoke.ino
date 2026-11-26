@@ -11148,7 +11148,7 @@ static void drawCareArc(int i, const char *label, uint8_t val) {
   int monoW = (int)len * 12;
   int propW = UiCanvas::measureUi(UIF_SMALL, (const uint8_t *)label, len);
   int pad = (monoW - propW) / 2;
-  const int gap = 10;
+  const int gap = 12;
   int visualLeft = (i < 2) ? (CX - dxIn + gap) : (CX + dxIn - gap - propW);
   gfx->setTextColor(val < CARE_LOW ? UI_BAR_BAD : inkColor());
   gfx->setTextSize(2);

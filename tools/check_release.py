@@ -105,11 +105,17 @@ def main():
         expected = hashlib.sha256((ROOT / 'web' / name).read_bytes()).hexdigest()[:16]
         if digest != expected:
             fail(f'web/installer.js points at {name}?v={digest}, expected {expected}; run tools/build_web.sh')
-    match = re.search(r'src="installer\.js\?v=([0-9a-f]+)"', (ROOT / 'web' / 'index.html').read_text())
+    html_text = (ROOT / 'web' / 'index.html').read_text()
+    match = re.search(r'src="installer\.js\?v=([0-9a-f]+)"', html_text)
     expected = hashlib.sha256(installer.read_bytes()).hexdigest()[:16]
     if not match or match.group(1) != expected:
         fail(f'web/index.html points at installer.js?v={match.group(1) if match else "missing"}, '
              f'expected {expected}; run tools/build_web.sh')
+    mmatch = re.search(r'manifest="manifest\.json\?v=([0-9a-f]+)"', html_text)
+    mexpected = hashlib.sha256(manifest_path.read_bytes()).hexdigest()[:16]
+    if not mmatch or mmatch.group(1) != mexpected:
+        fail(f'web/index.html points at manifest.json?v={mmatch.group(1) if mmatch else "missing"}, '
+             f'expected {mexpected}; run tools/build_web.sh')
 
     # The page's tests are part of the release, not a courtesy: build_web.sh skips
     # them on a machine without node, and "skipped" must never be how a broken
