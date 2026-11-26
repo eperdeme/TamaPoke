@@ -718,10 +718,10 @@ To make the **one-click web-installer bundle** instead of sending over USB:
 python3 tools/pack_bundle.py    # bundle tools/sdcard/mons/* into web/sprites-<region>.pak, one per region
 ```
 
-To build and upload an optional **microSD cry pack** (Tier 1 16 kHz 4-bit IMA-ADPCM voice cries, falling back to authentic Gen 1–2 Game Boy cries or procedural chirps when absent):
+The **Pokemon Cries** pack (`web/cries.pak`, all 1,025 sampled cries) is ready to install right beside the nine region packs on the web installer. To regenerate or customize it locally from source audio:
 
 ```bash
-python3 tools/pack_cries.py --out web/cries.pak   # builds /cries/cNNN.adp pack (install via web installer "Upload cry pack")
+python3 tools/pack_cries.py --fetch --out web/cries.pak   # or --src <dir> for local .ogg/.wav files
 ```
 
 Then install them from the web installer's region list (or `send_sd.py`

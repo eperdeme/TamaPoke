@@ -15,6 +15,8 @@
 #include "pet.h"
 #include "party.h"
 #include "battle.h"
+#include "species.h"
+#include "i18n.h"
 #include <cstdio>
 #include <cmath>
 uint32_t g_seed=4; FakeSerial Serial; FakeESP ESP; FakeWire Wire;
@@ -555,6 +557,53 @@ int main(){
          x >= 233-uiSafeHalfWidth(y+h) && x+w <= 233+uiSafeHalfWidth(y+h),
          "grouped box navigation corners remain on the glass");
     }
+  }
+  {
+    extern Arduino_Canvas *gfx;
+    extern bool menuOpen, cardOpen, galleryOpen, clockOpen, kbOpen;
+    extern bool partyOpen, boxOpen, trainOpen, movePickOpen, gymOpen;
+    extern bool playerOpen, medalsOpen, exploreOpen, evoPickOpen, jukeOpen;
+    extern bool gameOpen, bagOpen, sackOpen, spdOpen, memoOpen, pickOpen, lanOpen;
+    extern uint8_t choiceKind;
+    menuOpen = cardOpen = galleryOpen = clockOpen = kbOpen = false;
+    partyOpen = boxOpen = trainOpen = movePickOpen = gymOpen = false;
+    playerOpen = medalsOpen = exploreOpen = evoPickOpen = jukeOpen = false;
+    gameOpen = bagOpen = sackOpen = spdOpen = memoOpen = pickOpen = lanOpen = false;
+    battleOpen = false; choiceKind = 0;
+
+    pet.ceremony = CER_NONE;
+    pet.dbgHatchAs(25, false);
+    pet.lastSeenEpoch = 1767225600UL + 13 * 3600;
+    pet.sleeping = false;
+    pet.streak = 0;
+    pet.newMedal = 0;
+    while (pet.hasLearnOffer()) pet.declineLearn();
+    stepCounterSet(false);
+    pet.fullness = pet.joy = pet.energy = pet.hygiene = 10;
+
+    int overlap = 0, missing = 0;
+    const Lang savedLang = gLang;
+    for (int l = 0; l < LANG_COUNT; l++) {
+      setLang((Lang)l);
+      render();
+      const uint16_t *fb = gfx->buffer();
+      int count[4] = {0, 0, 0, 0};
+      for (int y = 135; y <= 270; y++) {
+        for (int x = 0; x < 466; x++) {
+          if (fb[y * 466 + x] != UI_BAR_BAD) continue;
+          int dx = x - 233, dy = y - 233;
+          if (dx * dx + dy * dy >= 205 * 205) overlap++;
+          else {
+            int idx = (x < 233) ? (y > 233 ? 0 : 1) : (y < 233 ? 2 : 3);
+            count[idx]++;
+          }
+        }
+      }
+      for (int i = 0; i < 4; i++) if (count[i] < 10) missing++;
+    }
+    setLang(savedLang);
+    ck(overlap == 0, "care labels stay clear of the status arcs in all 7 languages");
+    ck(missing == 0, "all four care labels render inside the arc ring in all 7 languages");
   }
 done:
 

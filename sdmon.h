@@ -83,3 +83,4 @@ extern bool sdArtDirty;
 extern uint32_t sdTransferAt;
 extern uint16_t sdTransferFiles;   // files received in the current transfer
 #define SD_TRANSFER_IDLE_MS 3000
+#define PACK_CRIES_INDEX 99

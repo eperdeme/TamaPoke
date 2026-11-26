@@ -14,6 +14,8 @@ tools/demo_compare.js
 .DS_Store
 tools/pmd_cache/
 tools/pokeapi_cache/
+tools/cries_cache/
+build_cries_cache/
 
 # The sprite bundles ARE committed, and that is deliberate. They have to be
 # served same-origin from GitHub Pages: release assets send no CORS headers at
